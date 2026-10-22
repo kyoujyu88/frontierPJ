@@ -262,6 +262,11 @@ async function autopilot() {
     if (best && d(best) < d([u.x, u.y])) await tool("battle_move", { unit_id: u.id, x: best[0], y: best[1] });
     else await tool("battle_wait", { unit_id: u.id });
   }
+  // ここまで来るのは膠着したときだけ（ゲーム側にもラウンド上限がある）。撤退して作戦卓へ戻る
+  let s = (await tool("get_state")).json;
+  if (s.battle && !s.battle.ended) { await tool("battle_retreat"); s = (await tool("get_state")).json; }
+  if (s.battle?.ended) { await tool("battle_close"); s = (await tool("get_state")).json; }
+  return s;
 }
 
 /* ---------- 戦闘で何もせずにフェイズを終えようとしたら、一度だけ止めて具体的な手を示す ---------- */

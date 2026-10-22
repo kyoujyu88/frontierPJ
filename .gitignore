@@ -4,3 +4,9 @@ node_modules/
 mcp/notes/
 mcp/recordings/
 *.webm
+# ローカル版の生成物（local/build_local.py で作り直せる）
+local/frontier-war/
+local/frontier-war-local.zip
+local/.build-*/
+# フォント原本（約11MB。入手先と sha256 は local/_src/fonts/SOURCES.txt）
+local/_src/fonts/*.ttf

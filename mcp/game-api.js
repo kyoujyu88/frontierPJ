@@ -99,7 +99,12 @@ function moveOptions(f){
   if(f.moved)return[];
   const adj=neighbors(f.node),out=[];
   for(const p of S.planets){
-    if(p.id===f.node)continue;
+    if(p.id===f.node){
+      // 艦隊戦に勝って敵・中立の星に残ったときは、その星にいるまま攻略できる（to に今の星を指定）
+      const k=typeof assaultHere==="function"&&assaultHere(f);
+      if(k)out.push({to:p.id,name:p.name,kind:k==="巣への突入戦"?"深淵の巣への突入戦（いまいる星）":`惑星攻略戦（いまいる星・${OWNER_LABEL[p.owner]}・防衛力${p.def}）`});
+      continue;
+    }
     const isAdj=adj.includes(p.id),warp=!isAdj&&p.owner==="P";
     if(!isAdj&&!warp)continue;
     if(p.id===HIVE&&!S.monster)continue;
@@ -112,6 +117,7 @@ function moveOptions(f){
     else kind=warp?"亜空間移動":"移動";
     out.push({to:p.id,name:p.name,kind});
   }
+  if(typeof hasBomb==="function"&&!hasBomb(f))out.forEach(o=>{if(/攻略|突入/.test(o.kind))o.kind+="（爆装なし：中枢を壊せない）"});
   return out;
 }
 function fleetInfo(f){
@@ -139,7 +145,7 @@ function researchInfo(){
   return{currentClass:CLASSES[S.tier].name,tier:S.tier,
     next:open?{class:next,name:CLASSES[next].name,type:CLASSES[next].type,progress:S.research,need:CLASSES[next].research}:null,
     note:open?null:(next===4&&!S.monster?"現行技術の上限。異生体出現後にセラフ級の研究が解禁される":"全艦級開発済み"),
-    labPerTurn:labRate(),refitCap:capOf("P")};
+    labPerTurn:open?labRate():0,refitCap:capOf("P")};
 }
 function getState(){
   if(!S)return{started:false};
@@ -180,7 +186,7 @@ function battleState(){
   });
   const grid=[];
   for(let y=0;y<BH;y++){let row="";for(let x=0;x<BW;x++){const u=unitAt(x,y);row+=u?unitLabel(u):(typeof isRock==="function"&&isRock(x,y))?"#":"."}grid.push(row)}
-  return{title:B.title,tip:B.tip,formation:B.form&&typeof FORM!=="undefined"?`${FORM[B.form].name}：${FORM[B.form].tip}`:null,phase:B.ended?"終了":B.phase==="P"?"自軍フェイズ":"敵軍フェイズ",ended:!!B.ended,result:B.result||null,
+  return{title:B.title,tip:B.tip,formation:B.form&&typeof FORM!=="undefined"?`${FORM[B.form].name}：${FORM[B.form].tip}`:null,phase:B.ended?"終了":B.phase==="P"?"自軍フェイズ":"敵軍フェイズ",round:B.round,maxRound:typeof roundCap==="function"?roundCap():null,ended:!!B.ended,result:B.result||null,
     board:{width:BW,height:BH,note:"x=0..10（左→右）, y=0..6（上→下）。大文字=自軍, 小文字=敵, #=小惑星（通れない）",grid},
     units,messages:B.msg.slice(0,8)};
 }
@@ -191,9 +197,10 @@ function shipShort(x){
   if(x.alloc)return`${x.flagship?"★":""}${x.name}${x.hp}/${x.maxHp}[装${x.alloc.sh}砲${x.alloc.ca}ミ${x.alloc.mi}爆${x.alloc.bo}機${x.alloc.sp}]`;
   return`${x.flagship?"★":""}${x.name}${x.hp}/${x.maxHp}`;
 }
+function resultLabel(r){return(typeof RESULT_LABEL!=="undefined"&&RESULT_LABEL[r])||(r==="win"?"勝利":r==="retreat"?"撤退":"敗北")}
 function battleSummary(){
   const b=battleState(),L=[];
-  L.push(`【戦闘】${b.title}／${b.phase}${b.ended?`（結果：${b.result==="win"?"勝利":b.result==="retreat"?"撤退":"敗北"}。battle_close で戻る）`:""}`);
+  L.push(`【戦闘】${b.title}／${b.ended?b.phase:`ROUND ${b.round}${b.maxRound?`/${b.maxRound}`:""}・${b.phase}`}${b.ended?`（結果：${resultLabel(b.result)}。battle_close で戻る）`:""}`);
   L.push(`ヒント：${b.tip}`);
   if(b.formation)L.push(`自軍の陣形：${b.formation}`);
   L.push("盤面（x→0..10, y↓0..6。大文字=自軍, 小文字=敵, #=小惑星で通れない）");
@@ -230,7 +237,7 @@ function devSummary(st){
       else if(f.ships.some(x=>x.class<S.tier))L.push(` 造船：${f.name} build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で旧艦を${CLASSES[S.tier].name}に置換`);
     }
     const bo=f.ships.reduce((s,x)=>s+(x.alloc?.bo||0),0);
-    if(!bo&&f.moveOptions.some(o=>o.kind.includes("攻略"))){
+    if(!bo&&f.moveOptions.some(o=>/攻略|突入/.test(o.kind))){
       const x=f.ships[f.ships.length-1],a=x.alloc,ch={bo:1};
       if(x.points.used>=x.points.max){const k=["ca","sh","sp","mi"].sort((p,q)=>a[q]-a[p])[0];ch[k]=a[k]-1} // 空きがなければ一番多い項目から1つ回す
       L.push(` 改装：${f.name} は爆装0なので惑星を落とせない → refit_ship(fleet_id=${f.id}, ship_index=${x.index}, ${Object.entries(ch).map(([k,v])=>`${k}=${v}`).join(", ")})（書かない項目は今の値のまま）`);
@@ -248,9 +255,9 @@ function getSummary(){
   if(st.over)L.push(`【ゲーム終了：${st.over==="win"?"勝利":"敗北"}】`);
   const r=st.research;
   L.push(`【ターン${st.turn}（星暦${st.year}年）】資金${st.funds}（収入+${st.incomePerTurn}/ターン）`);
-  L.push(`研究：${r.next?`${r.next.name}（${r.next.type}）${r.next.progress}/${r.next.need}`:r.note}・研究所+${r.labPerTurn}/ターン・改装上限${r.refitCap}`);
+  L.push(`研究：${r.next?`${r.next.name}（${r.next.type}）${r.next.progress}/${r.next.need}`:r.note}${r.next?`・研究所+${r.labPerTurn}/ターン`:""}・改装上限${r.refitCap}`);
   const sit=st.situation;
-  L.push(`情勢：${sit.xenoAppeared?`異生体出現中${sit.xenoEvolved?"（進化済：正面が弱点）":"（側面が弱点）"}`:"異生体は未出現（ターン18かヴァルガ本星占領で出現）"}${sit.truceWithVarga?"・ヴァルガと休戦中":""}・敵の艦級${sit.enemyTier}`);
+  L.push(`情勢：${sit.xenoAppeared?`異生体出現中${sit.xenoEvolved?"（進化済：新しく湧く群れは正面が弱点、進化前の群れは側面）":"（側面が弱点）"}`:"異生体は未出現（ターン18かヴァルガ本星占領で出現）"}${sit.truceWithVarga?"・ヴァルガと休戦中":""}・敵の艦級${sit.enemyTier}`);
   const dev=devSummary(st);if(dev)L.push(dev);
   L.push("■自軍艦隊");
   if(!st.myFleets.length)L.push(" なし（造船所のある星で new_fleet）");
@@ -329,7 +336,7 @@ const api={
     if(opt.kind.startsWith("不可"))fail(`${p.name} へは進めません：${opt.kind}`);
     showAction(`${f.name} → ${p.name}（${opt.kind}）`);
     S.sel=f.node;S.selFleet=f.id;S.mode="move";render();await sleep(pace);
-    S.mode=null;await orderMove(f,p.id,!neighbors(f.node).includes(p.id));
+    S.mode=null;await orderMove(f,p.id,p.id!==f.node&&!neighbors(f.node).includes(p.id));
     return`${f.name} を ${p.name} へ：${opt.kind}`;
   }),
   intercept:(fleetId)=>act("intercept",async()=>{
@@ -383,7 +390,7 @@ const api={
     const cc=bcost(ci,yp);
     focusPlanet(f.node,f.id);
     if(replace){
-      const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<f.ships[m].cls)?i:m,-1);
+      const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<=f.ships[m].cls)?i:m,-1); // 同じ艦級なら随伴艦から（ゲームの造船所と同じ）
       if(worst<0)fail(`${f.name} に ${c.name} より旧式の艦がいません`);
       const refund=Math.floor(CLASSES[f.ships[worst].cls].cost/2);
       if(S.funds+refund<cc)fail(`資金不足：実費 ${cc-refund} 必要（現在 ${S.funds}）`);
@@ -458,6 +465,7 @@ const api={
     const a=bestAttack(u,t);
     if(!a)fail(t.core?`${t.name} は爆装（射程1）でしか攻撃できません。距離 ${dist(u,t)}`:`${t.name} は射程外です（距離 ${dist(u,t)}）`);
     B.sel=u.uid;renderBattle();showAction(`${u.name} → ${t.name}（${a.w.n}${a.zone?"・"+a.zone:""}）`);await sleep(pace);
+    if(!B||B.busy||B.ended||u.acted||t.hp<=0)fail("待っている間に戦況が変わりました。状況を確かめ直してください");
     B.sel=null;B.busy=true;doAttack(u,t,a).then(()=>{B.busy=false;afterPlayerAct()});
     return`${u.name} が ${t.name} を${a.w.n}で攻撃（予測 ${a.dmg}）`;
   }),
@@ -468,6 +476,7 @@ const api={
     x=Number(x);y=Number(y);
     if(!reach(u).some(([a,b])=>a===x&&b===y))fail(`(${x},${y}) へは移動できません。移動可能：${JSON.stringify(reach(u))}`);
     B.sel=u.uid;renderBattle();showAction(`${u.name} が (${x},${y}) へ移動`);await sleep(pace);
+    if(!B||B.busy||B.ended||u.acted||unitAt(x,y))fail("待っている間に戦況が変わりました。状況を確かめ直してください");
     B.sel=null;B.busy=true;doMove(u,x,y).then(()=>{B.busy=false;afterPlayerAct()});
     return`${u.name} を (${x},${y}) へ移動`;
   }),
@@ -487,7 +496,7 @@ const api={
   battleClose:()=>act("bclose",async()=>{
     ensureBattle(false);if(!B.ended)fail("戦闘はまだ続いています");
     const r=B.result;closeBattle();await sleep(150);
-    return`作戦卓へ戻りました（結果：${r==="win"?"勝利":r==="retreat"?"撤退":"敗北"}）`;
+    return`作戦卓へ戻りました（結果：${resultLabel(r)}）`;
   }),
 
   rules:()=>RULES
@@ -497,27 +506,32 @@ const RULES=`# 辺境星系戦記 ルール要約（AIプレイヤー向け）
 目的：北東の「深淵の巣」の中枢を破壊すれば勝利。主星アステリア（ID 0）を奪われたら敗北。
 ## ターンの流れ
 - 自軍艦隊（最大3つ・各最大4隻）は1ターンに1回、隣接する星へ移動するか、自国の星へ亜空間移動できる。
-- 敵艦隊のいる星へ入ると艦隊戦、敵や中立の星へ入ると惑星攻略戦（戦術戦闘）になる。勝てばその星を占領。
-- end_turn で収入と研究が入り、敵が動く。敵が自軍艦隊のいる星を襲うと防衛戦が始まる。
-- ターン18か、ヴァルガ本星（ID 6）占領で異生体ゾアが出現。ヴァルガがまだ健在なら休戦になる。巣からは群れが何度も湧く。ゾアを3回撃破すると進化（改）する。
+- 敵艦隊のいる星へ入ると艦隊戦、敵や中立の星へ入ると惑星攻略戦（戦術戦闘）になる。攻略戦に勝てばその星を占領（艦隊戦に勝っただけでは占領しない）。
+- 艦隊戦に勝って敵・中立の星に残ったときは、次のターンに move_fleet の to にいまいる星を指定すると、その場から惑星攻略戦を始められる（移動先に「いまいる星」と出る）。
+- end_turn で収入と研究が入り、敵が動く。敵が自軍艦隊のいる星を襲うと防衛戦が始まる（その星でいちばん強い自軍艦隊が迎え撃つ。負けても同じ星に別の自軍艦隊が残っていれば星は守られる）。ヴァルガは同じ星に居座る自軍艦隊も攻める。
+- 自軍艦隊のいない星に敵が入ると、敵の戦力（耐久合計÷3）が防衛力を上回れば陥落。下回れば防衛力が戦力の半分減り、敵はその星に居座る（迎撃できる）。中立の星はヴァルガが入るだけで併合。自国の星の防衛力は毎ターン+3回復。
+- 敵の艦級は6ターンごとに上がる（ターン7・13・19）。ヴァルガは本星から3ターンごとに増援を出す。
+- ターン18か、ヴァルガ本星（ID 6）占領で異生体ゾアが出現。そのときヴァルガ本星がヴァルガ領なら休戦になり、最後まで解けない（ヴァルガ艦隊は自領へ引き上げて動かなくなる。休戦中はヴァルガの星・ヴァルガ艦隊のいる星へ入れず、迎撃もできない）。巣からは群れが何度も湧く。群れに艦隊戦で3回勝つと進化し、以後に湧く群れは改になる（すでにいる群れは改にならない）。異生体に浸食された星は施設がなくなる。
 ## 内政
-- 研究投資（30/60/120）で次の艦級を開発。完成で改装上限（各項目）+1。セラフ級（対異生体、異生体に1.5倍）はゾア出現後に解禁。
+- 研究投資（30/60/120）で次の艦級を開発。完成で改装上限（各項目）+1。セラフ級（対異生体。異生体と浸食核・巣の中枢への攻撃が1.5倍）はゾア出現後、アークライト級の次に開発できる。
 - 艦級：0 ラーク級(耐久12,P6,40) 1 ファルコ級(20,P9,70,研究120) 2 グレイヴ級(30,P12,110,研究220) 3 アークライト級(44,P16,160,研究330) 4 セラフ級(56,P20,200,研究380)
 - 造船：造船所のある自国の星で、艦隊に追加建造（工業惑星は20%引き）か、旧艦と置換（旧艦の半額下取り）。
-- 施設（スロット数まで）：mine 採掘所60（収入+15、鉱物惑星+30）／yard 造船所80／sats 防衛衛星群50（防衛上限+20、要塞+35）／lab 研究所70（毎ターン研究+10、遺跡+25）／flak 対空砲台60（この星での防衛戦開始時に敵全艦5ダメージ）。
-- 遺跡惑星に研究所があると、ゾア出現時にセラフ級研究が大きく進む。
+- 施設（スロット数まで）：mine 採掘所60（収入+15、鉱物惑星+30）／yard 造船所80／sats 防衛衛星群50（防衛上限+20、要塞+35）／lab 研究所70（毎ターン研究+10、遺跡+25。開発できる艦級がないあいだは貯まらない）／flak 対空砲台60（この星での艦隊戦〈防衛戦・迎撃〉の開始時に敵全艦5ダメージ）。
+- 遺跡惑星に研究所があると、ゾア出現時に研究 +150×その数（そのとき開発中の艦級に入り、完成時の余りは次へ持ち越し）。
 - 小惑星探査40（45%で収入+20）、防衛修復30（防衛+15）、修理（損傷の半分の資金）。
 ## 改装（艦ごと）
 - ポイント配分：sh装甲・ca主砲・mi ミサイル・bo爆装・sp機関。合計は艦級のP以下、各項目は改装上限以下。refit_ship は変える項目だけ書けばよい（書かない項目は今の値のまま）。
-- 主砲＝3+主砲×2（射程1〜2）。ミサイル＝2+ミサイル×1.5（射程2〜4、1以上で搭載）。爆装＝4+爆装×3（射程1、惑星中枢・巣の中枢を壊せる唯一の武器）。移動＝1+機関。装甲は被ダメージ軽減（×10/(10+2×装甲)）。
+- 主砲＝3+主砲×2（射程1〜2）。ミサイル＝2+ミサイル×1.5を四捨五入（射程2〜4、1以上で搭載）。爆装＝4+爆装×3（射程1、中枢〈惑星中枢・浸食核・巣の中枢〉にだけ当たり、それらを壊せる唯一の武器）。移動＝1+機関。装甲は被ダメージ軽減（×10/(10+2×装甲)）。
 - 惑星攻略・巣の攻略には爆装を持つ艦が必須。
 ## 戦術戦闘（11×7マス）
 - 1隻につき1回、移動か攻撃のどちらか。行動後は向きが変わる（移動方向・攻撃方向を向く）。
 - 旗艦★を沈めた側の勝ち（敵が全滅しても勝ち）。惑星攻略戦は中枢★を爆装で落とせば勝ち。
+- 敵も1手番に移動か攻撃のどちらかしかできない。次の敵フェイズに撃たれるのは、敵の今の位置からの射程に入っているマスだけ。
 - 向きによるダメージ倍率：通常艦は正面1.0・側面1.25・背面1.6。異生体は正面0.8・側面1.6・背面1.0、進化後は正面1.6・ほか0.9。
-- 撤退すると艦隊は主星へ戻る（防衛戦で撤退するとその星は敵に攻められる）。
+- 撤退・敗北すると、残った艦は主星へ戻る（防衛戦で撤退・敗北すると、その星は敵に攻められる）。
+- ラウンド上限は艦隊戦12・惑星攻略戦と巣20。決着がつかなければ、防衛戦は持ちこたえて終わり（敵は退く）、攻めた側は出撃元にとどまる。
 - 艦隊戦の盤面には小惑星（盤面図の #）があることがあり、通れない。
-- ヴァルガ艦隊には戦い方の違う種類がある（状況テキストの〈突撃〉など。get_state なら otherFleets の doctrine）：戦列＝正面から押す／突撃＝旗艦へ突っ込む／砲撃＝距離を取ってミサイル／重装＝旗艦を盾艦で守る／強襲＝側面・背後へ回り込み、星図でも2星進む。
+- ヴァルガ艦隊には戦い方の違う種類がある（状況テキストの〈突撃〉など。get_state なら otherFleets の doctrine）：戦列＝正面から押す／突撃＝旗艦へ突っ込む／砲撃＝距離を取ってミサイル／重装＝旗艦を盾艦で守る／強襲＝側面・背面へ回り込み、星図でもヴァルガ領を通るときは1ターンに2星進む。
 - 自軍艦隊は陣形を持つ（set_formation、いつでも変更でき行動は消費しない）。戦闘開始時の並びと補正が変わる：line 横陣＝標準・補正なし／wedge 楔形＝前に出て始まり1ラウンド目は移動+1（旗艦も前に出る）／square 方陣＝旗艦を囲む、旗艦の隣に味方がいる間は旗艦の被ダメージ-25%／crane 鶴翼＝両翼が前に出る、側面・背面への攻撃+15%／rear 後衛陣＝後ろに下がって始まる、ミサイル+1。目安：突撃や強襲には方陣、砲撃には楔形、重装には鶴翼、ミサイル艦が多ければ後衛陣。
 - 戦闘が終わったら battle_close で作戦卓へ戻る。
 ## 操作上の注意

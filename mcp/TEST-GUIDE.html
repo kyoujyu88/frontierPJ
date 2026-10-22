@@ -223,7 +223,7 @@ npm install</code></pre></div>
       <ul class="checks">
         <li><input type="checkbox" id="c-s-1"><div class="body"><label for="c-s-1">窓なしで30ターン通しプレイが最後まで走った</label>
           <div class="cmd"><pre><code>npm test</code></pre></div>
-          <p class="why">こちらの環境で約30秒。最初に <code>27 tools</code>、続いて <code>ターン1 資金160 …</code> とターンが進み、最後に次の2行が出れば成功です。</p>
+          <p class="why">こちらの環境で約30秒。最初に <code>28 tools</code>、続いて <code>ターン1 資金160 …</code> とターンが進み、最後に次の2行が出れば成功です。</p>
           <pre><code class="out">最終：ターン18 資金1678 over=lose 自国惑星1 異生体=true
 ツール呼び出し 339 回、拒否 10 回</code></pre>
           <p class="why">ボットは単純なので、負けて途中で終わること（<code>over=lose</code>）や、<code>✗ battle_state: 戦闘中ではありません</code> のような <code>✗</code> 行が混じるのは正常です。「押せない操作をしたら理由つきで断られる」仕組みが働いている印です。</p></div></li>
@@ -296,7 +296,7 @@ Invoke-RestMethod http://192.168.0.75:11434/api/create -Method Post -Body $body<
 ollama ps</code></pre></div>
           <p class="why"><code>ollama ps</code> の <code>PROCESSOR</code> が <code>100% GPU</code> なら理想です。<code>CPU/GPU</code> に分かれていると、はみ出した分だけ遅くなります。そのときは1段小さいモデルか、コンテキストを 16384 に下げます。</p></div></li>
       </ul>
-      <div class="note warn"><p><strong>README の比較例にある <code>gemma3</code> はツール呼び出しに対応していません。</strong>つなぐと <code>LLM API 400: … does not support tools</code> で止まります。モデル比べをするときは、<code>tools</code> 対応のモデル同士で比べてください。</p></div>
+      <div class="note warn"><p><strong><code>gemma3</code> など、ツール呼び出しに対応していないモデルは使えません。</strong>つなぐと <code>LLM API 400: … does not support tools</code> で止まります。モデル比べをするときは、<code>tools</code> 対応のモデル同士で比べてください。</p></div>
     </section>
 
     <section class="step" id="play" data-title="のあに遊ばせる">

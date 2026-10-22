@@ -1,0 +1,18 @@
+build_local.py が使うフォントの原本（TTF）。サイズが大きいのでリポジトリには入れていない。
+下の場所から入手して、このフォルダに同じ名前で置く。どちらも SIL Open Font License 1.1。
+
+DotGothic16-Regular.ttf   Version 1.100
+  https://github.com/google/fonts/tree/main/ofl/dotgothic16
+  上流: https://github.com/fontworks-fonts/DotGothic16
+  sha256 3ad9af88726d42b40f7f365f0dcac785af73cf20ea6f1d5b44e57cc21150b8f1
+
+BIZUDPGothic-Regular.ttf  Version 1.051
+  https://github.com/google/fonts/tree/main/ofl/bizudpgothic
+  上流: https://github.com/googlefonts/morisawa-biz-ud-gothic
+  sha256 258d7156c165f2ff774b6efee637c22c3b950de0d8a10e501137061bc8085d01
+
+BIZUDPGothic-Bold.ttf     Version 1.051
+  （入手先は Regular と同じ）
+  sha256 30eba52fc837e8b62c97d4b82e6706583149fb7294e3712dd71a655eaea80a90
+
+版が違っても build_local.py は動く（sha256 は照合していない）。

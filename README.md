@@ -7,6 +7,7 @@ PCエンジンの「シュヴァルツシルト」のゲーム性を受け継い
 |---|---|
 | `game/` | ゲーム本体（単一 HTML `frontier-war.html`）と画像 `art/`・音 `audio/`。ブラウザで開けば遊べる |
 | `mcp/` | MCP サーバー・AI プレイヤー・操作盤・テスト。使い方は [mcp/README.md](mcp/README.md) |
+| `local/` | ネット接続なしでダブルクリックで遊べるローカル版を作るスクリプト。`python3 local/build_local.py` で `local/frontier-war/` と zip ができる（要 `pip install fonttools brotli`。フォント原本の入手先は `local/_src/fonts/SOURCES.txt`） |
 
 ```sh
 cd mcp

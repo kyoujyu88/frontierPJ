@@ -14,7 +14,7 @@
   color-scheme:dark;
 }
 html,body{height:100%}
-body{background:var(--void);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.55;
+body{margin:0;background:var(--void);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.55;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px;box-sizing:border-box}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -113,25 +113,37 @@ aside.side{display:flex;flex-direction:column;gap:10px;min-width:0}
 .bbar{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--deck);border:1px solid var(--line);border-radius:6px;padding:8px 10px;z-index:2;grid-column:1}
 .bbar .bb-info{flex:1 1 140px;min-width:0;font-family:var(--f-display);font-size:14px}
 .mbar{display:none}
-@media (pointer:coarse){button{min-height:42px;padding:8px 14px}.alloc{grid-template-columns:56px 40px 1fr 40px 20px}.alloc button{height:38px;width:40px}}
-@media (max-width:700px){
-  body{padding-block:8px 0}
-  header.bar{gap:4px 12px}
-  header.bar h1{font-size:20px;flex-basis:100%}
+@media (pointer:coarse){button{min-height:44px;padding:8px 14px}.alloc{grid-template-columns:56px 44px 1fr 44px 20px}.alloc button{height:44px;width:44px}}
+/* 指令パネルの並び（既定）：駐留艦隊を先頭に。PCの固定レイアウトでは下の @media で並べ直す */
+.side .p-fleet{order:1}.side .p-planet{order:2}.side .p-all{order:3}.side .p-research{order:4}
+/* スマホ・タブレット：ターン終了などを画面下の操作バーに */
+@media (max-width:900px){
   #btnEnd{display:none}
-  .stat{font-size:13px}
-  .side .p-fleet{order:1}.side .p-planet{order:2}.side .p-all{order:3}.side .p-research{order:4}
   .app{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
   .mbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:12;gap:8px;align-items:center;background:var(--deck);border-top:1px solid var(--line);
     padding:8px max(12px,env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px))}
   .mb-info{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
   .mb-fleet{font-size:12.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .battle{padding-left:8px;padding-right:8px}
-  .bhead h2{font-size:16px}.bhead .hint{display:block;font-size:11.5px}
-  .bbar{bottom:env(safe-area-inset-bottom,0px)}
-  .bbar button{flex:1}
-  .bbar .bb-info{flex-basis:100%}
+  .mbar .cancel{border-color:var(--move-line);color:#9fd4ff}
+  #mbEnd{margin-left:12px}
 }
+@media (max-width:700px){
+  body{padding-block:8px 0}
+  header.bar{gap:4px 12px}
+  header.bar h1{font-size:20px;flex-basis:100%}
+  .stat{font-size:13px}
+  .battle{padding-left:8px;padding-right:8px}
+  .bhead{flex-wrap:nowrap;flex-direction:column;gap:2px}
+  .bhead h2{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .bhead .hint{display:block;font-size:11.5px}
+  .bbar{bottom:env(safe-area-inset-bottom,0px)}
+  .bbar button{flex:1;white-space:nowrap;padding-inline:6px}
+  .bbar .bb-info{flex-basis:100%}
+  #bsvg{max-height:calc(100dvh - 230px)}
+}
+/* 演出・敵の行動中は、押せないことが見た目でも分かるように */
+body.anim .side,body.anim .sideL,body.anim .mbar button{opacity:.55;filter:saturate(.5)}
+#battle:not([hidden]) ~ #ffwd{display:none!important}
 .slots{display:flex;flex-direction:column;gap:6px}
 .slot{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid var(--line);border-radius:5px;padding:6px 8px}
 .slot.empty{border-style:dashed}
@@ -172,7 +184,7 @@ aside.sideL{display:none}
 .tip .act{color:#9fd4ff;font-family:var(--f-display)}
 .tip hr{border:0;border-top:1px solid var(--line);margin:3px 0;width:100%}
 /* PC（広い画面）：画面全体を使い、ページはスクロールさせない。指令パネルだけスクロール */
-@media (min-width:1100px) and (min-height:620px){
+@media (min-width:1100px) and (min-height:560px){
   body{height:100vh;overflow:hidden;padding-block:10px}
   .app{max-width:none;height:100%}
   .layout{flex:1;min-height:0;grid-template-columns:minmax(0,1fr) 370px;grid-template-rows:minmax(0,1fr);align-items:stretch}
@@ -193,10 +205,11 @@ aside.sideL{display:none}
   .bgrid>.bfield,.bgrid>.bbar{width:min(100%,calc((100vh - 190px) * 11 / 7));justify-self:center}
   .bgrid>#bSide{justify-self:stretch;max-height:calc(100vh - 110px);overflow-y:auto}
 }
-@media (min-width:1600px) and (min-height:620px){
+@media (min-width:1600px) and (min-height:560px){
   .layout{grid-template-columns:300px minmax(0,1fr) 380px}
   aside.sideL{display:flex}
 }
+@media (min-width:2200px) and (min-height:560px){.battle-in{max-width:none}.bgrid{grid-template-columns:minmax(0,1fr) 380px}}
 @media (pointer:coarse){.kbd,.maphint,.kbd-help{display:none!important}}
 </style>
 
@@ -272,9 +285,9 @@ const TRAITS={
 const FAC={
   mine:{name:"採掘所",mark:"採",cost:60,desc:p=>`収入 +${p.trait==="鉱物"?30:15}`},
   yard:{name:"造船所",mark:"造",cost:80,desc:p=>p.trait==="工業"?"造船・新艦隊の編成（建造費20%引き）":"造船・新艦隊の編成"},
-  sats:{name:"防衛衛星群",mark:"衛",cost:50,desc:p=>p.trait==="要塞"?"防衛力上限 +35・攻略戦の衛星 +2":"防衛力上限 +20・攻略戦の衛星 +1"},
+  sats:{name:"防衛衛星群",mark:"衛",cost:50,desc:p=>`防衛力上限 +${p.trait==="要塞"?35:20}（建設時に防衛力 +15）${p.owner!=="P"?`・攻略戦の衛星 +${p.trait==="要塞"?2:1}`:""}`},
   lab:{name:"研究所",mark:"研",cost:70,desc:p=>`毎ターン研究 +${p.trait==="遺跡"?25:10}`},
-  flak:{name:"対空砲台",mark:"砲",cost:60,desc:()=>"この星で迎え撃つ戦闘の開始時、敵全艦に5ダメージ"}
+  flak:{name:"対空砲台",mark:"砲",cost:60,desc:()=>"この星での艦隊戦（防衛戦・迎撃）の開始時、敵全艦に5ダメージ。包囲してくる敵の消耗も増やす"}
 };
 //          特性,  スロット, 初期施設
 const PLANET_DEV={0:["工業",4,["yard","mine"]],1:["鉱物",2,[]],2:["要塞",2,[]],3:["鉱物",3,[]],4:["工業",3,[]],5:["なし",2,[]],
@@ -287,7 +300,7 @@ const DOC={
   assault:{name:"突撃戦隊",tag:"突撃",order:["ca","sp","ca","sh","sp","ca"],form:[[8,3],[9,2],[9,4],[10,3]],role:"assault",flagRole:"assault",tip:"旗艦めがけて一気に突っ込んでくる。迎え撃て。"},
   missile:{name:"砲撃戦隊",tag:"砲撃",order:["mi","mi","sh","mi","sp","sh","mi"],form:[[10,3],[9,0],[9,6],[10,5]],role:"sniper",flagRole:"keep",tip:"距離を取ってミサイルを撃ってくる。懐に飛び込め。"},
   heavy:{name:"重装戦隊",tag:"重装",order:["sh","sh","ca","sh","ca","sp"],form:[[10,3],[9,2],[9,4],[8,3]],role:"guard",flagRole:"keep",tip:"盾艦が旗艦を囲んで守る。守りを崩すか回り込め。"},
-  raid:{name:"強襲戦隊",tag:"強襲",order:["sp","sp","ca","sp","ca","mi"],form:[[9,3],[6,0],[6,6],[10,5]],role:"flank",flagRole:"flank",tip:"足が速く、側面や背後へ回り込んでくる。向きに注意。"}
+  raid:{name:"強襲戦隊",tag:"強襲",order:["sp","sp","ca","sp","ca","mi"],form:[[9,3],[6,0],[6,6],[10,5]],role:"flank",flagRole:"flank",tip:"足が速く、側面や背面へ回り込んでくる。向きに注意。"}
 };
 const DOC_KEYS=Object.keys(DOC);
 const docOf=f=>DOC[f&&f.doc]||DOC.line;
@@ -345,13 +358,15 @@ function newGame(){
   S.fleets.push(f1,f2);
   S.fleets.push(vargaFleet("ヴァルガ前衛",9,3,Math.random()<.5?"assault":"raid"));
   S.fleets.push(vargaFleet("ヴァルガ本隊",6,4,Math.random()<.5?"heavy":"missile"));
-  S.selFleet=f1.id;
+  S.selFleet=f1.id;COMMQ.length=0;
   log("星暦3990年。辺境星系アステリアに戦雲が迫る。");
   showIntro();
 }
 
 /* ============ ユーティリティ ============ */
 const $=id=>document.getElementById(id);
+const TAP=window.matchMedia("(pointer:coarse)").matches?"タップ":"クリック"; // 説明文の言い方（タッチ端末かマウスか）
+let lastPtr="mouse";document.addEventListener("pointerdown",e=>{lastPtr=e.pointerType||"mouse"},{capture:true,passive:true});
 function h(tag,attrs,...kids){const e=document.createElement(tag);if(attrs)for(const k in attrs){if(k.startsWith("on"))e.addEventListener(k.slice(2),attrs[k]);else if(k==="html")e.innerHTML=attrs[k];else if(attrs[k]!==false&&attrs[k]!=null)e.setAttribute(k,attrs[k])}for(const k of kids.flat()){if(k==null||k===false)continue;e.append(k.nodeType?k:document.createTextNode(String(k)))}return e}
 function svgEl(tag,attrs){const e=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const k in attrs)e.setAttribute(k,attrs[k]);return e}
 function log(msg){S.log.unshift(`[${3989+S.turn}] ${msg}`);if(S.log.length>40)S.log.pop()}
@@ -373,10 +388,15 @@ function bfsPath(from,goalFn,avoid){
   return null;
 }
 function fleetPower(f){return f.ships.reduce((s,x)=>s+x.hp,0)/3}
+function defenders(node){return fleetsAt(node,"P").filter(f=>f.ships.length).sort((a,b)=>fleetPower(b)-fleetPower(a))}
+function forcePower(fs){return fs.reduce((s,f)=>s+fleetPower(f),0)}
+function xenoEnter(f,to){f.node=to;fleetsAt(to,"E").forEach(ef=>{S.fleets=S.fleets.filter(x=>x!==ef);log(`${ef.name}が異生体に呑み込まれた。`)})}
 
 /* ============ 描画：星図 ============ */
 function render(){
   if(!S)return;
+  // 指令パネルは毎回作り直すので、キーボードで押したボタンのフォーカスを同じ文字のボタンへ戻す
+  const ae=document.activeElement,fk=ae&&ae.tagName==="BUTTON"&&ae.closest(".side")?ae.textContent:null;
   $("hTurn").textContent=`${3989+S.turn}年`;
   $("hFunds").textContent=S.funds;
   $("hIncome").textContent=`+${income()}`;
@@ -384,12 +404,16 @@ function render(){
   $("btnEnd").disabled=!!S.over||!!B||ANIM.busy>0;
   renderMap();renderSide();
   $("log").replaceChildren(...S.log.slice(0,14).map(t=>h("p",null,t)));
+  if(fk&&document.activeElement===document.body)[...document.querySelectorAll(".side button")].find(x=>x.textContent===fk&&!x.disabled)?.focus({preventScroll:true});
+  nextComm();autosave();
 }
 function ownerColor(o){return{P:"var(--ally)",E:"var(--foe)",N:"var(--neutral)",M:"var(--xeno)",H:"var(--xeno)"}[o]}
 function isNarrow(){return window.matchMedia("(max-width:700px)").matches}
 /* 星図座標：PCは横長、スマホは縦長（主星が下、深淵が上） */
 function mpos(p){return isNarrow()?{x:p.y,y:(960-p.x)*.75}:{x:p.x,y:p.y}}
-function markerPos(p,i){const{x,y}=mpos(p),r=p.id===HIVE?26:10+planetIncome(p)/6;return[x-r-14-i*15,y-r-2]}
+/* 艦隊マーカーは星の左上に横に並べる。星図の左端に収まらない分は下の段へ */
+function markerPos(p,i){const{x,y}=mpos(p),r=p.id===HIVE?26:10+planetIncome(p)/6,step=isNarrow()?19:15,x0=x-r-14,k=Math.max(1,Math.floor((x0-8)/step)+1);
+  return[x0-(i%k)*step,y-r-2+Math.floor(i/k)*step]}
 function renderMap(){
   const svg=$("map");svg.replaceChildren();
   const narrow=isNarrow();
@@ -398,7 +422,9 @@ function renderMap(){
   const g0=svgEl("g",{});for(let i=0;i<90;i++){const x=(i*97)%960,y=(i*53+i*i*7)%540,q=narrow?{x:y,y:(960-x)*.75}:{x,y};g0.append(svgEl("circle",{cx:q.x,cy:q.y,r:(i%5===0)?1.3:.7,fill:"#ffffff",opacity:(i%3+1)*.15}))}svg.append(g0);
   const selF=S.fleets.find(f=>f.id===S.selFleet);
   const targets=new Set(),warps=new Set();
-  if(S.mode==="move"&&selF){neighbors(selF.node).forEach(n=>targets.add(n));S.planets.forEach(p=>{if(p.owner==="P"&&p.id!==selF.node)warps.add(p.id)})}
+  const blocked=n=>S.truce&&(planet(n).owner==="E"||fleetsAt(n,"E").length>0); // 休戦中で進めない星
+  if(S.mode==="move"&&selF){neighbors(selF.node).forEach(n=>{if(!blocked(n))targets.add(n)});S.planets.forEach(p=>{if(p.owner==="P"&&p.id!==selF.node&&!blocked(p.id))warps.add(p.id)});if(assaultHere(selF))targets.add(selF.node)}
+  const hostile=n=>planet(n).owner!=="P"||S.fleets.some(x=>x.node===n&&x.side!=="P"); // 入ると戦闘になる星（赤い輪）
   for(const[a,b]of linksVisible()){const A=mpos(planet(a)),Bp=mpos(planet(b));
     const hot=selF&&S.mode==="move"&&((a===selF.node&&targets.has(b))||(b===selF.node&&targets.has(a)));
     svg.append(svgEl("line",{x1:A.x,y1:A.y,x2:Bp.x,y2:Bp.y,stroke:hot?"#3aa0ff":"#2b3566","stroke-width":hot?3:2,"stroke-dasharray":(a===HIVE||b===HIVE)?"6 5":"none"}))}
@@ -409,28 +435,30 @@ function renderMap(){
     const g=svgEl("g",{style:"cursor:pointer",tabindex:0,role:"button","aria-label":p.name});
     const r=p.id===HIVE?26:10+planetIncome(p)/6;
     g.append(svgEl("circle",{cx:x,cy:y,r:Math.max(r+14,36),fill:"transparent"}));
-    if(targets.has(p.id))g.append(svgEl("circle",{cx:x,cy:y,r:r+9,fill:"#3aa0ff22",stroke:"#3aa0ff","stroke-width":2.5}));
-    else if(warps.has(p.id))g.append(svgEl("circle",{cx:x,cy:y,r:r+9,fill:"none",stroke:"#3aa0ff","stroke-width":1.5,"stroke-dasharray":"3 4"}));
+    if(targets.has(p.id)){const hot=hostile(p.id);g.append(svgEl("circle",{cx:x,cy:y,r:r+9,fill:hot?"#ea5a4f22":"#3aa0ff22",stroke:hot?"#ff6b5e":"#3aa0ff","stroke-width":2.5}))}
+    else if(warps.has(p.id))g.append(svgEl("circle",{cx:x,cy:y,r:r+9,fill:"none",stroke:hostile(p.id)?"#ff6b5e":"#3aa0ff","stroke-width":1.5,"stroke-dasharray":"3 4"}));
     if(S.sel===p.id)g.append(svgEl("circle",{cx:x,cy:y,r:r+5,fill:"none",stroke:"#e4e7f4","stroke-width":1.5}));
     if(p.id===HIVE){
       g.append(svgImg(planetArt(p),x-r*1.3,y-r*1.3,r*2.6,r*2.6));
     }else{
       g.append(svgEl("circle",{cx:x,cy:y,r:r+1.5,fill:"#0e1430",stroke:ownerColor(p.owner),"stroke-width":3}));
       g.append(svgImg(planetArt(p),x-r*1.08,y-r*1.08,r*2.16,r*2.16));
-      for(let i=0;i<p.slots;i++)g.append(svgEl("rect",{x:x+r+5,y:y-r+i*8,width:6,height:6,fill:i<p.fac.length?ownerColor(p.owner):"none",stroke:ownerColor(p.owner),"stroke-width":1}));
-      if(p.trait!=="なし"){const tt=svgEl("text",{x:x+r+14,y:y-r+6,fill:TRAITS[p.trait].col,"font-size":11,"font-family":"DotGothic16, monospace"});tt.textContent=p.trait[0];g.append(tt)}
+      // スマホは縮小表示になるので、施設スロットと特性の文字を大きめに
+      const sq=narrow?9:6,gap=narrow?11:8;
+      for(let i=0;i<p.slots;i++)g.append(svgEl("rect",{x:x+r+5,y:y-r+i*gap,width:sq,height:sq,fill:i<p.fac.length?ownerColor(p.owner):"none",stroke:ownerColor(p.owner),"stroke-width":1}));
+      if(p.trait!=="なし"){const tt=svgEl("text",{x:x+r+sq+8,y:y-r+(narrow?12:6),fill:TRAITS[p.trait].col,"font-size":narrow?16:11,"font-family":"DotGothic16, monospace"});tt.textContent=p.trait[0];g.append(tt)}
     }
     const t=svgEl("text",{x,y:y+r+fs+3,"text-anchor":"middle",fill:"#e4e7f4","font-size":fs,"font-family":"DotGothic16, monospace"});t.textContent=p.name;g.append(t);
     // 艦隊マーカー
     S.fleets.filter(f=>f.node===p.id&&!ANIM.hide.has(f.id)).forEach((f,i)=>{
       const col=f.side==="P"?"#f2b84b":f.side==="E"?"#ea5a4f":"#b974ff";
-      const[fx,fy]=markerPos(p,i);
-      const tri=f.side==="P"?`${fx-7},${fy+6} ${fx+7},${fy} ${fx-7},${fy-6}`:f.side==="E"?`${fx+7},${fy+6} ${fx-7},${fy} ${fx+7},${fy-6}`:null;
+      const[fx,fy]=markerPos(p,i),m=narrow?1.35:1,a=7*m,b=6*m;
+      const tri=f.side==="P"?`${fx-a},${fy+b} ${fx+a},${fy} ${fx-a},${fy-b}`:f.side==="E"?`${fx+a},${fy+b} ${fx-a},${fy} ${fx+a},${fy-b}`:null;
       if(tri)g.append(svgEl("polygon",{points:tri,fill:col,stroke:f.id===S.selFleet?"#fff":"none","stroke-width":2,opacity:f.side==="P"&&f.moved?.45:1}));
-      else g.append(svgEl("circle",{cx:fx,cy:fy,r:7,fill:col,stroke:"#2a0d45","stroke-width":2}));
+      else g.append(svgEl("circle",{cx:fx,cy:fy,r:a,fill:col,stroke:"#2a0d45","stroke-width":2}));
     });
     g.addEventListener("click",()=>onPlanetClick(p.id));
-    g.addEventListener("contextmenu",e=>{e.preventDefault();hideTip();onPlanetRight(p.id)});
+    g.addEventListener("contextmenu",e=>{e.preventDefault();hideTip();if(lastPtr==="mouse")onPlanetRight(p.id)}); // タッチの長押しでは動かさない
     g.addEventListener("pointerenter",e=>{if(e.pointerType==="mouse")showTip(planetTip(p),e)});
     g.addEventListener("pointermove",e=>{if(e.pointerType==="mouse")moveTip(e)});
     g.addEventListener("pointerleave",hideTip);
@@ -438,7 +466,8 @@ function renderMap(){
     svg.append(g);
   }
   const hint=$("mapHint");if(hint)hint.textContent=S.mode==="move"?"移動先を左クリック／右クリックかEscで取消":"左クリック：星を選択　右クリック：選択中の艦隊をその星へ移動　M：移動　1〜3：艦隊の切替　E：ターン終了";
-  if(S.mode==="move"){const t=svgEl("text",{x:16,y:30,fill:"#3aa0ff","font-size":narrow?20:16,"font-family":"DotGothic16, monospace"});t.textContent=narrow?"移動先をタップ":"移動先を選択（実線：隣接星／点線：亜空間移動）";svg.append(t)}
+  if(S.mode==="move"){const t=svgEl("text",{x:16,y:narrow?706:30,fill:"#3aa0ff","font-size":narrow?20:16,"font-family":"DotGothic16, monospace",stroke:"#080b16","stroke-width":4,"paint-order":"stroke"});
+    t.textContent=(narrow?"移動先をタップ（赤＝戦闘）":"移動先を選択（実線：隣接星／点線：亜空間移動／赤：戦闘になる）")+(selF&&assaultHere(selF)?"・今いる星で攻略":"");svg.append(t)}
   renderMobileBar();
 }
 /* スマホ用の下部操作バー */
@@ -448,9 +477,11 @@ function renderMobileBar(){
   const moving=S.mode==="move"&&f;
   bar.replaceChildren(
     h("div",{class:"mb-info"},h("span",{class:"stat"},`資金`,h("b",null,S.funds)),h("span",{class:"mb-fleet"},f?`${f.name}・${planet(f.node).name}${f.moved?"（行動済）":""}`:"艦隊未選択")),
-    h("button",{id:"mbMove",class:moving?"primary":"",disabled:!f||f.moved||!!S.over,onclick:()=>{S.mode=moving?null:"move";render()}},moving?"取消":"移動"),
-    h("button",{id:"mbEnd",class:"primary",disabled:!!S.over||!!B||ANIM.busy>0,onclick:()=>endTurn()},"ターン終了"));
+    h("button",{id:"mbMove",class:moving?"cancel":"",disabled:!f||f.moved||!!S.over,onclick:()=>{S.mode=moving?null:"move";if(S.mode)S.sel=f.node;render();showMapForMove()}},moving?"取消":"移動"),
+    h("button",{id:"mbEnd",class:"primary",disabled:!!S.over||!!B||ANIM.busy>0,onclick:()=>askEndTurn()},"ターン終了"));
 }
+/* スマホで移動モードにしたら星図を画面に入れる */
+function showMapForMove(){if(isNarrow()&&S.mode==="move")$("map").scrollIntoView({block:"nearest",behavior:reduceMotion?"auto":"smooth"})}
 function shipSvg(cls,w,h,col){
   const s=svgEl("svg",{viewBox:"-50 -30 100 60",width:w,height:h});
   s.append(drawHull({cls,side:"P"},0,0,0,92,col||"#f2b84b",true));
@@ -458,11 +489,12 @@ function shipSvg(cls,w,h,col){
 }
 
 /* ============ 指令パネル ============ */
-function isWide3(){return window.matchMedia("(min-width:1600px) and (min-height:620px)").matches}
+function isWide3(){return window.matchMedia("(min-width:1600px) and (min-height:560px)").matches}
 function renderSide(){
   const side=$("side"),sideL=$("sideL");side.replaceChildren();sideL.replaceChildren();
   const left=isWide3()?sideL:side; // 横に広い画面では技術局と艦隊一覧を左列に
   const p=planet(S.sel);
+  if(renderSide.last!==S.sel){side.scrollTop=0;renderSide.last=S.sel} // 別の星を選んだらパネルを先頭から
   // 研究
   const next=S.tier+1;
   const rp=h("div",{class:"panel p-research"},h("h2",null,"技術局"));
@@ -473,26 +505,27 @@ function renderSide(){
       h("div",{class:"row"},...[30,60,120].map(v=>h("button",{disabled:S.funds<v||!!S.over,onclick:()=>invest(v)},`投資 ${v}`))));
   }else if(next===4&&!S.monster){rp.append(h("p",{class:"hint"},"現行技術の上限に到達。これ以上の艦級は未知の脅威への対抗研究が必要です。"))}
   else rp.append(h("p",{class:"hint"},"全艦級の開発が完了しました。"));
-  rp.append(h("p",{class:"hint"},`改装上限：各項目 ${capOf("P")} まで・研究所から毎ターン +${labRate()}`));
+  rp.append(h("p",{class:"hint"},`改装上限：各項目 ${capOf("P")} まで・`+(researchOpen()?`研究所から毎ターン +${labRate()}`:labRate()?"いまは開発できる艦級がないため、研究所の研究は貯まりません":"研究所なし")));
   left.append(rp);
 
   // 惑星
   const pp=h("div",{class:"panel p-planet"},h("h2",null,h("img",{class:"pthumb",src:planetArt(p),alt:""}),p.name,h("span",{class:`tag own-${p.owner}`},OWNER_LABEL[p.owner])));
-  const kv=h("dl",{class:"kv"},h("dt",null,"特性"),h("dd",null,h("span",{style:`color:${TRAITS[p.trait].col}`},p.trait)," ",h("span",{class:"hint"},TRAITS[p.trait].desc)),
+  const kv=p.id===HIVE?h("p",{class:"hint"},"異生体ゾアの巣。中枢★（耐久150）は爆装でしか壊せず、護衛の群れもいる。中枢を破壊すれば勝利。"):
+    h("dl",{class:"kv"},h("dt",null,"特性"),h("dd",null,h("span",{style:`color:${TRAITS[p.trait].col}`},p.trait)," ",h("span",{class:"hint"},TRAITS[p.trait].desc)),
     h("dt",null,"収入"),h("dd",null,planetIncome(p)),h("dt",null,"防衛力"),h("dd",null,`${p.def}/${p.maxDef}`));
   if(p.owner==="P")kv.append(h("dt",null,"探査余地"),h("dd",null,p.survey>0?`あと${p.survey}回`:"なし"));
   pp.append(kv);
   if(p.owner==="P"&&!S.over){
     pp.append(h("div",{class:"row"},
       h("button",{disabled:S.funds<40||p.survey<=0,onclick:()=>survey(p)},"小惑星探査 40"),
-      h("button",{disabled:S.funds<30||p.def>=p.maxDef,onclick:()=>fortify(p)},"防衛修復 30")));
+      h("button",{disabled:S.funds<30||p.def>=p.maxDef,title:p.def>=p.maxDef?"防衛力は満タン":null,onclick:()=>fortify(p)},"防衛修復 30")));
   }
   if(p.slots>0){
     const slots=h("div",{class:"slots"});
     for(let i=0;i<p.slots;i++){
       const k=p.fac[i];
       if(k)slots.append(h("div",{class:"slot"},h("span",{class:"slot-mark"},FAC[k].mark),h("div",{class:"slot-body"},h("b",null,FAC[k].name),h("span",{class:"hint"},FAC[k].desc(p))),
-        p.owner==="P"&&!S.over?h("button",{class:"slot-x","aria-label":`${FAC[k].name}を撤去`,onclick:()=>demolish(p,k)},"撤去"):null));
+        p.owner==="P"&&!S.over?h("button",{class:"slot-x","aria-label":`${FAC[k].name}を撤去`,onclick:()=>confirmDemolish(p,k)},"撤去"):null));
       else slots.append(h("div",{class:"slot empty"},h("span",{class:"slot-mark"},"＋"),h("div",{class:"slot-body"},h("b",null,"空きスロット")),
         p.owner==="P"&&!S.over?h("button",{onclick:()=>openBuild(p)},"建設"):null));
     }
@@ -526,12 +559,13 @@ function fleetCard(f,p){
   if(f.side==="P"&&!S.over){
     const dmg=f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);
     const row=h("div",{class:"row"},
-      h("button",{class:S.mode==="move"&&S.selFleet===f.id?"primary":"",disabled:f.moved,onclick:()=>{S.selFleet=f.id;S.mode=S.mode==="move"&&S.selFleet===f.id?null:"move";render()}},S.mode==="move"&&S.selFleet===f.id?"移動取消":"移動",f.id===S.selFleet?h("span",{class:"kbd"},"M"):null),
+      h("button",{class:S.mode==="move"&&S.selFleet===f.id?"primary":"",disabled:f.moved,onclick:()=>{const on=S.mode==="move"&&S.selFleet===f.id;S.selFleet=f.id;S.mode=on?null:"move";render();showMapForMove()}},S.mode==="move"&&S.selFleet===f.id?"移動取消":"移動",f.id===S.selFleet?h("span",{class:"kbd"},"M"):null),
       h("button",{onclick:()=>openRefit(f)},"改装"),
       h("button",{title:formOf(f).tip,onclick:()=>openFormation(f)},`陣形：${formOf(f).name}`,f.id===S.selFleet?h("span",{class:"kbd"},"F"):null),
-      p.owner==="P"?h("button",{disabled:!dmg||S.funds<Math.ceil(dmg/2),onclick:()=>repair(f)},`修理 ${Math.ceil(dmg/2)}`):null,
+      p.owner==="P"?h("button",{disabled:!dmg||S.funds<Math.ceil(dmg/2),onclick:()=>repair(f)},dmg?`修理 ${Math.ceil(dmg/2)}`:"修理（損傷なし）"):null,
       p.owner==="P"&&p.yard?h("button",{onclick:()=>openYard(f)},"造船"):null,
-      intruder(f)?h("button",{class:"danger",disabled:f.moved,onclick:()=>intercept(f)},"迎撃"):null);
+      intruder(f)?h("button",{class:"danger",disabled:f.moved,onclick:()=>intercept(f)},"迎撃"):null,
+      assaultHere(f)?h("button",{class:"danger",disabled:f.moved,title:"この星にいるまま攻める（艦隊戦に勝って残った星など）",onclick:()=>{S.mode=null;orderMove(f,f.node,false)}},assaultHere(f)==="巣への突入戦"?"巣へ突入":"この星を攻略"):null);
     card.append(row);
     card.addEventListener("click",e=>{if(e.target.tagName!=="BUTTON"&&S.selFleet!==f.id){S.selFleet=f.id;S.mode=null;render()}});
   }
@@ -544,9 +578,10 @@ function invest(v){
 }
 function researchOpen(){const n=S.tier+1;return n<CLASSES.length&&(n<4||S.monster)}
 function checkResearch(){
-  if(!researchOpen())return;
-  const next=S.tier+1,c=CLASSES[next];
-  if(S.research>=c.research){S.research=0;S.tier=next;sfx("jingle");
+  // 余った研究値は次の艦級へ持ち越す（大きく投資しても無駄にならない）
+  while(researchOpen()&&S.research>=CLASSES[S.tier+1].research){
+    const next=S.tier+1,c=CLASSES[next];
+    S.research-=c.research;S.tier=next;sfx("jingle");
     log(`新型艦「${c.name}」（${c.type}）完成！改装上限が ${capOf("P")} に上昇。`);
     showComm([{who:"技術局",text:`新型${c.type}「${c.name}」（${c.code}）の設計が完了しました。造船所のある星で建造できます。各項目の改装上限も ${capOf("P")} に上がりました。`}],null,c.code?next:null);
   }
@@ -557,6 +592,11 @@ function survey(p){S.funds-=40;p.survey--;
 function fortify(p){S.funds-=30;p.def=Math.min(p.maxDef,p.def+15);log(`${p.name}の防衛設備を修復（防衛力 ${p.def}）。`);render()}
 function buildFac(p,k){S.funds-=FAC[k].cost;p.fac.push(k);syncFac(p);if(k==="sats")p.def=Math.min(p.maxDef,p.def+15);log(`${p.name}に${FAC[k].name}を建設。`);render()}
 function demolish(p,k){p.fac=p.fac.filter(x=>x!==k);syncFac(p);log(`${p.name}の${FAC[k].name}を撤去。`);render()}
+function confirmDemolish(p,k){
+  openModal(card=>card.append(h("h2",null,`${FAC[k].name}を撤去しますか？`),
+    h("p",null,`${p.name}の${FAC[k].name}を取り壊してスロットを空けます。建設費 ${FAC[k].cost} は戻りません。`),
+    h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:closeModal},"やめる"),h("button",{class:"danger",onclick:()=>{$("modal").hidden=true;demolish(p,k)}},"撤去する"))));
+}
 function openBuild(p){
   openModal(card=>{
     card.append(h("h2",null,`${p.name}に建設`),h("p",{class:"hint"},`特性：${p.trait}（${TRAITS[p.trait].desc}）。資金 ${S.funds}。`));
@@ -574,6 +614,14 @@ function newFleet(p){S.funds-=bcost(0,p);const used=new Set(S.fleets.filter(f=>f
   const f={id:uid(),name:`第${n}艦隊`,side:"P",node:p.id,ships:[makeShip(0,"P")],moved:true};S.fleets.push(f);S.selFleet=f.id;log(`${f.name}を${p.name}で編成。`);render()}
 
 function intruder(f){return S.fleets.find(x=>x.node===f.node&&(x.side==="M"||(x.side==="E"&&!S.truce)))}
+const hasBomb=f=>f.ships.some(s=>s.a&&s.a.bo>0); // 惑星・巣の中枢を壊せるか
+/* 自軍艦隊がいま乗っている自国以外の星（艦隊戦に勝って残った星など）を、その場から攻められるか。攻められるなら戦闘の種類 */
+function assaultHere(f){
+  if(!f||f.side!=="P")return null;const p=planet(f.node);
+  if(p.owner==="P"||(S.truce&&p.owner==="E"))return null;
+  if(S.fleets.some(x=>x.node===p.id&&x.side!=="P"))return null; // 敵艦隊が残っていれば迎撃が先
+  return p.owner==="H"?"巣への突入戦":"惑星攻略戦";
+}
 function intercept(f){const ef=intruder(f);if(!ef)return;f.moved=true;log(`${f.name}が${ef.name}を迎撃。`);startBattle({kind:"fleet",pf:f,ef,node:f.node,attack:true})}
 function onPlanetClick(id){
   if(ANIM.busy)return;
@@ -582,6 +630,7 @@ function onPlanetClick(id){
     const adj=neighbors(f.node).includes(id);
     const warp=planet(id).owner==="P"&&id!==f.node;
     if(adj||warp){S.mode=null;orderMove(f,id,!adj);return}
+    if(id===f.node&&assaultHere(f)){S.mode=null;orderMove(f,id,false);return}
   }
   S.sel=id;S.mode=null;
   const mine=fleetsAt(id,"P");if(mine.length&&!mine.some(x=>x.id===S.selFleet))S.selFleet=mine[0].id;
@@ -590,7 +639,8 @@ function onPlanetClick(id){
 function onPlanetRight(id){
   if(ANIM.busy||S.over)return;
   if(S.mode==="move"){S.mode=null;render();return}
-  const f=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");if(!f||f.moved||f.node===id)return;
+  const f=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");if(!f||f.moved)return;
+  if(f.node===id){if(assaultHere(f))orderMove(f,id,false);return}
   const adj=neighbors(f.node).includes(id),warp=planet(id).owner==="P";
   if(adj||warp)orderMove(f,id,!adj);
 }
@@ -608,9 +658,10 @@ function planetTip(p){
   if(sf&&!sf.moved&&sf.node!==p.id&&!S.over){
     const adj=neighbors(sf.node).includes(p.id),warp=!adj&&p.owner==="P";
     if(adj||warp){const foes=S.fleets.filter(x=>x.node===p.id&&(x.side==="E"||x.side==="M"));
-      const what=S.truce&&(p.owner==="E"||fleetsAt(p.id,"E").length)?"休戦中のため進めない":foes.length?`艦隊戦（${foes[0].name}）`:p.owner==="H"?"巣への突入戦":p.owner!=="P"?"惑星攻略戦":warp?"亜空間移動":"移動";
-      out.push(h("hr"),h("span",{class:"act"},`右クリック：${sf.name}が${what}`))}
-  }
+      const blocked=S.truce&&(p.owner==="E"||fleetsAt(p.id,"E").length);
+      const what=foes.length?`艦隊戦（${foes[0].name}）`:p.owner==="H"?"巣への突入戦":p.owner!=="P"?"惑星攻略戦":warp?"亜空間移動":"移動";
+      out.push(h("hr"),h("span",{class:"act"},blocked?"休戦中のため進めない":`右クリック：${sf.name}が${what}${!foes.length&&p.owner!=="P"&&!hasBomb(sf)?"（爆装なし：中枢を壊せない）":""}`))}
+  }else if(sf&&!sf.moved&&sf.node===p.id&&!S.over&&assaultHere(sf))out.push(h("hr"),h("span",{class:"act"},`右クリック：${sf.name}がこの星で${assaultHere(sf)}${hasBomb(sf)?"":"（爆装なし：中枢を壊せない）"}`));
   return out;
 }
 function unitTip(u){
@@ -627,7 +678,7 @@ function unitTip(u){
 }
 async function orderMove(f,to,isWarp){
   const p=planet(to);
-  if(S.truce&&(p.owner==="E"||fleetsAt(to,"E").length)){toast("ヴァルガ帝国とは休戦中です。異生体を先に叩きましょう。");render();return}
+  if(S.truce&&(p.owner==="E"||fleetsAt(to,"E").length)){toast("ヴァルガ帝国とは休戦中のため進めません。異生体の巣を叩きましょう。");render();return}
   f.moved=true;S.sel=to;
   setBusy(true);try{await animateFleetMove(f,f.node,to,isWarp)}finally{setBusy(false)}
   const foes=S.fleets.filter(x=>x.node===to&&(x.side==="E"||x.side==="M"));
@@ -643,12 +694,16 @@ async function orderMove(f,to,isWarp){
 }
 
 /* ============ 造船・改装 ============ */
-function openModal(build){hideTip();const card=$("modalCard");card.className="card";card.replaceChildren();build(card);$("modal").hidden=false;card.querySelector("button")?.focus()}
+function openModal(build){hideTip();const card=$("modalCard");card.className="card";card.replaceChildren();build(card);$("modal").hidden=false;card.scrollTop=0;card.querySelector("button")?.focus({preventScroll:true})}
 function closeModal(){$("modal").hidden=true;render()}
+/* 通信の順番待ち：ウィンドウが開いている間に届いた通信は上書きせず、閉じたあとに届いた順に出す（render() のたびに確かめる） */
+const COMMQ=[];
+function nextComm(){if(!COMMQ.length||!$("modal").hidden)return;if(!S||S.over){COMMQ.length=0;return}COMMQ.shift()()}
 function openRefit(f){
   openModal(card=>{
-    card.append(h("h2",null,`${f.name} 改装`),h("p",{class:"hint"},"艦ごとに搭載能力ポイントを振り分けます。主砲は射程1〜2、ミサイルは射程2〜4、爆装は惑星中枢・巣への攻撃に必須。機関は戦闘時の移動力。"));
+    card.append(h("h2",null,`${f.name} 改装`),h("p",{class:"hint"},"艦ごとに搭載能力ポイントを振り分けます。装甲は被ダメージを減らします。主砲は射程1〜2、ミサイルは射程2〜4。爆装は惑星の中枢・浸食核・巣の中枢にしか当たりませんが、攻略には必須です。機関は戦闘時の移動力。改装は無料で、行動も消費しません。"));
     card.classList.add("wide");
+    const snap=f.ships.map(s=>[s,{...s.a}]); // 「元に戻す」用：開いたときの並びと配分
     const wrap=h("div",{class:"refit-list",style:"display:flex;flex-direction:column;gap:8px"});card.append(wrap);
     const draw=()=>{wrap.replaceChildren();
       f.ships.forEach((s,i)=>{
@@ -665,14 +720,14 @@ function openRefit(f){
         wrap.append(h("div",{class:"refit-ship"},
           h("div",{style:"display:flex;flex-direction:column;gap:4px;align-items:center"},shipSvg(s.cls,96,64),h("span",{class:"hint"},c.code)),
           h("div",{style:"display:flex;flex-direction:column;gap:6px;min-width:0"},
-            h("div",{class:"row",style:"justify-content:space-between"},h("b",null,`${i===0?"★旗艦 ":""}${c.name}`),h("span",{class:"stat"},`残り ${c.pts-used}/${c.pts}`)),
+            h("div",{class:"row",style:"justify-content:space-between"},h("b",null,`${i===0?"★旗艦 ":""}${c.name}`),h("span",{class:"stat",style:c.pts>used?"color:var(--ally)":null},`残り ${c.pts-used}/${c.pts}`)),
             alloc,
             h("div",{class:"derived"},`耐久 ${s.hp}/${s.maxHp}・移動 ${st.move}・主砲 ${st.cannon}・ミサイル ${st.missile||"—"}・爆装 ${st.bomb||"—"}`),
             i>0?h("div",null,h("button",{onclick:()=>{f.ships.splice(i,1);f.ships.unshift(s);draw()}},"旗艦に指定")):null)));
       });
     };
     draw();
-    card.append(h("div",{class:"row",style:"justify-content:flex-end"},h("button",{class:"primary",onclick:closeModal},"完了")));
+    card.append(h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:()=>{f.ships=snap.map(([s,a])=>{s.a={...a};return s});draw()}},"元に戻す"),h("button",{class:"primary",onclick:closeModal},"完了")));
   });
 }
 /* 陣形の選択（行動は消費しない）。図は左が自軍、右が敵 */
@@ -683,7 +738,7 @@ function formDiagram(key,n){
 }
 function openFormation(f){
   openModal(card=>{
-    card.append(h("h2",null,`${f.name} 陣形`),h("p",{class:"hint"},"戦闘開始時の並びと補正が変わります。いつでも変更でき、行動は消費しません。図の右側が敵陣です。"));
+    card.append(h("h2",null,`${f.name} 陣形`),h("p",{class:"hint"},"戦闘開始時の並びと補正が変わります。いつでも変更でき、行動は消費しません。図の右側が敵陣です（スマホの戦闘画面では上側）。"));
     const wrap=h("div",{style:"display:flex;flex-direction:column;gap:6px"});card.append(wrap);
     const draw=()=>{wrap.replaceChildren(...FORM_KEYS.map(k=>h("button",{class:"form-opt"+(formKey(f)===k?" primary":""),"aria-pressed":formKey(f)===k,onclick:()=>{f.form=k;draw()}},
       formDiagram(k,f.ships.length),h("span",{class:"form-txt"},h("b",null,FORM[k].name),h("span",{class:"hint"},FORM[k].tip)))))};
@@ -694,19 +749,19 @@ function openFormation(f){
 function openYard(f){
   openModal(card=>{
     const yp=planet(f.node);card.classList.add("wide");
-    const draw=()=>{card.replaceChildren(h("h2",null,`造船所：${f.name}`),h("p",{class:"hint"},`資金 ${S.funds}。艦隊は最大4隻。旧艦は置換すると建造費の半額で下取りします。${yp.trait==="工業"?"工業惑星のため建造費20%引き。":""}`));
+    const draw=()=>{card.replaceChildren(h("h2",null,`造船所：${f.name}`),h("p",{class:"hint"},`資金 ${S.funds}。艦隊は最大4隻。「置換」は艦隊でいちばん旧式の艦（旗艦も含む）を定価の半額で下取りし、新しい艦は標準配分になります。${yp.trait==="工業"?"工業惑星のため建造費20%引き。":""}`));
       const grid=h("div",{class:"classes"});
       CLASSES.forEach((c,ci)=>{
         // 開発済みの艦と、いま開発中の次の1隻だけを見せる（それより先は秘密）
         if(ci>S.tier+1||(ci===S.tier+1&&!researchOpen()))return;
         const locked=ci>S.tier;
-        const el=h("div",{class:"cls"+(locked?" next":"")},shipSvg(ci,150,56),h("b",null,c.name),h("span",{class:"hint"},`${c.type}・耐久${c.hp}・P${c.pts}${c.anti?"・対異生体":""}`),h("span",{class:"stat"},locked?`開発中 ${S.research}/${c.research}`:`建造 ${bcost(ci,yp)}`));
+        const el=h("div",{class:"cls"+(locked?" next":"")},shipSvg(ci,150,56),h("b",null,c.name),h("span",{class:"hint"},`${c.type}・耐久${c.hp}・P${c.pts}${c.anti?"・異生体へのダメージ1.5倍":""}`),h("span",{class:"stat"},locked?`開発中 ${S.research}/${c.research}`:`建造 ${bcost(ci,yp)}`));
         if(!locked){
           const cc=bcost(ci,yp);
-          el.append(h("button",{disabled:f.ships.length>=4||S.funds<cc,onclick:()=>{S.funds-=cc;f.ships.push(makeShip(ci,"P"));log(`${f.name}に${c.name}を配備。`);draw()}},"追加建造"));
-          const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<f.ships[m].cls)?i:m,-1);
+          el.append(h("button",{disabled:f.ships.length>=4||S.funds<cc,title:f.ships.length>=4?"艦隊は4隻で満杯。置換を使う":null,onclick:()=>{S.funds-=cc;f.ships.push(makeShip(ci,"P"));log(`${f.name}に${c.name}を配備。`);draw()}},"追加建造"));
+          const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<=f.ships[m].cls)?i:m,-1); // 同じ艦級なら後ろ（随伴艦）から
           if(worst>=0){const refund=Math.floor(CLASSES[f.ships[worst].cls].cost/2);
-            el.append(h("button",{disabled:S.funds+refund<cc,onclick:()=>{S.funds+=refund-cc;const old=f.ships[worst];f.ships[worst]=makeShip(ci,"P");log(`${CLASSES[old.cls].name}を${c.name}に置換。`);draw()}},`旧艦と置換（実費 ${cc-refund}）`))}
+            el.append(h("button",{disabled:S.funds+refund<cc,onclick:()=>{S.funds+=refund-cc;const old=f.ships[worst];f.ships[worst]=makeShip(ci,"P");log(`${CLASSES[old.cls].name}を${c.name}に置換。`);draw()}},`${worst===0?"★":""}${CLASSES[f.ships[worst].cls].name}と置換（${cc-refund}）`))}
         }
         grid.append(el);
       });
@@ -718,6 +773,7 @@ function openYard(f){
 
 /* ============ 通信・ヘルプ ============ */
 function showComm(lines,after,showCls,art){
+  if(!$("modal").hidden){COMMQ.push(()=>showComm(lines,after,showCls,art));return}
   openModal(card=>{
     card.append(h("h2",null,"通信"));
     const pic=showCls!=null?`show_${SHIP_ART[showCls]}`:art;
@@ -729,23 +785,44 @@ function showComm(lines,after,showCls,art){
 }
 function toast(t){log(t);render()}
 function showIntro(){
-  showComm([
+  const lines=[
     {who:"総司令部",text:"星暦3990年、辺境星系。隣国ヴァルガ帝国が国境のクオン星系に艦隊を集結させています。元首閣下、我が国アステリアの舵取りをお願いします。"},
-    {who:"作戦参謀",text:"星図の惑星を選び、右の指令パネルから命令を出します。艦隊は1ターンに1回、隣の星へ移動するか、自国の星へ亜空間移動できます。敵のいる星へ進むと戦術戦闘になります。"},
+    {who:"作戦参謀",text:`星図の惑星を選び、指令パネル${isNarrow()?"（星図の下）":""}から命令を出します。艦隊は1ターンに1回、隣の星へ移動するか、自国の星へ亜空間移動できます。自国以外の星や、敵艦隊のいる星へ進むと戦術戦闘になります。当面の目標はヴァルガ帝国の侵攻を退けることです。ただ、観測所が北東の暗黒宙域に不穏な反応をとらえています。ヴァルガ本星を落とすか、星暦4007年を迎えるころには、事態が動くかもしれません。`},
     {who:"技術局",text:"資金を研究に投資すれば新型艦が完成します。完成した艦は「造船」で配備し、「改装」でポイントを振り分けてください。惑星の中枢は爆装でしか壊せません。"},
-    {who:"作戦参謀",text:"戦闘は旗艦（★）を沈めた側の勝ちです。艦を選ぶと青いマスが移動先、赤いマスが射程として表示されます。敵をタップするとその敵の射程、「敵の射程」ボタンで敵全体の射程が見えます。敵艦の背後や側面から撃つと大きな損害を与えられます。ヴァルガの艦隊は突撃・砲撃・重装・強襲など戦い方がそれぞれ違うので、戦闘前のヒントを確かめてください。主星アステリアを奪われたら敗北です。"}
-  ],null,null,"key_title");
+    {who:"作戦参謀",text:`戦闘は旗艦（★）を沈めた側の勝ちです。艦を選ぶと青いマスが移動先、赤いマスが射程になり、赤枠の敵を${TAP}すると攻撃します。攻撃できない敵を${TAP}するとその敵の移動範囲と射程、「敵の射程」ボタンで敵全体の射程が見えます。敵艦の背面や側面から撃つと大きな損害を与えられます。ヴァルガの艦隊は突撃・砲撃・重装・強襲など戦い方がそれぞれ違うので、戦闘前のヒントを確かめてください。主星アステリアを奪われたら敗北です。進行はこのブラウザに自動で保存され、次に開くと続きから遊べます。`}
+  ];
+  if(TAP==="クリック")lines.push({who:"作戦参謀",text:"マウスとキーでも操作できます。星図：右クリックで選択中の艦隊をその星へ移動、M 移動、F 陣形、1〜3 艦隊の切替、E ターン終了。戦闘：右クリックで選択解除、1〜4 艦の選択、W 待機、E フェイズ終了、R 敵の射程。"});
+  if(S&&S.monster)lines.push({who:"作戦参謀",text:"勝利条件：深淵の巣の中枢★（耐久150）を爆装で破壊すること。巣が残る限り、異生体の群れは何度でも湧いてきます。"});
+  showComm(lines,null,null,"key_title");
 }
 
 /* ============ ターン処理 ============ */
+/* ターン終了ボタン・Eキー：まだ行動していない艦隊があれば一度確かめる（このゲームの間は確認しない、も選べる）。AIプレイは endTurn() を直接呼ぶ */
+function askEndTurn(){
+  if(!S||S.over||B||ANIM.busy)return;
+  const idle=S.fleets.filter(f=>f.side==="P"&&!f.moved);
+  if(!idle.length||S.noEndAsk)return endTurn();
+  openModal(card=>{
+    const chk=h("input",{type:"checkbox"});
+    card.append(h("h2",null,"ターンを終了しますか？"),
+      h("p",null,`まだ行動していない艦隊があります：${idle.map(f=>`${f.name}（${planet(f.node).name}）`).join("、")}`),
+      h("label",{class:"hint",style:"display:flex;gap:8px;align-items:center;cursor:pointer"},chk,"このゲームの間は確認しない"),
+      h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:closeModal},"戻る"),
+        h("button",{class:"primary",id:"endYes",onclick:()=>{if(chk.checked)S.noEndAsk=true;$("modal").hidden=true;endTurn()}},"ターン終了",h("span",{class:"kbd"},"E"))));
+  });
+  $("endYes").focus({preventScroll:true});
+}
 async function endTurn(){
   if(S.over||B||ANIM.busy)return;
+  // 演出を待つあいだに主星が落ちたり、結果画面から新しいゲームが始まったりしたら、そこで打ち切る
+  const G=S,alive=()=>S===G&&!S.over;
   S.mode=null;setBusy(true);
   try{
     render();
     await banner("ターン終了",`星暦${3989+S.turn}年 ── 敵軍の行動`,"W",950);
+    if(!alive())return;
     const inc=income();S.funds+=inc;
-    const lr=researchOpen()?labRate():0;
+    let lr=researchOpen()?labRate():0;
     S.fleets.forEach(f=>{if(f.side==="P")f.moved=false});
     S.planets.forEach(p=>{if(p.owner==="P"&&p.def<p.maxDef)p.def=Math.min(p.maxDef,p.def+3)});
     S.turn++;S.enemyTier=Math.min(3,Math.floor((S.turn-1)/6));
@@ -756,42 +833,48 @@ async function endTurn(){
     if(!S.truce&&planet(CAPITAL).owner==="E"){
       if(S.turn%3===0&&S.fleets.filter(f=>f.side==="E").length<3){
         const nf=vargaFleet(null,CAPITAL,3+(S.turn>10?1:0));S.fleets.push(nf);
-        log(`ヴァルガ帝国が新たな${DOC[nf.doc].name}を本星に配備。`);render();await mapBurst(CAPITAL,"#ea5a4f");
+        log(`ヴァルガ帝国が新たな${DOC[nf.doc].name}を本星に配備。`);render();await mapBurst(CAPITAL,"#ea5a4f");if(!alive())return;
       }
     }
     if(!S.truce){
       for(const f of S.fleets.filter(x=>x.side==="E")){
         if(!S.fleets.includes(f))continue;
         const doc=f.doc||"line";
+        // 同じ星に自軍艦隊が居座っていれば、まずそれを攻める
+        const here=defenders(f.node);
+        if(here.length){
+          if(doc!=="assault"&&forcePower(here)>fleetPower(f)*1.4&&Math.random()<.7){log(`${f.name}は${planet(f.node).name}で様子をうかがっている。`);continue}
+          await mapBurst(f.node,"#ea5a4f");if(!alive())return;queue.push({kind:"fleet",pf:here[0],ef:f,node:f.node,attack:false});continue;
+        }
         if(f.node===CAPITAL&&S.fleets.filter(x=>x.side==="E"&&x.node===CAPITAL).length===1&&Math.random()<(doc==="heavy"?.8:.5))continue; // 本星守備
         // 強襲戦隊は1ターンに2星進む（自国領を通り抜けるときだけ）
         for(let step=0;step<(doc==="raid"?2:1);step++){
           const path=vargaPath(f);if(!path)break;const to=path[0];
-          const pf=fleetsAt(to,"P")[0];
-          if(pf){
-            // 突撃戦隊以外は、明らかに強い相手には仕掛けずに様子を見ることがある
-            if(doc!=="assault"&&fleetPower(pf)>fleetPower(f)*1.4&&Math.random()<.7){log(`${f.name}は${planet(f.node).name}で様子をうかがっている。`);break}
-            await mapBurst(to,"#ea5a4f");queue.push({kind:"fleet",pf,ef:f,node:to,attack:false});break;
+          const pfs=defenders(to);
+          if(pfs.length){
+            // 突撃戦隊以外は、明らかに強い相手には仕掛けずに様子を見ることがある（同じ星の自軍艦隊の合計で判断）
+            if(doc!=="assault"&&forcePower(pfs)>fleetPower(f)*1.4&&Math.random()<.7){log(`${f.name}は${planet(f.node).name}で様子をうかがっている。`);break}
+            await mapBurst(to,"#ea5a4f");if(!alive())return;queue.push({kind:"fleet",pf:pfs[0],ef:f,node:to,attack:false});break;
           }
-          await animateFleetMove(f,f.node,to);
+          await animateFleetMove(f,f.node,to);if(!alive())return;
           const was=planet(to).owner;f.node=to;siege(f,planet(to));render();
-          if(was!=="E"){await mapBurst(to,"#ea5a4f");break}
+          if(was!=="E"){await mapBurst(to,"#ea5a4f");if(!alive())return;break}
         }
       }
     }
     // 異生体
     if(S.monster){
-      if(S.respawn>0&&S.fleets.filter(f=>f.side==="M").length<(S.evolved?3:2)&&planet(HIVE).owner==="H"){S.respawn--;spawnXeno();log("深淵の巣から異生体の群れが再び湧き出した。");render();await mapBurst(HIVE,"#b974ff")}
+      if(S.respawn>0&&S.fleets.filter(f=>f.side==="M").length<(S.evolved?3:2)&&planet(HIVE).owner==="H"){S.respawn--;spawnXeno();log("深淵の巣から異生体の群れが再び湧き出した。");render();await mapBurst(HIVE,"#b974ff");if(!alive())return}
       for(const f of S.fleets.filter(x=>x.side==="M")){
+        if(!S.fleets.includes(f))continue;
         for(let step=0;step<2;step++){
           const path=bfsPath(f.node,n=>n!==HIVE&&planet(n).owner!=="M");if(!path)break;const to=path[0];
-          const pf=fleetsAt(to,"P")[0];
-          if(pf){if(!queue.some(q=>q.ef===f)){await mapBurst(to,"#b974ff");queue.push({kind:"fleet",pf,ef:f,node:to,attack:false})}break}
-          await animateFleetMove(f,f.node,to);
-          f.node=to;
-          fleetsAt(to,"E").forEach(ef=>{S.fleets=S.fleets.filter(x=>x!==ef);log(`${ef.name}が異生体に呑み込まれた。`)});
+          const pfs=defenders(to);
+          if(pfs.length){if(!queue.some(q=>q.ef===f)){await mapBurst(to,"#b974ff");if(!alive())return;queue.push({kind:"fleet",pf:pfs[0],ef:f,node:to,attack:false})}break}
+          await animateFleetMove(f,f.node,to);if(!alive())return;
+          xenoEnter(f,to);
           const p=planet(to);
-          if(p.owner!=="M"&&p.owner!=="H"){siege(f,p);render();await mapBurst(to,"#b974ff");break}
+          if(p.owner!=="M"&&p.owner!=="H"){siege(f,p);render();await mapBurst(to,"#b974ff");if(!alive())return;break}
           render();
         }
       }
@@ -800,13 +883,18 @@ async function endTurn(){
     checkMonsterTrigger();
     render();
     for(const q of queue){
-      if(!S.fleets.includes(q.pf)||!S.fleets.includes(q.ef)||S.over)continue;
-      if(q.pf.node!==q.node)continue;
+      if(!alive())return;
+      if(!S.fleets.includes(q.ef))continue;
+      if(q.ef.side==="E"&&S.truce){log(`${q.ef.name.replace("休戦中の","")}は休戦に従い、${planet(q.node).name}への攻撃を取りやめた。`);continue}
+      // 迎え撃つのは、その時点で同じ星にいる自軍のいちばん強い艦隊
+      const pf=defenders(q.node)[0];if(!pf)continue;q.pf=pf;
       log(`${q.ef.name}が${planet(q.node).name}の${q.pf.name}に襲いかかる！`);
       await startBattle(q);
     }
+    if(S!==G)return;
     checkLoss();
     if(!S.over){
+      if(!lr&&researchOpen())lr=labRate(); // このターンに異生体が現れて研究が再開した分
       if(lr){S.research+=lr;checkResearch()}
       render();
       await banner(`ターン ${S.turn}`,`星暦${3989+S.turn}年　収入 +${inc}${lr?`・研究 +${lr}`:""}`,"P",1150);
@@ -815,7 +903,7 @@ async function endTurn(){
 }
 /* ヴァルガ艦隊の進路：ドクトリンごとに狙いが違う */
 function vargaPath(f){
-  const avoid=n=>n===HIVE||planet(n).owner==="M";
+  const avoid=n=>n===HIVE||planet(n).owner==="M"||fleetsAt(n,"M").length>0;
   const doc=f.doc||"line";
   if(doc==="raid"){ // 艦隊のいない、防衛力の低い自国の星を狙う
     const ts=S.planets.filter(p=>p.owner==="P"&&!fleetsAt(p.id,"P").length).sort((a,b)=>a.def-b.def);
@@ -832,7 +920,7 @@ function siege(f,p){
   const pow=fleetPower(f);
   if(p.owner==="N"&&f.side==="E"){p.owner="E";p.def=Math.max(10,p.def);log(`${p.name}がヴァルガ帝国に併合された。`);return true}
   if(pow>p.def){
-    const was=p.owner;p.owner=f.side;p.def=f.side==="M"?20:10;p.maxDef=Math.max(p.maxDef,p.def);if(f.side==="M"){p.fac=[];syncFac(p);p.def=20}
+    const was=p.owner;p.owner=f.side;if(f.side==="M"){p.fac=[];syncFac(p)}p.def=f.side==="M"?20:10;p.maxDef=Math.max(p.maxDef,p.def);
     log(f.side==="M"?`${p.name}が異生体に浸食された！`:`${p.name}が${OWNER_LABEL[f.side]}に占領された！`);
     if(was==="P"&&p.id===HOME)checkLoss();return true;
   }
@@ -842,28 +930,33 @@ function siege(f,p){
 }
 function spawnXeno(){const ships=[makeXeno("brood"),makeXeno("drone"),makeXeno("drone")];if(S.evolved)ships.push(makeXeno("drone"));S.fleets.push({id:uid(),name:"異生体の群れ",side:"M",node:HIVE,ships})}
 function checkMonsterTrigger(){
-  if(S.monster)return;
+  if(S.monster||S.over)return;
   if(planet(CAPITAL).owner==="P"||S.turn>=18){
     S.monster=true;S.truce=planet(CAPITAL).owner==="E";
     spawnXeno();spawnXeno();S.funds+=150;
     const ruins=S.planets.filter(p=>p.owner==="P"&&p.trait==="遺跡"&&hasF(p,"lab"));
-    if(ruins.length){S.research+=150*ruins.length;log(`${ruins.map(p=>p.name).join("・")}の遺跡研究所が異生体の記録を発見。セラフ級の研究 +${150*ruins.length}。`)}
-    S.fleets.filter(f=>f.side==="E").forEach(f=>f.name=f.name.replace("ヴァルガ","休戦中のヴァルガ"));
-    log("北東宙域に未知の生命反応。異生体「ゾア」出現！");sfx("roar");
+    if(ruins.length){S.research+=150*ruins.length;log(`${ruins.map(p=>p.name).join("・")}の遺跡研究所が異生体の記録を発見。研究 +${150*ruins.length}（開発中の${CLASSES[S.tier+1].name}に加算。余りは次へ持ち越し）。`)}
+    if(S.truce)S.fleets.filter(f=>f.side==="E").forEach(f=>{f.name=f.name.replace("ヴァルガ","休戦中のヴァルガ");
+      // 自領の外にいる艦隊は、いちばん近いヴァルガの星へ引き上げる（自国の星をふさいだままにしない）
+      if(planet(f.node).owner!=="E"){const p=bfsPath(f.node,n=>planet(n).owner==="E");f.node=p?p[p.length-1]:CAPITAL;log(`${f.name}は${planet(f.node).name}へ引き上げた。`)}});
+    log("辺境の暗黒宙域に未知の生命反応。異生体「ゾア」出現！");sfx("roar");
     const lines=[
-      {who:"観測所",text:"緊急通信！北東の暗黒宙域に巨大な生命反応。艦船サイズの生物が群れを成し、星系へ向かっています！",cls:"xeno"},
-      {who:"技術局",text:"既存の艦砲では外殻を抜くのが困難です。ただし解析の結果、外殻は側面が薄いことが分かりました。対異生体戦艦「セラフ級」の開発に着手できます。"},
+      {who:"観測所",text:"緊急通信！辺境の暗黒宙域（星図の巣の位置）に巨大な生命反応。艦船サイズの生物が群れを成し、星系へ向かっています！",cls:"xeno"},
+      {who:"技術局",text:`既存の艦砲では外殻を抜くのが困難です。ただし解析の結果、外殻は側面が薄いことが分かりました。${S.tier>=3?"対異生体戦艦「セラフ級」の開発に着手できます。":"アークライト級までの開発が済めば、対異生体戦艦「セラフ級」に進めます。"}`},
       {who:"作戦参謀",text:"群れは深淵の巣から何度でも湧いてきます。巣の中枢を爆装で破壊しない限り終わりません。議会が緊急予算150を承認しました。"}];
-    if(S.truce)lines.splice(1,0,{who:"ヴァルガ皇帝",text:"……アステリアの元首よ。あれは人類全体の敵だ。今は矛を収めよう。",cls:"foe"});
+    if(S.truce)lines.splice(1,0,{who:"ヴァルガ皇帝",text:"……アステリアの元首よ。あれは人類全体の敵だ。今は矛を収めよう。",cls:"foe"},
+      {who:"作戦参謀",text:"休戦が成立しました。以後、ヴァルガの星やヴァルガ艦隊のいる星へは進めませんが、ヴァルガも攻めてきません。全力で異生体に当たってください。"});
     showComm(lines,null,null,"key_xeno");
+    if(ruins.length)checkResearch(); // 遺跡の記録で研究が足りたら、出現の通信のあとに完成の通信を出す
   }
 }
 function checkLoss(){if(planet(HOME).owner!=="P"&&!S.over){S.over="lose";showEnd(false)}}
-function showEnd(win){sfx(win?"win":"sad");
+function showEnd(win){sfx(win?"win":"sad");COMMQ.length=0; // 結果の画面は開いている通信より優先
   openModal(card=>{
     card.append(h("img",{class:"keyart",src:`${ART}key_${win?"victory":"defeat"}.webp`,alt:""}),h("h2",null,win?"深淵の巣、陥落":"アステリア陥落"),
-      h("p",null,win?`星暦${3989+S.turn}年、異生体ゾアの巣は崩れ落ちた。辺境星系に再び静けさが戻る。総ターン数 ${S.turn}。`:"主星が奪われ、アステリアは歴史から姿を消した。"),
-      h("div",{class:"row",style:"justify-content:flex-end"},h("button",{class:"primary",onclick:()=>{$("modal").hidden=true;newGame();render()}},"もう一度遊ぶ")));
+      h("p",null,win?`星暦${3989+S.turn}年、異生体ゾアの巣は崩れ落ちた。辺境星系に再び静けさが戻る。総ターン数 ${S.turn}。`:`星暦${3989+S.turn}年（ターン${S.turn}）、主星が奪われ、アステリアは歴史から姿を消した。`),
+      h("p",{class:"hint"},`自国の星 ${S.planets.filter(p=>p.owner==="P").length}・艦級 ${CLASSES[S.tier].name}・異生体の群れを撃破 ${S.xenoKills}回${S.monster?"":"（異生体は未出現）"}`),
+      h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:()=>{$("modal").hidden=true;render()}},"星図を見る"),h("button",{class:"primary",onclick:()=>{$("modal").hidden=true;newGame();render()}},"もう一度遊ぶ")));
   });
 }
 
@@ -895,7 +988,7 @@ function startBattle(cfg){
       const form=ef.side==="M"?XENO_FORMS[Math.floor(Math.random()*XENO_FORMS.length)]:docOf(ef).form;
       ef.ships.forEach((s,i)=>{const u=s.xeno?unitFromXeno(s,i):unitFromShip(s,"E",i,ef.doc);const[x,y]=form[i];u.x=x;u.y=mirror?BH-1-y:y;units.push(u)});
       title=`${planet(cfg.node).name}宙域 ${cfg.pf.name} 対 ${ef.name}`;
-      if(ef.side==="M"){foeSide="M";tip=S.evolved?"異生体（改）は正面が弱点。":"異生体は側面が弱点。ドローンは回り込んでくる。"}
+      if(ef.side==="M"){foeSide="M";tip=ef.ships.some(s=>s.neo)?"異生体（改）は正面が弱点。":"異生体は側面が弱点。ドローンは回り込んでくる。"}
       else tip=`${docOf(ef).name}：${docOf(ef).tip}敵の旗艦★を沈めれば勝利。`;
     }else{
       const p=cfg.planet,isHive=cfg.kind==="hive",isNest=p.owner==="M";
@@ -911,18 +1004,22 @@ function startBattle(cfg){
         [[8,2],[8,4],[9,1],[9,5],[10,2],[10,4]].slice(0,n).forEach(([x,y])=>units.push({uid:uid(),side:"E",sat:true,name:"防衛衛星",hp:9,maxHp:9,armor:1,move:0,w:[{n:"衛星砲",d:4,min:1,max:2,unit:true}],x,y,dir:2}));
       }
       title=isHive?"深淵の巣 突入戦":`${p.name} 攻略戦`;
-      tip="中枢★は爆装でしか破壊できない。中枢を落とせば占領。";
+      tip=isHive?"巣の中枢★（耐久150）は爆装でしか破壊できない。破壊すれば勝利。":isNest?"浸食核★は爆装でしか破壊できない。落とせば奪還。":"中枢★は爆装でしか破壊できない。中枢を落とせば占領。";
+      if(!cfg.pf.ships.some(s=>s.a&&s.a.bo>0))tip+="この艦隊は爆装がないので中枢を壊せない。撤退して改装を。";
     }
     // 艦隊戦の宙域には、ときどき小惑星（通れないマス）がある
     const rocks=new Set();
     if(cfg.kind==="fleet"&&Math.random()<.75){
       const n=2+Math.floor(Math.random()*4);let g=0;
-      while(rocks.size<n&&g++<60){const x=3+Math.floor(Math.random()*5),y=Math.floor(Math.random()*BH);if(!units.some(u=>u.x===x&&u.y===y))rocks.add(`${x},${y}`)}
+      const free=(x,y)=>x>=0&&y>=0&&x<BW&&y<BH&&!rocks.has(`${x},${y}`); // 味方の艦はいずれ動くので数えない
+      while(rocks.size<n&&g++<60){const x=3+Math.floor(Math.random()*5),y=Math.floor(Math.random()*BH);if(units.some(u=>u.x===x&&u.y===y))continue;
+        rocks.add(`${x},${y}`);if(units.some(u=>u.move>0&&!DIRS.some(([dx,dy])=>free(u.x+dx,u.y+dy))))rocks.delete(`${x},${y}`)} // 艦の四方をふさぐなら置かない
       if(rocks.size)tip+="灰色の小惑星は通れない。";
     }
     const msg=[];const dp=planet(cfg.node);
     if(fm!=="line")msg.push(`陣形「${FORM[fm].name}」：${FORM[fm].tip}`);
-    if(cfg.kind==="fleet"&&!cfg.attack&&dp.owner==="P"&&hasF(dp,"flak")){units.forEach(u=>{if(u.side==="E")u.hp=Math.max(1,u.hp-5)});msg.push(`${dp.name}の対空砲台が敵艦隊を迎撃（全艦に5ダメージ）`)}
+    if(cfg.kind==="fleet"&&dp.owner==="P"&&hasF(dp,"flak")){ // 防衛戦でも迎撃でも、自国の星での艦隊戦なら撃つ
+      units.forEach(u=>{if(u.side==="E")u.hp=Math.max(1,u.hp-5)});msg.push(`${dp.name}の対空砲台が敵艦隊を砲撃（全艦に5ダメージ）`)}
     B={cfg,units,form:fm,phase:"P",round:1,sel:null,inspect:null,hover:null,danger:false,rocks,foeSide,title,tip,resolve,msg,busy:true};
     ANIM.fast=false;hideTip();
     $("battle").hidden=false;renderBattle();render();setMusic(musicFor());
@@ -933,6 +1030,8 @@ function startBattle(cfg){
   });
 }
 const DIRS=[[1,0],[0,1],[-1,0],[0,-1]];
+/* ラウンド上限：決着がつかなければ、防衛側は持ちこたえ、攻めた側は出撃元にとどまる（膠着で戦闘が終わらないのを防ぐ） */
+function roundCap(){return B&&B.cfg.kind==="fleet"?12:20}
 function unitAt(x,y){return B.units.find(u=>u.hp>0&&u.x===x&&u.y===y)}
 function isRock(x,y){return!!(B&&B.rocks&&B.rocks.has(`${x},${y}`))}
 function dist(a,b){return Math.abs(a.x-b.x)+Math.abs(a.y-b.y)}
@@ -959,6 +1058,8 @@ function rangeCells(u,from,weapons){
 }
 /* 敵1体の脅威範囲：移動先すべてから撃てるマス */
 function threatOf(e){return rangeCells(e,[[e.x,e.y],...(e.move>0?reach(e):[])],e.w.filter(w=>w.unit))}
+/* 敵は1手番に移動か攻撃のどちらかしかできないので、次の敵フェイズに撃たれるのは今の位置からの射程だけ */
+function threatNow(e){return rangeCells(e,[[e.x,e.y]],e.w.filter(w=>w.unit))}
 function zone(att,t){
   const[fx,fy]=DIRS[t.dir],dx=att.x-t.x,dy=att.y-t.y,along=dx*fx+dy*fy,side=Math.abs(dx*-fy+dy*fx);
   if(along>0&&along>=side)return"正面";if(along<0&&-along>=side)return"背面";return"側面";
@@ -976,11 +1077,11 @@ function bestAttack(att,t){
     if(t.core&&!w.core&&att.side==="P")continue;
     if(!t.core&&!w.unit)continue;
     const z=(t.core||t.sat)?"":zone(att,t),fm=B&&B.form;
-    let dmg=(w.d+(fm==="rear"&&att.side==="P"&&w.n==="ミサイル"?1:0))*mult(att,t)*(att.anti&&t.xeno?1.5:1)*(10/(10+2*t.armor));
+    let dmg=w.d*mult(att,t)*(att.anti&&t.xeno?1.5:1)*(10/(10+2*t.armor));
     // 陣形の補正：鶴翼は側面・背面への攻撃+15%、方陣は隣に味方がいる旗艦の被ダメージ-25%
     if(fm==="crane"&&att.side==="P"&&z&&z!=="正面")dmg*=1.15;
     if(fm==="square"&&t.side==="P"&&t.flag&&B.units.some(u=>u!==t&&u.side==="P"&&u.hp>0&&dist(u,t)===1))dmg*=.75;
-    dmg=Math.max(1,Math.round(dmg));
+    dmg=Math.max(1,Math.round(dmg))+(fm==="rear"&&att.side==="P"&&w.n==="ミサイル"?1:0);
     if(!best||dmg>best.dmg)best={w,dmg,zone:z};
   }
   return best;
@@ -1009,15 +1110,16 @@ function onCell(x,y){
   if(!B||B.phase!=="P"||B.busy||B.ended)return;
   const u=B.sel&&B.units.find(v=>v.uid===B.sel);
   const tgt=unitAt(x,y);
-  B.hover=null;
+  B.hover=null;B.note=null;
   if(u&&!u.acted){
-    if(tgt&&tgt.side==="E"){const a=bestAttack(u,tgt);if(a){B.sel=null;B.inspect=null;B.busy=true;doAttack(u,tgt,a).then(()=>{B.busy=false;afterPlayerAct()});return}}
-    if(!tgt&&reach(u).some(([a,b])=>a===x&&b===y)){B.sel=null;B.inspect=null;B.busy=true;doMove(u,x,y).then(()=>{B.busy=false;afterPlayerAct()});return}
+    if(tgt&&tgt.side==="E"){const a=bestAttack(u,tgt);if(a){hideTip();B.sel=null;B.inspect=null;B.busy=true;doAttack(u,tgt,a).then(()=>{B.busy=false;afterPlayerAct()});return}}
+    if(!tgt&&reach(u).some(([a,b])=>a===x&&b===y)){hideTip();B.sel=null;B.inspect=null;B.busy=true;doMove(u,x,y).then(()=>{B.busy=false;afterPlayerAct()});return}
   }
   // 攻撃できない敵をタップ：その敵の移動範囲と射程を表示
   if(tgt&&tgt.side==="E"){B.inspect=B.inspect===tgt.uid?null:tgt.uid;B.sel=null;renderBattle();return}
   B.inspect=null;
   if(tgt&&tgt.side==="P"&&!tgt.acted){B.sel=tgt.uid}else B.sel=null;
+  if(tgt&&tgt.side==="P"&&tgt.acted)B.note=`${tgt.name}はこのラウンド行動済み`;
   renderBattle();
 }
 function onHover(x,y){
@@ -1058,21 +1160,27 @@ function enemyDecide(e){
   if(!tiles.length)return null;
   const m=pickTile(e,tiles,foes,role);return m?{move:m}:null;
 }
+/* t までの歩数（小惑星は壁、艦は通れるものとする）。マンハッタン距離だと小惑星の手前で足踏みするため */
+function stepMap(t){const m=new Map([[`${t.x},${t.y}`,0]]),q=[[t.x,t.y]];
+  while(q.length){const[x,y]=q.shift(),d=m.get(`${x},${y}`);
+    for(const[dx,dy]of DIRS){const nx=x+dx,ny=y+dy,k=`${nx},${ny}`;if(nx<0||ny<0||nx>=BW||ny>=BH||m.has(k)||isRock(nx,ny))continue;m.set(k,d+1);q.push([nx,ny])}}
+  return c=>m.get(`${c.x},${c.y}`)??99}
 function pickTile(e,tiles,foes,role){
-  const flag=foes.find(u=>u.flag)||foes[0];
+  const flag=foes.find(u=>u.flag)||foes[0],dF=stepMap(flag);
   const own=B.units.find(u=>u.side==="E"&&u.flag&&u.hp>0);
   const maxR=Math.max(1,...e.w.filter(w=>w.unit).map(w=>w.max));
   const inRange=(c,t)=>{const d=dist(c,t);return e.w.some(w=>w.unit&&d>=w.min&&d<=w.max)};
   const score=c=>{
     const[nf,nd]=nearestOf(c,foes);
     switch(role){
-      case"keep":return Math.max(0,4-nd)*3-(inRange(c,nf)&&nd>=3?1:0);
+      case"keep":return(nd>6?(nd-6)*1.5:0)+Math.max(0,4-nd)*3-(inRange(c,nf)&&nd>=3?1:0); // 離れすぎたら距離6まで寄る
       case"sniper":return(nd<2?6:nd>maxR?(nd-maxR)*1.2:(maxR-nd)*.3)-(inRange(c,nf)?1:0);
       case"guard":
-        if(own&&own!==e&&nearestOf(own,foes)[1]>6)return Math.abs(dist(c,own)-1)*1.5+nd*.05;
+        // 敵がまだ遠いうちは旗艦の2マス以内を保ちながら前へ（旗艦の前をふさいで動けなくしない）
+        if(own&&own!==e&&nearestOf(own,foes)[1]>6)return Math.max(0,dist(c,own)-2)*1.5+nd*.3;
         return dist(c,nf)-(inRange(c,nf)?3:0);
-      case"flank":{const t=dist(e,flag)<=8?flag:nf,z=zone(c,t);return dist(c,t)+(z==="正面"?3:z==="側面"?0:-1)-(inRange(c,t)?2:0)}
-      default:return dist(c,flag)-(inRange(c,flag)?3:0);
+      case"flank":{const t=dist(e,flag)<=8?flag:nf,z=zone(c,t);return(t===flag?dF(c):dist(c,t))+(z==="正面"?3:z==="側面"?0:-1)-(inRange(c,t)?2:0)}
+      default:return dF(c)-(inRange(c,flag)?3:0);
     }
   };
   const cur=score(e);let best=null;
@@ -1096,17 +1204,22 @@ async function enemyPhase(){
     await wait(280);
   }
   setFfwd(false);ANIM.fast=false;
-  B.units.forEach(u=>{u.acted=false;if(u.rush){u.move--;u.rush=false}});B.round++;B.phase="P";renderBattle();
-  await banner("自軍フェイズ",`ROUND ${B.round}`,"P",950);
+  B.units.forEach(u=>{u.acted=false;if(u.rush){u.move--;u.rush=false}});B.round++;B.phase="P";
+  if(B.round>roundCap()){B.busy=false;return finishBattle(B.cfg.attack?"timeout":"hold")}
+  const last=B.round===roundCap();
+  if(last)bmsg(`最終ラウンド。決着がつかなければ${B.cfg.attack?"攻め切れずに引き返す":"敵は退く"}。`);
+  renderBattle();
+  await banner("自軍フェイズ",`ROUND ${B.round}${last?" ── 最終ラウンド":""}`,"P",950);
   if(!B||B.ended)return;
   B.busy=false;
   const first=B.units.find(u=>u.side==="P"&&u.hp>0&&u.flag)||B.units.find(u=>u.side==="P"&&u.hp>0);B.sel=first?first.uid:null;
   renderBattle();
 }
+const RESULT_LABEL={win:"勝利",retreat:"撤退",lose:"敗北",hold:"防衛成功",timeout:"時間切れ"};
 function finishBattle(result){
-  if(B.ended)return;B.ended=true;B.result=result;B.sel=null;B.inspect=null;B.hover=null;sfx(result==="win"?"win":"sad");
-  bmsg(result==="win"?"勝利！":result==="retreat"?"撤退した。":"旗艦を失った……敗北。");
-  banner(result==="win"?"勝利":result==="retreat"?"撤退":"敗北",result==="win"?"敵旗艦を撃破":result==="retreat"?"主星へ帰還する":"旗艦喪失",result==="win"?"P":"E",1500);
+  if(B.ended)return;B.ended=true;B.result=result;B.sel=null;B.inspect=null;B.hover=null;const good=result==="win"||result==="hold";sfx(good?"win":"sad");
+  bmsg({win:"勝利！",retreat:"撤退した。",hold:"時間切れ。持ちこたえた ── 敵は攻めあぐねて退いた。",timeout:"時間切れ。攻め切れずに引き返す。"}[result]||"旗艦を失った……敗北。");
+  banner(RESULT_LABEL[result]||"敗北",{win:"敵旗艦を撃破",retreat:"主星へ帰還する",hold:"時間切れ ── 敵は退いた",timeout:"攻め切れず、出撃元へ"}[result]||"旗艦喪失 ── 残った艦は主星へ",good?"P":"E",1500);
   renderBattle();
 }
 function closeBattle(){
@@ -1123,20 +1236,31 @@ function closeBattle(){
       if(ef.side==="M"){S.respawn++;S.xenoKills++;
         if(S.xenoKills>=3&&!S.evolved){S.evolved=true;setTimeout(()=>showComm([{who:"技術局",text:"異生体が進化しました！新たな個体は外殻の構造が変わり、正面が脆くなっています。側面狙いは通用しにくくなります。",cls:"xeno"}]),50)}}
       log(`${pf.name}が${ef.name}を撃破！`);
-      if(cfg.attack&&!S.fleets.some(f=>f.node===cfg.node&&f.side!=="P"))pf.node=cfg.node;
+      if(cfg.attack&&!S.fleets.some(f=>f.node===cfg.node&&f.side!=="P")){pf.node=cfg.node;
+        const p=planet(cfg.node);if(p.owner!=="P"&&pf.ships.length)log(`${p.name}はまだ${OWNER_LABEL[p.owner]}の星。次のターンに「この星を攻略」で攻められる。`)}
     }else{
       const es=[];for(const s of ef.ships){const u=units.find(v=>v.ref===s);if(u&&u.hp>0){s.hp=u.hp;es.push(s)}}
       ef.ships=es;if(!es.length)S.fleets=S.fleets.filter(f=>f!==ef);
-      log(`${pf.name}は${planet(HOME).name}へ撤退した。`);pf.node=HOME;
-      if(!cfg.attack&&S.fleets.includes(ef)){ef.node=cfg.node;siege(ef,planet(cfg.node))}
+      if(result==="hold")log(`${pf.name}は${planet(cfg.node).name}を守り抜いた。${ef.name}は攻めあぐねて退いた。`);
+      else if(result==="timeout")log(`${pf.name}は${ef.name}を攻め切れず、${planet(pf.node).name}にとどまった。`);
+      else{
+      if(survivors.length)log(result==="retreat"?`${pf.name}は${planet(HOME).name}へ撤退した。`:`${pf.name}は敗れ、残った艦は${planet(HOME).name}へ戻った。`);pf.node=HOME;
+      if(!cfg.attack&&S.fleets.includes(ef)){
+        // 同じ星にまだ自軍艦隊が残っていれば、敵はその星に入れない（主星の防衛では、戻った艦隊は数えない）
+        const hold=defenders(cfg.node).filter(x=>x!==pf);
+        if(hold.length)log(`${ef.name}は${hold[0].name}に阻まれ、${planet(cfg.node).name}には入れなかった。`);
+        else{if(ef.side==="M")xenoEnter(ef,cfg.node);else ef.node=cfg.node;siege(ef,planet(cfg.node))}
+      }
+      }
     }
   }else{
     const p=cfg.planet;
     if(result==="win"){
       if(cfg.kind==="hive"){S.over="win";S.fleets=S.fleets.filter(f=>f.side!=="M");p.owner="P";pf.node=p.id;log("深淵の巣を破壊！");setTimeout(()=>showEnd(true),50)}
-      else{const was=p.owner;p.owner="P";p.def=10;p.maxDef=Math.max(14,p.maxDef);pf.node=p.id;log(`${p.name}を占領！`);
-        if(was==="E"&&p.id===CAPITAL)log("ヴァルガ本星が陥落した。");}
-    }else{log(`${pf.name}は攻略に失敗し${planet(HOME).name}へ撤退した。`);pf.node=HOME}
+      else{const was=p.owner;p.owner="P";p.def=10;p.maxDef=Math.max(14,p.maxDef);pf.node=p.id;
+        log(was==="E"&&p.id===CAPITAL?"ヴァルガ本星を占領！帝国の中枢が陥落した。":was==="M"?`${p.name}を異生体から奪還！`:`${p.name}を占領！`)}
+    }else if(result==="timeout")log(`${pf.name}は${p.name}を攻め切れず、${planet(pf.node).name}にとどまった。`);
+    else{log(survivors.length?`${pf.name}は攻略に失敗し${planet(HOME).name}へ撤退した。`:`${pf.name}は${p.name}の攻略に失敗した。`);pf.node=HOME}
   }
   if(!pf.ships.length){S.fleets=S.fleets.filter(f=>f!==pf);log(`${pf.name}は全滅した。`)}
   const res=B.resolve;B=null;hideTip();$("battle").hidden=true;$("banner").hidden=true;setMusic("map");
@@ -1165,7 +1289,9 @@ function battleDefs(){
   d.innerHTML=`<filter id="fxGlow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
 <filter id="fxBlur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="5"/></filter>
 <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="#ea5a4f14"/><line x1="0" y1="0" x2="0" y2="7" stroke="#ea5a4f" stroke-width="2" opacity=".55"/></pattern>
-<pattern id="hatchX" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="#b974ff14"/><line x1="0" y1="0" x2="0" y2="7" stroke="#d29bff" stroke-width="2" opacity=".55"/></pattern>`;
+<pattern id="hatchX" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="#b974ff14"/><line x1="0" y1="0" x2="0" y2="7" stroke="#d29bff" stroke-width="2" opacity=".55"/></pattern>
+<pattern id="hatchL" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="9" stroke="#ea5a4f" stroke-width="1" opacity=".4"/></pattern>
+<pattern id="hatchXL" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="9" stroke="#d29bff" stroke-width="1" opacity=".4"/></pattern>`;
   return d;
 }
 function rockShape(x,y,px,py){
@@ -1179,7 +1305,7 @@ function renderBattle(){
   if(!B)return;
   $("bTitle").textContent=B.title;$("bTip").textContent=B.tip;
   const ph=$("bPhase");ph.className="phase "+(B.ended?"":B.phase);
-  ph.textContent=B.ended?"戦闘終了":`ROUND ${B.round}　${B.phase==="P"?"自軍フェイズ":"敵軍フェイズ"}`;
+  ph.textContent=B.ended?"戦闘終了":`ROUND ${B.round}/${roundCap()}　${B.phase==="P"?"自軍フェイズ":"敵軍フェイズ"}`;
   const port=bport(),live=!B.ended&&B.phase==="P"&&!B.busy;
   const svg=$("bsvg");svg.setAttribute("viewBox",port?`0 0 ${BH*CELL} ${BW*CELL}`:`0 0 ${BW*CELL} ${BH*CELL}`);svg.replaceChildren(battleDefs());
   const sel=B.sel&&B.units.find(u=>u.uid===B.sel&&u.hp>0);
@@ -1192,9 +1318,9 @@ function renderBattle(){
   const atkNow=canAct?rangeCells(sel,[at]):new Set();
   const atkAfter=canAct&&!B.hover?rangeCells(sel,mv):new Set();
   const inspMv=insp?new Set((insp.move>0?reach(insp):[]).map(c=>c.join(","))):new Set();
-  const inspAtk=insp?threatOf(insp):new Set();
-  let danger=new Set();
-  if(B.danger&&!B.ended)for(const e of B.units)if(e.side==="E"&&e.hp>0)for(const k of threatOf(e))danger.add(k);
+  const inspAtk=insp?threatOf(insp):new Set(),inspNow=insp?threatNow(insp):new Set();
+  const danger=new Set(),dangerNow=new Set();
+  if(B.danger&&!B.ended)for(const e of B.units)if(e.side==="E"&&e.hp>0){for(const k of threatOf(e))danger.add(k);for(const k of threatNow(e))dangerNow.add(k)}
   const over=svgEl("g",{"pointer-events":"none"});
   for(let y=0;y<BH;y++)for(let x=0;x<BW;x++){
     const[px,py]=cellPos(x,y),k=`${x},${y}`;
@@ -1204,13 +1330,14 @@ function renderBattle(){
     svg.append(r);
     if(isRock(x,y)){over.append(rockShape(x,y,px,py));continue}
     const R=(fill,stroke,dash,w)=>over.append(svgEl("rect",{x:px+2.5,y:py+2.5,width:CELL-5,height:CELL-5,rx:3,fill,stroke:stroke||"none","stroke-width":w||1.5,"stroke-dasharray":dash||"none"}));
-    if(danger.has(k))R("url(#hatch)");
+    if(dangerNow.has(k))R("url(#hatch)");else if(danger.has(k))R("url(#hatchL)");
     if(mvSet.has(k))R(B.hover&&B.hover[0]===x&&B.hover[1]===y?"#3aa0ff70":"#3aa0ff3a","#5cb4ff",null,1.5);
     else if(atkNow.has(k))R("#ea5a4f30","#ea5a4f",null,1.2);
     else if(atkAfter.has(k))R("#ea5a4f12","#ea5a4f","3 3",1);
     if(insp){
       if(inspMv.has(k))R("#b974ff30","#c99bff",null,1.2);
-      else if(inspAtk.has(k))R(insp.xeno?"url(#hatchX)":"url(#hatch)");
+      else if(inspNow.has(k))R(insp.xeno?"url(#hatchX)":"url(#hatch)");
+      else if(inspAtk.has(k))R(insp.xeno?"url(#hatchXL)":"url(#hatchL)");
     }
   }
   svg.append(over);
@@ -1231,6 +1358,8 @@ function renderBattle(){
     g.append(svgEl("rect",{x:px+6,y:py+CELL-9,width:w,height:4,fill:"#232a4d"}));
     g.append(svgEl("rect",{x:px+6,y:py+CELL-9,width:w*hp,height:4,fill:hp<.35?"#ea5a4f":"#5fd38d"}));
     if(u.flag){const t=svgEl("text",{x:px+6,y:py+15,fill:col,"font-size":14});t.textContent="★";g.append(t)}
+    if(u.side==="P"&&TAP==="クリック"){const n=B.units.filter(v=>v.side==="P"&&v.hp>0).indexOf(u)+1; // キー1〜4の番号
+      if(n>0&&n<5){const t=svgEl("text",{x:px+CELL-6,y:py+CELL-12,fill:"#e4e7f4","font-size":11,"text-anchor":"end","font-family":"DotGothic16, monospace",stroke:"#000","stroke-width":2.5,"paint-order":"stroke",opacity:.85});t.textContent=n;g.append(t)}}
     svg.append(g);
     if(B.actor===u.uid)svg.append(svgEl("circle",{cx:px+CELL/2,cy:py+CELL/2-2,r:CELL*.48,fill:"none",stroke:col,class:"actor-ring","pointer-events":"none"}));
     if(canAct&&u.side==="E"){
@@ -1238,22 +1367,22 @@ function renderBattle(){
       if(a){
         svg.append(svgEl("rect",{x:px+2,y:py+2,width:CELL-4,height:CELL-4,fill:"#ea5a4f22",stroke:"#ff6b5e","stroke-width":2.5,"pointer-events":"none"}));
         const t=svgEl("text",{x:px+CELL-4,y:py+14,fill:"#ffe1dc","font-size":12,"text-anchor":"end","pointer-events":"none","font-family":"DotGothic16, monospace",stroke:"#000","stroke-width":2.5,"paint-order":"stroke"});
-        t.textContent=`-${a.dmg}${a.zone&&a.zone!=="正面"?a.zone[0]:""}`;svg.append(t);
+        t.textContent=`-${a.dmg}${a.zone&&a.zone!=="正面"&&mult(ghost,u)>1?a.zone[0]:""}`;svg.append(t);
       }
     }
   }
   // 下部操作バー
   const bar=$("bBar");bar.replaceChildren();
   if(B.ended){
-    bar.append(h("span",{class:"bb-info",style:`color:${B.result==="win"?"var(--good)":"var(--foe)"}`},B.result==="win"?"勝利":B.result==="retreat"?"撤退":"敗北"),
+    bar.append(h("span",{class:"bb-info",style:`color:${B.result==="win"||B.result==="hold"?"var(--good)":"var(--foe)"}`},RESULT_LABEL[B.result]||"敗北"),
       h("button",{class:"primary",onclick:closeBattle},"作戦卓へ戻る",h("span",{class:"kbd"},"Enter")));
   }else{
-    bar.append(h("span",{class:"bb-info"},sel?`${sel.flag?"★":""}${sel.name} 耐久${sel.hp}/${sel.maxHp}`:insp?`敵：${insp.name}`:B.phase==="P"?(B.busy?"……":"自軍の艦をタップ"):"敵が行動中……（クリックで早送り）"));
-    bar.append(h("button",{class:B.danger?"on":"","aria-pressed":String(!!B.danger),onclick:()=>{B.danger=!B.danger;renderBattle()}},"敵の射程",h("span",{class:"kbd"},"R")));
+    bar.append(h("span",{class:"bb-info"},sel?`${sel.flag?"★":""}${sel.name} 耐久${sel.hp}/${sel.maxHp}`:insp?`敵：${insp.name}`:B.phase==="P"?(B.busy?"……":B.note||`自軍の艦を${TAP}`):`敵が行動中……（${TAP}で早送り）`));
+    bar.append(h("button",{class:B.danger?"on":"","aria-pressed":String(!!B.danger),onclick:()=>{B.danger=!B.danger;if(!B.busy)renderBattle()}},"敵の射程",h("span",{class:"kbd"},"R")));
     if(B.phase==="P")bar.append(
       h("button",{disabled:!sel||sel.acted||B.busy,onclick:()=>battleWaitSel()},"待機",h("span",{class:"kbd"},"W")),
-      h("button",{class:"primary",disabled:B.busy,onclick:()=>battleEndPhase()},"ターン終了",h("span",{class:"kbd"},"E")),
-      h("button",{class:"danger",disabled:B.busy,onclick:()=>{if(B.busy)return;finishBattle("retreat")}},"撤退"));
+      h("button",{class:"primary",disabled:B.busy,title:"まだ動いていない艦は待機して、敵のフェイズへ",onclick:()=>battleEndPhase()},"フェイズ終了",h("span",{class:"kbd"},"E")),
+      h("button",{class:"danger",disabled:B.busy,onclick:()=>askRetreat()},"撤退"));
   }
   // サイドパネル
   const side=$("bSide");side.replaceChildren();
@@ -1263,16 +1392,27 @@ function renderBattle(){
       h("p",{class:"hint"},hint));
   };
   if(sel)info(sel,"青いマスへ移動するか、赤枠の敵を攻撃。赤いマスは今の位置からの射程、赤い点線は移動してから届く範囲。1隻につき移動か攻撃のどちらか1回。");
-  else if(insp)info(insp,insp.core||insp.sat?"斜線のマスがこの目標の射程。":`紫のマスが移動範囲、斜線のマスが次に攻撃してくる範囲。${insp.xeno?(insp.neo?"正面が弱点。":"側面が弱点。"):"背後と側面から撃つと大きな損害を与えられる。"}`);
-  else if(!B.ended)side.append(h("p",{class:"hint"},B.phase==="P"?"自軍の艦をタップして選択。敵をタップするとその射程が見える。":"敵が行動中……"));
+  else if(insp)info(insp,insp.core||insp.sat?"斜線のマスがこの目標の射程。":`紫のマスが移動範囲。濃い斜線は次の敵フェイズに撃たれるマス、薄い斜線は動いてから届くマス（敵も移動と攻撃は同じ手番にできない）。${insp.xeno?(insp.neo?"正面が弱点。":"側面が弱点。"):"背面と側面から撃つと大きな損害を与えられる。"}`);
+  else if(!B.ended)side.append(h("p",{class:"hint"},B.phase==="P"?`自軍の艦を${TAP}して選択。攻撃できない敵を${TAP}するとその射程が見える。`:"敵が行動中……"));
   side.append(h("div",{class:"legend"},
     h("span",null,h("i",{style:"background:#3aa0ff3a;border-color:#5cb4ff"}),"移動"),
     h("span",null,h("i",{style:"background:#ea5a4f30;border-color:#ea5a4f"}),"射程"),
     h("span",null,h("i",{style:"background:#ea5a4f12;border-color:#ea5a4f;border-style:dashed"}),"移動後の射程"),
-    h("span",null,h("i",{style:"background:repeating-linear-gradient(45deg,#ea5a4f88 0 2px,transparent 2px 5px);border-color:#ea5a4f"}),"敵の射程"),
-    h("span",null,"数字末尾 側/背＝側面・背面ボーナス")));
-  side.append(h("p",{class:"hint kbd-help"},"マウス：左クリックで選択・移動・攻撃、右クリックで選択解除。キー：1〜4 艦の選択／W 待機／E ターン終了／R 敵の射程"));
+    h("span",null,h("i",{style:"background:repeating-linear-gradient(45deg,#ea5a4f88 0 2px,transparent 2px 5px);border-color:#ea5a4f"}),"敵の射程（次に撃たれる）"),
+    h("span",null,h("i",{style:"background:repeating-linear-gradient(45deg,#ea5a4f44 0 1px,transparent 1px 6px);border-color:#ea5a4f66"}),"敵が動けば届く"),
+    h("span",null,"数字末尾 側/背＝向きによる割増")));
+  side.append(h("p",{class:"hint kbd-help"},"マウス：左クリックで選択・移動・攻撃、右クリックで選択解除。キー：1〜4 艦の選択／W 待機／E フェイズ終了／R 敵の射程"));
   if(B.msg.length)side.append(h("div",{class:"log",style:"max-height:240px"},...B.msg.map(t=>h("p",null,t))));
+}
+/* 撤退は取り消せないので一度確かめる（防衛戦ならその星が包囲される）。AIプレイは finishBattle("retreat") を直接呼ぶ */
+function askRetreat(){
+  if(!B||B.busy||B.ended)return;
+  const c=B.cfg,p=planet(c.node),home=planet(HOME).name;
+  const what=c.attack?`${c.pf.name}は戦闘をやめて主星${home}へ戻ります。`:
+    `${c.pf.name}は主星${home}へ戻り、${p.name}は敵艦隊に包囲されます${p.id===HOME?"（主星の防衛力が足りなければ、そのまま敗北）":"（防衛力が足りなければ占領される）"}。`;
+  openModal(card=>card.append(h("h2",null,"撤退しますか？"),h("p",null,what),
+    h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:()=>{$("modal").hidden=true;renderBattle()}},"戦闘を続ける"),
+      h("button",{class:"danger",onclick:()=>{$("modal").hidden=true;if(B&&!B.ended&&!B.busy)finishBattle("retreat")}},"撤退する"))));
 }
 function battleWaitSel(){if(!B||B.busy||B.ended||B.phase!=="P")return;const sel=B.sel&&B.units.find(u=>u.uid===B.sel);if(!sel||sel.acted)return;sel.acted=true;B.sel=null;afterPlayerAct()}
 function battleEndPhase(){if(!B||B.busy||B.ended||B.phase!=="P")return;B.units.forEach(u=>{if(u.side==="P")u.acted=true});enemyPhase()}
@@ -1560,7 +1700,7 @@ async function animateMove(u,fx,fy,path){
   await tween(Math.min(720,150*seg+80),k=>{
     const e=ease(k)*seg,i=Math.min(seg-1,Math.floor(e)),f=e-i,[x0,y0]=pts[i],[x1,y1]=pts[i+1];
     const[cdx,cdy]=[cells[i+1][0]-cells[i][0],cells[i+1][1]-cells[i][1]];
-    u.adir=cdx>0?0:cdx<0?2:cdy>0?1:3;
+    u.adir=i===seg-1&&f>.55?u.dir:cdx>0?0:cdx<0?2:cdy>0?1:3; // 最後は移動後の向きへ
     u.anim=[x0+(x1-x0)*f,y0+(y1-y0)*f];
     u.trail.push(u.anim);if(u.trail.length>10)u.trail.shift();
     renderBattle();
@@ -1611,14 +1751,18 @@ async function mapBurst(id,col){
 }
 
 /* ============ 起動 ============ */
-$("btnEnd").addEventListener("click",()=>endTurn());
+$("btnEnd").addEventListener("click",()=>askEndTurn());
 $("btnHelp").addEventListener("click",showIntro);
 $("btnSound").addEventListener("click",()=>{if(!SND.ctx&&SND.on){audioInit();return}soundToggle()});
 if(!SND.on){$("btnSound").textContent="音 OFF";$("btnSound").setAttribute("aria-pressed","false")}
 $("btnNew").addEventListener("click",()=>openModal(card=>card.append(h("h2",null,"最初からやり直しますか？"),h("p",null,"現在の戦況は失われます。"),
   h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:closeModal},"続ける"),h("button",{class:"danger",onclick:()=>{$("modal").hidden=true;newGame();render()}},"やり直す")))));
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("modal").hidden&&!S.over)closeModal()});
-// 敵の行動中はクリックで早送り
+// 敵の行動中はクリック（タップ）で早送り
+$("ffwd").textContent=`${TAP}で早送り`;
+// ウィンドウが開いている間は、後ろの画面に Tab で移って押せないようにする（hidden の付け外しを見張る）
+new MutationObserver(()=>{const open=!$("modal").hidden;for(const el of[document.querySelector(".app"),$("mbar"),$("battle")])el.inert=open})
+  .observe($("modal"),{attributes:true,attributeFilter:["hidden"]});
 document.addEventListener("pointerdown",e=>{if(e.target.closest&&e.target.closest("#modal"))return;if((B&&B.phase==="E"&&!B.ended)||(!B&&ANIM.enemyTurn))ANIM.fast=true},{capture:true});
 $("bsvg").addEventListener("pointerleave",()=>{onHover(null);hideTip()});
 $("bsvg").addEventListener("pointermove",e=>{if(e.pointerType==="mouse")moveTip(e)});
@@ -1627,11 +1771,12 @@ $("map").addEventListener("contextmenu",e=>e.preventDefault());
 /* キーボード操作（PC） */
 document.addEventListener("keydown",e=>{
   if(e.ctrlKey||e.metaKey||e.altKey||e.repeat)return;
-  if(!$("modal").hidden||!S)return;
   const k=e.key.toLowerCase();
+  if(k==="e"&&!$("modal").hidden&&$("endYes")){e.preventDefault();$("endYes").click();return} // 確認ウィンドウでもう一度 E で終了
+  if(!$("modal").hidden||!S)return;
   if(B){
     if(B.ended){if(k==="enter"){e.preventDefault();closeBattle()}return}
-    if(k==="r"){B.danger=!B.danger;renderBattle();return}
+    if(k==="r"){B.danger=!B.danger;if(!B.busy)renderBattle();return}
     if(B.phase!=="P"||B.busy)return;
     if(k==="w")battleWaitSel();
     else if(k==="e")battleEndPhase();
@@ -1640,18 +1785,50 @@ document.addEventListener("keydown",e=>{
     return;
   }
   if(S.over||ANIM.busy)return;
-  if(k==="e"){e.preventDefault();endTurn()}
+  if(k==="e"){e.preventDefault();askEndTurn()}
   else if(k==="f"){const f=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");if(f){e.preventDefault();openFormation(f)}}
   else if(k==="m"){const f=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");if(f&&!f.moved){S.sel=f.node;S.mode=S.mode==="move"?null:"move";render()}}
   else if(k==="escape"&&S.mode){S.mode=null;render()}
   else if(/^[1-4]$/.test(k)){const f=S.fleets.filter(x=>x.side==="P")[Number(k)-1];if(f){S.sel=f.node;S.selFleet=f.id;S.mode=null;render()}}
 });
 
-let lastNarrow=null;
-window.addEventListener("resize",()=>{const n=isNarrow();if(n!==lastNarrow){lastNarrow=n;render();if(B)renderBattle()}});
-function start(data){lastNarrow=isNarrow();
-  if(data&&data.S&&data.S.planets&&data.S.planets[0].fac){S=data.S;S.mode=null;render()}else{newGame();render()}
+let lastNarrow=null;const layoutKey=()=>`${isNarrow()}|${isWide3()}`; // 縦横の切り替えと、左列（技術局・艦隊一覧）の有無
+window.addEventListener("resize",()=>{const n=layoutKey();if(n!==lastNarrow){lastNarrow=n;if(S)render();if(B)renderBattle()}});
+function start(data){lastNarrow=layoutKey();
+  if(data&&data.S&&data.S.planets&&data.S.planets[0].fac){S=data.S;S.mode=null;render();return}
+  const sv=loadSave();
+  if(sv){S=sv.S;S.mode=null;render();showResume(sv);return}
+  newGame();render();
 }
-window.claude?.hot?.snapshot?.(()=>({S:B?null:S}));
+/* ============ 自動保存（このブラウザの中だけ） ============
+   作戦卓で落ち着いているとき（戦闘・演出・敵の行動中でない）に保存し、次に開いたとき「続きから」を出す。
+   AIプレイ（gameAPI）や自動テスト（navigator.webdriver）では保存も読み込みもしない。 */
+const SAVE_KEY="fw-save-v1";
+let lastSave="",calm=""; // calm: 最後に作戦卓で落ち着いていたときの S（hot snapshot にも使う）
+function autosave(){
+  if(!S||B||ANIM.busy||window.gameAPI)return;
+  calm=S.over?"":JSON.stringify(S);
+  if(navigator.webdriver)return;
+  try{
+    if(S.over){if(lastSave!=="over"){localStorage.removeItem(SAVE_KEY);lastSave="over"}return}
+    if(calm!==lastSave){localStorage.setItem(SAVE_KEY,`{"v":1,"at":${Date.now()},"S":${calm}}`);lastSave=calm}
+  }catch(e){}
+}
+function loadSave(){
+  if(navigator.webdriver)return null;
+  try{const d=JSON.parse(localStorage.getItem(SAVE_KEY)||"null");
+    if(d&&d.v===1&&d.S&&!d.S.over&&Array.isArray(d.S.planets)&&d.S.planets.length===PLANETS.length&&d.S.planets[0].fac&&Array.isArray(d.S.fleets))return d}catch(e){}
+  return null;
+}
+function showResume(sv){
+  const mine=S.planets.filter(p=>p.owner==="P").length,when=new Date(sv.at||Date.now());
+  openModal(card=>card.append(h("img",{class:"keyart",src:`${ART}key_title.webp`,alt:""}),h("h2",null,"辺境星系戦記"),
+    h("p",null,`前回の続きから遊べます。星暦${3989+S.turn}年（ターン${S.turn}）・資金 ${S.funds}・自国の星 ${mine}・艦級 ${CLASSES[S.tier].name}`),
+    h("p",{class:"hint"},`保存：${when.toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}　進行はこのブラウザの中に自動で保存されます。`),
+    h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:()=>{$("modal").hidden=true;newGame();render()}},"最初から"),h("button",{class:"primary",onclick:closeModal},"続きから"))));
+  $("modalCard").querySelector("button.primary").focus({preventScroll:true});
+}
+// 戦闘中・敵の行動中・演出中の S は途中の状態なので渡さず、その前の落ち着いた時点の写しを渡す
+window.claude?.hot?.snapshot?.(()=>({S:calm?JSON.parse(calm):null}));
 window.claude?.hot?.ready?window.claude.hot.ready(start):start(window.claude?.hot?.data??{});
 </script>
