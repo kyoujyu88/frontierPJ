@@ -157,23 +157,38 @@ async function chat(messages, { withTools = true } = {}) {
   if (withTools) Object.assign(body, { tools, tool_choice: "auto" });
   else body.temperature = Math.min(TEMP, 0.4);
   const t0 = Date.now();
-  // LLM まわりの失敗は「LLM API」で始まるエラーにそろえる（メインループはこれだけを「LLMにつながらない」とみなす）
-  const res = await fetch(`${BASE}/chat/completions`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(10 * 60 * 1000),
-  }).catch(e => { throw new Error(`LLM API に接続できません：${e.cause?.code || e.message}`); });
-  if (!res.ok) throw new Error(`LLM API ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  // LLM まわりの失敗は「LLM API」で始まるエラーにそろえる。何度やっても同じになる失敗（つながらない・モデルがない・ツール非対応）には fatal をつける。
+  // メインループは fatal ならすぐ止め、それ以外（400 などその場かぎりのもの）はそのターンだけ自動で進める
+  let res;
+  for (let retry = 0; ; retry++) {
+    try {
+      res = await fetch(`${BASE}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10 * 60 * 1000),
+      });
+      break;
+    } catch (e) {
+      if (e.name === "TimeoutError") throw llmError("LLM API の返事が10分来ません", false);
+      if (retry >= 1) throw llmError(`LLM API に接続できません：${e.cause?.code || e.message}`, true);
+      await new Promise(r => setTimeout(r, 5000)); // Ollama の再起動などに備えて、一度だけやり直す
+    }
+  }
+  if (!res.ok) {
+    const text = (await res.text()).slice(0, 300);
+    throw llmError(`LLM API ${res.status}: ${text}`, [401, 403, 404].includes(res.status) || /does not support tools|model\b.*\bnot found/i.test(text));
+  }
   const sec = (Date.now() - t0) / 1000;
   if (sec >= 20) log(`（返事まで ${sec.toFixed(0)}秒）`);
   const data = await res.json().catch(e => ({ error: e.message }));
   const msg = data?.choices?.[0]?.message;
-  if (!msg) throw new Error(`LLM API の返事が読めません：${JSON.stringify(data).slice(0, 200)}`);
+  if (!msg) throw llmError(`LLM API の返事が読めません：${JSON.stringify(data).slice(0, 200)}`, false);
   // content を配列で返すサーバーもある
   if (Array.isArray(msg.content)) msg.content = msg.content.map(c => c.text ?? "").join("");
   return msg;
 }
+const llmError = (message, fatal) => Object.assign(new Error(message), { fatal });
 const stripThink = s => (s || "").replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<think>[\s\S]*$/, "")
   .replace(/<\|channel\|?>\s*thought[\s\S]*?(<channel\|>|(?=<\|tool_call)|$)/g, "") // Gemma 系の考える部分
   .trim();
@@ -186,7 +201,8 @@ function cleanTalk(s) {
     .replace(/```[\s\S]*?(```|$)/g, " ") // コードブロック（ツール呼び出しを文字で書いたもの）
     .replace(TEXT_CALL, " ")
     .replace(/<\/?[a-zA-Z][\w-]*(?:\s[^<>]*)?\/?>/g, " ") // </td> や <dialog> など、紛れ込んだタグ
-    .replace(/\*\*|__/g, "").replace(/[ \t]{2,}/g, " ").replace(/\s*\n\s*/g, "\n").trim();
+    .replace(/\*\*|__/g, "").replace(/[ \t]{2,}/g, " ").replace(/\s*\n\s*/g, "\n").trim()
+    .replace(/(^|\n)thought$/i, "").trim(); // 考える部分の見出しだけが最後に残ったもの（Gemma 系）
   t = t.replace(new RegExp(`^${NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[：:]\\s*`), "");
   for (let changed = true; changed && t.length > 1;) {
     changed = false;
@@ -302,7 +318,8 @@ async function playTurn() {
     if (talk) { log(`${NAME}：` + talk); memo = turnTalk = talk.slice(0, 200); await say(talk.slice(0, 160)); }
     let calls = msg.tool_calls ?? [];
     if (!calls.length && (calls = textCalls(stripThink(msg.content))).length) log(`  （文字で書かれたツール呼び出しを実行します：${calls.map(c => c.function.name).join(", ")}）`);
-    messages.push({ role: "assistant", content: talk || null, ...(calls.length ? { tool_calls: calls } : {}) });
+    // content は必ず文字列にする（null だと Ollama が「invalid message content type: <nil>」の 400 で断る）
+    messages.push({ role: "assistant", content: talk, ...(calls.length ? { tool_calls: calls } : {}) });
     if (!calls.length) {
       if (++idle >= 3) break;
       messages.push({ role: "user", content: ended ? "状況を見て、残りの戦闘や通信を片付けてください。" : "ツールで操作を続けてください。やることが終わったら end_turn。" });
@@ -389,7 +406,7 @@ if (USE_NOTES) log(notes.lessons.length ? `反省メモ ${notes.lessons.length}�
 let st = (await tool("get_state")).json;
 journal.begin(st);
 log("最初の返事を待っています（モデルの読み込みと長い指示の読み取りで、数分かかることがあります）");
-let llmDown = false;
+let llmDown = false, llmErrors = 0;
 for (let n = 0; n < TURNS; n++) {
   if (st.over) {
     log(`ゲーム終了：${st.over}`);
@@ -404,11 +421,16 @@ for (let n = 0; n < TURNS; n++) {
   const turn = st.turn;
   log(`=== ターン${turn} 資金${st.funds} ===`);
   let auto = false;
-  try { ({ st, auto } = await playTurn()); }
+  try { ({ st, auto } = await playTurn()); llmErrors = 0; }
   catch (e) {
     if (stopping) await new Promise(() => {});
     log("エラー：" + e.message);
-    if (/^LLM API/.test(e.message)) { log("ローカルLLMに接続できないため止めます（--base-url と --model を確認）"); llmDown = true; break; }
+    if (/^LLM API/.test(e.message)) {
+      if (/^LLM API に接続できません/.test(e.message)) { log("ローカルLLMに接続できないため止めます（--base-url と --model を確認）"); llmDown = true; break; }
+      if (e.fatal) { log("LLMのエラーで止めます：モデル名と、ツール呼び出しに対応したモデルかを確認してください"); llmDown = true; break; }
+      if (++llmErrors >= 3) { log("LLMのエラーで止めます：3ターン続けて失敗しました（モデルとコンテキストの長さを確認）"); llmDown = true; break; }
+      log("その場かぎりのエラーとみなして、このターンは自動で進めます");
+    }
     st = await autopilot(); if (!st.over) { await tool("end_turn"); st = await autopilot(); }
     auto = true;
   }
