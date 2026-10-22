@@ -223,13 +223,13 @@ npm install</code></pre></div>
       <ul class="checks">
         <li><input type="checkbox" id="c-s-1"><div class="body"><label for="c-s-1">窓なしで30ターン通しプレイが最後まで走った</label>
           <div class="cmd"><pre><code>npm test</code></pre></div>
-          <p class="why">こちらの環境で約30秒。最初に <code>28 tools</code>、続いて <code>ターン1 資金160 …</code> とターンが進み、最後に次の2行が出れば成功です。</p>
-          <pre><code class="out">最終：ターン18 資金1678 over=lose 自国惑星1 異生体=true
-ツール呼び出し 339 回、拒否 10 回</code></pre>
-          <p class="why">ボットは単純なので、負けて途中で終わること（<code>over=lose</code>）や、<code>✗ battle_state: 戦闘中ではありません</code> のような <code>✗</code> 行が混じるのは正常です。「押せない操作をしたら理由つきで断られる」仕組みが働いている印です。</p></div></li>
+          <p class="why">こちらの環境で約30秒。最初に <code>21 tools（戦闘：オート）</code>、続いて <code>ターン1 資金160 …</code> とターンが進み、最後に次の2行が出れば成功です。</p>
+          <pre><code class="out">最終：ターン14 資金1020 over=lose 自国惑星0 異生体=false
+ツール呼び出し 130 回、拒否 6 回、オートで決着した戦闘 6 回</code></pre>
+          <p class="why">戦闘はオートで決着し、<code>戦闘（オート）：ミラ 攻略戦 勝利（11ラウンド・…）</code> のように結果が出ます。ボットは単純なので、負けて途中で終わること（<code>over=lose</code>）や、<code>✗ move_fleet: 通信ウィンドウが開いています…</code> のような <code>✗</code> 行が混じるのは正常です。「押せない操作をしたら理由つきで断られる」仕組みが働いている印です。</p></div></li>
         <li><input type="checkbox" id="c-s-2"><div class="body"><label for="c-s-2">窓を出して、演出つきの画面を目で見た</label>
           <div class="cmd"><pre><code>$env:TURNS=5; node selftest.mjs --show</code></pre></div>
-          <p class="why">Chromium の窓に「辺境星系戦記」が開き、移動のハイライト・戦闘アニメ・右上の「のあ：〇〇」・画面下の字幕「テストを始めるよ！」が見えればOKです。BGMも鳴ります。終わると窓は自動で閉じます。途中でやめるときは <span class="kbd">Ctrl</span>+<span class="kbd">C</span>。</p>
+          <p class="why">Chromium の窓に「辺境星系戦記」が開き、移動のハイライト・オート戦闘のアニメ・右上の「のあ：〇〇」・画面下の字幕「テストを始めるよ！」が見えればOKです。BGMも鳴ります。終わると窓は自動で閉じます。途中でやめるときは <span class="kbd">Ctrl</span>+<span class="kbd">C</span>。</p>
           <p class="why">終わったら <code>Remove-Item Env:TURNS</code> で設定を消しておきます（PowerShell を閉じても消えます）。</p></div></li>
         <li><input type="checkbox" id="c-s-3"><div class="body"><label for="c-s-3">反省メモの仕組みのテストがすべて ✓ になった</label>
           <div class="cmd"><pre><code>npm run test:notes</code></pre></div>
@@ -275,11 +275,11 @@ Invoke-RestMethod http://192.168.0.75:11434/api/create -Method Post -Body $body<
 
     <section class="step" id="model" data-title="モデルを選ぶ">
       <div class="step-head"><span class="num">06</span><h2>モデルを選んでダウンロードする</h2><span class="time">10〜30分</span></div>
-      <p>必須条件は<strong>ツール呼び出し（function calling）に対応していること</strong>です。戦術戦闘では座標を扱うので、小さすぎるモデルは失敗が増えます。VRAMに収まる中で大きめを選んでください。</p>
+      <p>必須条件は<strong>ツール呼び出し（function calling）に対応していること</strong>です。戦術戦闘はオートなので座標の操作はありませんが、内政や攻める先・陣形の判断は大きいモデルほど上手です。VRAMに収まる中で大きめを選んでください。</p>
       <div class="tbl"><table>
         <thead><tr><th>VRAM</th><th>おすすめ</th><th>ダウンロード量</th><th>メモ</th></tr></thead>
         <tbody>
-          <tr><td>8GB</td><td><code>qwen3:8b</code></td><td>約5GB</td><td>動作確認には十分。戦闘のミスはやや多め</td></tr>
+          <tr><td>8GB</td><td><code>qwen3:8b</code></td><td>約5GB</td><td>動作確認には十分。判断はやや大ざっぱ</td></tr>
           <tr><td>12〜16GB</td><td><code>qwen3:14b</code></td><td>約9GB</td><td>README の例と同じ。まずはこれ</td></tr>
           <tr><td>16GB以上</td><td><code>gpt-oss:20b</code></td><td>約14GB</td><td>比較用の2本目に</td></tr>
           <tr><td>24GB</td><td><code>qwen3:30b</code></td><td>約19GB</td><td>速さと賢さのバランスがよい</td></tr>
@@ -315,7 +315,7 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
    ✗ ……（失敗した操作と理由。のあは次の手で取り返します）</code></pre>
           <p class="why">最初の1回はモデルの読み込みで時間がかかります。3ターン終わると反省メモを書いて止まります。</p></div></li>
         <li><input type="checkbox" id="c-p-2"><div class="body"><label for="c-p-2">画面で次の3つを確認した</label>
-          <p class="why">① 画面下にのあのセリフが字幕で出る　② 右上に「のあ：〇〇」と行動が出る　③ 戦闘が始まると、のあが1隻ずつ動かして、終わると作戦卓に戻る</p></div></li>
+          <p class="why">① 画面下にのあのセリフが字幕で出る　② 右上に「のあ：〇〇」と行動が出る　③ 戦闘が始まると、オートで艦が動いて決着し、結果を見せてから作戦卓に戻る（のあは戦闘を操作しない。結果をひとこと実況する）</p></div></li>
         <li><input type="checkbox" id="c-p-3"><div class="body"><label for="c-p-3">1ターンにかかる時間をメモした</label>
           <p class="why">配信のテンポを決める材料になります。長すぎる場合は「トラブルシューティング」の「返事がとても遅い」を見てください。</p></div></li>
         <li><input type="checkbox" id="c-p-4"><div class="body"><label for="c-p-4">ターン数の制限なしで長めに遊ばせた（止めるときは <span class="kbd">Ctrl</span>+<span class="kbd">C</span>）</label>
@@ -329,7 +329,8 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
           <tbody>
             <tr><td><code>--turns 10</code></td><td>10ターンで止める（既定は無制限）</td></tr>
             <tr><td><code>--loop</code></td><td>ゲームが終わったら新しいゲームを始める（配信の放置用）</td></tr>
-            <tr><td><code>--max-steps 40</code></td><td>のあが考える回数の上限（作戦卓は1ターンごと、戦闘は1戦ごと）。超えると残りを自動で片付けて先へ進む</td></tr>
+            <tr><td><code>--max-steps 40</code></td><td>のあが考える回数の上限（1ターンごと）。超えると残りを自動で片付けて先へ進む</td></tr>
+            <tr><td><code>-- --manual-battle</code></td><td>戦闘をオートにせず、のあに1隻ずつ操作させる（時間がかかる。既定はオート）</td></tr>
             <tr><td><code>--persona noa.txt</code></td><td>のあの人格・口調を書いたテキスト（UTF-8で保存）をプロンプトの先頭に入れる</td></tr>
             <tr><td><code>--temperature 0.6</code></td><td>発言のばらつき（既定 0.6）</td></tr>
             <tr><td><code>-- --pace 900</code></td><td><code>--</code> の後ろはゲーム側の設定。行動ごとの間を 900ms にする（既定 700）</td></tr>

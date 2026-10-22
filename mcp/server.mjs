@@ -16,6 +16,8 @@
  *   --size 1280x720   ウィンドウの中身の大きさ                                GAME_SIZE
  *   --record <dir>    ゲーム画面を動画（.webm、音なし）で dir に録画する      GAME_RECORD
  *   --record-name <名前>  録画ファイルの名前（既定 日時。.webm は自動で付く）  GAME_RECORD_NAME
+ *   --manual-battle   戦術戦闘を battle_* ツールで1隻ずつ操作する（既定はオート戦闘で、  GAME_MANUAL_BATTLE=1
+ *                     戦闘は自動で決着して結果だけが返る。battle_* ツールは出さない）
  */
 import http from "node:http";
 import fs from "node:fs/promises";
@@ -41,6 +43,7 @@ const [W, H] = opt("size", "GAME_SIZE", "1280x720").split("x").map(Number);
 const HTTP_PORT = opt("http", "GAME_HTTP", null);
 const RECORD_DIR = opt("record", "GAME_RECORD", null) && path.resolve(opt("record", "GAME_RECORD", null));
 const RECORD_NAME = opt("record-name", "GAME_RECORD_NAME", null);
+const MANUAL_BATTLE = flag("manual-battle", "GAME_MANUAL_BATTLE");
 const API_JS = await fs.readFile(path.join(HERE, "game-api.js"), "utf8");
 const err = (...a) => console.error("[frontier-war-mcp]", ...a); // stdout はMCP専用
 
@@ -66,7 +69,8 @@ let browser = null, page = null, opening = null;
 async function inject(pg) {
   if (await pg.evaluate(() => !!window.gameAPI).catch(() => false)) return;
   await pg.addScriptTag({ content: API_JS });
-  await pg.evaluate(([pace, sp]) => { gameAPI.setPace(pace); gameAPI.setSpeaker(sp); }, [PACE, SPEAKER]);
+  const r = await pg.evaluate(([pace, sp, auto]) => { gameAPI.setPace(pace); gameAPI.setSpeaker(sp); return gameAPI.setAutoBattle(auto); }, [PACE, SPEAKER, !MANUAL_BATTLE]);
+  if (!r.ok) err(r.message);
 }
 async function openGame() {
   if (CDP) {
@@ -133,7 +137,9 @@ const id = z.number().int();
 
 function buildServer() {
   const s = new McpServer({ name: "frontier-war", version: "1.0.0" }, {
-    instructions: "SF戦略シミュレーション『辺境星系戦記』を操作するサーバー。最初に get_rules を読み、get_state で状況を確認してから行動する。通信ウィンドウ（dialog）が出たら内容を読んで dismiss_dialog。戦闘が始まったら battle_* で戦い、終わったら battle_close。視聴者向けの一言は say で字幕に出せる。",
+    instructions: "SF戦略シミュレーション『辺境星系戦記』を操作するサーバー。最初に get_rules を読み、get_state で状況を確認してから行動する。通信ウィンドウ（dialog）が出たら内容を読んで dismiss_dialog。"
+      + (MANUAL_BATTLE ? "戦闘が始まったら battle_* で戦い、終わったら battle_close。" : "戦術戦闘はオートで決着し、結果は行動の返り値（events・battles）に出る。")
+      + "視聴者向けの一言は say で字幕に出せる。",
   });
   const tool = (name, description, shape, fn) =>
     s.registerTool(name, { description, inputSchema: shape }, async (a) => {
@@ -156,10 +162,11 @@ function buildServer() {
   tool("dismiss_dialog", "開いている通信ウィンドウを閉じる（「了解」を押す）。", {}, () => call("dismissDialog"));
 
   // 作戦卓
-  tool("move_fleet", "自軍艦隊を移動させる。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to=いまいる星 で攻略戦）。候補は get_summary の「移動先」（get_state なら myFleets[].moveOptions）。", {
+  const BATTLE_NOTE = MANUAL_BATTLE ? "" : "戦闘はオートで決着してから返る（結果は events と battles）。";
+  tool("move_fleet", "自軍艦隊を移動させる。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to=いまいる星 で攻略戦）。" + BATTLE_NOTE + "候補は get_summary の「移動先」（get_state なら myFleets[].moveOptions）。", {
     fleet_id: id.describe("自軍艦隊のID"), to: id.describe("行き先の惑星ID"),
   }, ({ fleet_id, to }) => call("moveFleet", fleet_id, to));
-  tool("intercept", "艦隊がいる星に居座る敵（異生体、休戦していなければヴァルガ艦隊も）を迎撃して戦闘を始める。自国の星なら対空砲台も働く。", { fleet_id: id }, ({ fleet_id }) => call("intercept", fleet_id));
+  tool("intercept", "艦隊がいる星に居座る敵（異生体、休戦していなければヴァルガ艦隊も）を迎撃して戦闘を始める。自国の星なら対空砲台も働く。" + BATTLE_NOTE, { fleet_id: id }, ({ fleet_id }) => call("intercept", fleet_id));
   tool("invest_research", "資金を研究に投資する（30・60・120）。必要量に達すると次の艦級が完成し、改装上限も上がる。", {
     amount: z.union([z.literal(30), z.literal(60), z.literal(120)]),
   }, ({ amount }) => call("investResearch", amount));
@@ -187,10 +194,11 @@ function buildServer() {
   }, ({ planet_id, facility }) => call("demolishFacility", planet_id, facility));
   tool("survey", "自国の星で小惑星探査（40）。45%で収入+20。", { planet_id: id }, ({ planet_id }) => call("survey", planet_id));
   tool("fortify", "自国の星の防衛力を修復（30で+15）。", { planet_id: id }, ({ planet_id }) => call("fortify", planet_id));
-  tool("end_turn", "ターンを終了する。収入・研究が入り、敵が行動する。敵に襲われると戦闘が始まった状態で返る。", {}, () => call("endTurn"));
+  tool("end_turn", "ターンを終了する。収入・研究が入り、敵が行動する。" + (MANUAL_BATTLE ? "敵に襲われると戦闘が始まった状態で返る。" : "敵に襲われたときの防衛戦もオートで決着してから返る（結果は events と battles）。"), {}, () => call("endTurn"));
   tool("new_game", "最初からやり直す（現在の戦況は失われる）。", { confirm: z.literal(true).describe("true を渡したときだけ実行") }, () => call("newGame"));
 
-  // 戦術戦闘
+  // 戦術戦闘（--manual-battle のときだけ。既定のオート戦闘では出さない）
+  if (!MANUAL_BATTLE) return s;
   tool("battle_state", "戦術戦闘の盤面（ユニット・座標・向き・各自軍艦の移動先と攻撃候補と予測ダメージ）を取得する。", {}, async () => (await call("getState")).battle ?? { ok: false, message: "戦闘中ではありません" });
   tool("battle_attack", "自軍艦で敵を攻撃する（射程内のみ。武器は最も効く物が自動で選ばれる）。その艦はこのラウンド行動済みになる。", {
     unit_id: id, target_id: id,
