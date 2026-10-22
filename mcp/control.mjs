@@ -103,7 +103,7 @@ function runTrial(s, n) {
     run.current = rec; pushState();
     const child = spawn(process.execPath, playerArgs(s, n), { cwd: HERE, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true, env: { ...process.env, FORCE_COLOR: "0" } });
     run.child = child; run.childStopping = false;
-    let llmDown = false, over = null, stopped = false;
+    let llmDown = false, llmWhy = "", over = null, stopped = false;
     const onLine = (line, err) => {
       if (!line.trim()) return;
       let m;
@@ -111,7 +111,7 @@ function runTrial(s, n) {
       else if ((m = line.match(/ゲーム終了：(win|lose)/))) over = m[1];
       else if (/自動進行に切り替えます/.test(line)) rec.autoTurns++;
       else if (/^\S*\s*✗ /.test(line.replace(/^[\d:]+\s+/, ""))) rec.failures++;
-      else if (/ローカルLLMに接続できないため止めます/.test(line)) llmDown = true;
+      else if ((m = line.match(/ローカルLLMに接続できないため止めます|LLMのエラーで止めます/))) { llmDown = true; llmWhy = m[0].startsWith("ローカル") ? "LLM接続エラー" : "LLMエラー"; }
       else if (/止めます。反省メモを書いてから/.test(line)) stopped = run.childStopping = true;
       else if ((m = line.match(/\[frontier-war-mcp\] recorded: (.+)$/))) { rec.video = path.basename(m[1].trim()); push({ type: "videos" }); }
       addLog(line, err ? "err" : /^[\d:]+\s+(→|  )/.test(line) ? "op" : "");
@@ -126,14 +126,14 @@ function runTrial(s, n) {
       if (done) return;
       done = true;
       rec.endedAt = new Date().toISOString();
-      rec.outcome = over === "win" ? "勝利" : over === "lose" ? "敗北" : llmDown ? "LLM接続エラー" : stopped || run.killed ? "停止" : code ? `エラー終了(${code})` : s.turns && rec.turn >= s.turns ? "ターン上限" : "途中終了";
+      rec.outcome = over === "win" ? "勝利" : over === "lose" ? "敗北" : llmDown ? llmWhy : stopped || run.killed ? "停止" : code ? `エラー終了(${code})` : s.turns && rec.turn >= s.turns ? "ターン上限" : "途中終了";
       if (s.record && !rec.video) rec.video = await latestVideo(Date.parse(rec.startedAt));
       history.unshift(rec); history = history.slice(0, 300);
       await writeJson(HISTORY_FILE, history).catch(() => {});
       run.current = null;
       sys(`── 試行 ${n}/${run.total} 終了：${rec.outcome}（ターン${rec.turn}）${rec.video ? ` 録画 ${rec.video}` : ""}`);
       push({ type: "history" }); push({ type: "videos" });
-      resolve({ llmDown, code });
+      resolve({ llmDown, llmWhy, code });
     };
     child.on("exit", (code) => {
       run.child = null;
@@ -168,7 +168,7 @@ async function startSeries(input) {
       run.trial = n; pushState();
       sys(`── 試行 ${n}/${s.trials} を始めます`);
       const r = await runTrial(s, n);
-      if (r.llmDown) { sys("ローカルLLMにつながらないので、連続プレイを止めました（URLとモデル名を確認してください）"); break; }
+      if (r.llmDown) { sys(r.llmWhy === "LLM接続エラー" ? "ローカルLLMにつながらないので、連続プレイを止めました（URLとモデル名を確認してください）" : "LLMがエラーを返すので、連続プレイを止めました（ログの「エラー：」の行を確かめてください）"); break; }
       if (run.stopAfter || run.killed) break;
       if (n < s.trials) await new Promise(r => setTimeout(r, 2000));
     }

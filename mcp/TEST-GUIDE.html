@@ -417,6 +417,7 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
             <tr><td>黒い窓に「操作盤を起動できませんでした」</td><td>窓に出た最後の数行（<code>mcp\notes\.control.log</code> にも残ります）を教えてください</td></tr>
             <tr><td>「一覧」で「つながりません」</td><td>URL の打ち間違いか、Ollama のPCが起きていません。手順05〜06の確認をもう一度</td></tr>
             <tr><td>「LLM接続エラー」で止まった</td><td>残りの試行はやめます。Ollama のPCを確認してから、もう一度開始します</td></tr>
+            <tr><td>「LLMエラー」で止まった</td><td>残りの試行はやめます。ログの「エラー：」の行を、手順11の表で探します（モデル名の違い・ツール非対応・コンテキスト不足など）</td></tr>
             <tr><td>画面右上が「操作盤が止まっています」</td><td>「操作盤を開く」をダブルクリックし直します（戦績と設定は残っています）</td></tr>
           </tbody>
         </table></div>
@@ -441,7 +442,7 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
 
     <section class="step" id="trouble" data-title="困ったとき">
       <div class="step-head"><span class="num">11</span><h2>困ったとき（トラブルシューティング）</h2></div>
-      <p>PowerShell に出たメッセージで探してください。<code>LLM API 400</code> や <code>404</code> のときも最後に「ローカルLLMに接続できないため止めます」と出るので、その<strong>1つ上の行</strong>を見てください。</p>
+      <p>PowerShell に出たメッセージで探してください。LLM のせいで止まったときは、最後に「ローカルLLMに接続できないため止めます」か「LLMのエラーで止めます」と出ます。原因はその上の<strong>「エラー：」の行</strong>に出ているので、そこを見てください。</p>
       <div class="tbl"><table>
         <thead><tr><th>出たもの・症状</th><th>原因</th><th>直し方</th></tr></thead>
         <tbody>
@@ -453,7 +454,8 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
           <tr><td><code>--model を指定してください</code></td><td>モデル名を付け忘れた</td><td><code>--model qwen3:14b</code> を付ける</td></tr>
           <tr><td><code>LLM API 404: … model … not found</code></td><td>モデル名の打ち間違い、または未ダウンロード</td><td><code>ollama list</code> で正しい名前を確認、なければ <code>ollama pull</code></td></tr>
           <tr><td><code>LLM API 400: … does not support tools</code></td><td>ツール呼び出し非対応のモデル</td><td>手順06の表から <code>tools</code> 対応モデルを選ぶ</td></tr>
-          <tr><td><code>ローカルLLMに接続できないため止めます</code>（すぐ上に <code>LLM API</code> の行がない）</td><td>Ollama が起動していない、または URL 違い</td><td>トレイのアイコンを確認。<code>curl.exe http://127.0.0.1:11434/v1/models</code> でモデル一覧が返るか見る（<code>curl</code> ではなく <code>curl.exe</code>）</td></tr>
+          <tr><td><code>LLM API 400</code> のあと「このターンは自動で進めます」</td><td>その場かぎりのエラー（問い合わせが長すぎたなど）</td><td>そのまま遊び続けます。3ターン続いて止まるときは、コンテキストを 32768 に上げる</td></tr>
+          <tr><td><code>LLM API に接続できません</code></td><td>Ollama が起動していない、または URL 違い</td><td>トレイのアイコンを確認。<code>curl.exe http://127.0.0.1:11434/v1/models</code> でモデル一覧が返るか見る（<code>curl</code> ではなく <code>curl.exe</code>）</td></tr>
           <tr><td>返事がとても遅い（1回に1分以上）</td><td>GPUからはみ出している、またはモデルの「考える」時間が長い</td><td><code>ollama ps</code> で <code>100% GPU</code> か確認。はみ出していたら1段小さいモデルにするか、コンテキストを 16384 に下げる</td></tr>
           <tr><td><code>自動進行に切り替えます</code> が毎ターン出る</td><td>モデルがツールをうまく使えず、上限まで迷っている</td><td>大きいモデルにする。黙り込む場合はコンテキスト不足も疑う（<code>ollama ps</code> の <code>CONTEXT</code>）</td></tr>
           <tr><td>途中からルールを忘れたような動きになる</td><td>コンテキストがあふれて指示が切れている</td><td>コンテキストを 32768 に上げる、または <code>--max-steps 25</code> で1ターンの操作数を減らす</td></tr>
