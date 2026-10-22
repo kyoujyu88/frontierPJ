@@ -1,0 +1,23 @@
+辺境星系戦記 クレジット
+
+ゲーム設計・プログラム
+  教授 と Claude（Anthropic）による共同制作
+
+イラスト（art/ の全画像）
+  Google Gemini（画像生成モデル）で生成
+
+音楽（BGM・ジングル）
+  Google Lyria（音楽生成モデル）で生成
+  ※ 生成音声には Google の電子透かし SynthID が含まれます
+  ※ ローカル版では audio/audio-data.js に埋め込んでいます
+
+画像・音声の形式変換（webp／mp3 化）
+  Claude（Anthropic）
+
+効果音
+  ブラウザ内（Web Audio）でのプログラム合成
+
+フォント（SIL Open Font License 1.1、ライセンス全文は fonts/ にあります）
+  DotGothic16  Copyright 2020 The DotGothic16 Project Authors
+  BIZ UDPGothic  Copyright 2022 The BIZ UDGothic Project Authors
+  ※ 本ゲームで使う文字だけに絞った改変版です

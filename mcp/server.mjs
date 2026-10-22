@@ -156,10 +156,10 @@ function buildServer() {
   tool("dismiss_dialog", "開いている通信ウィンドウを閉じる（「了解」を押す）。", {}, () => call("dismissDialog"));
 
   // 作戦卓
-  tool("move_fleet", "自軍艦隊を移動させる。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる。候補は get_summary の「移動先」（get_state なら myFleets[].moveOptions）。", {
+  tool("move_fleet", "自軍艦隊を移動させる。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to=いまいる星 で攻略戦）。候補は get_summary の「移動先」（get_state なら myFleets[].moveOptions）。", {
     fleet_id: id.describe("自軍艦隊のID"), to: id.describe("行き先の惑星ID"),
   }, ({ fleet_id, to }) => call("moveFleet", fleet_id, to));
-  tool("intercept", "艦隊がいる星に居座る敵（異生体、休戦前のヴァルガ）を迎撃して戦闘を始める。", { fleet_id: id }, ({ fleet_id }) => call("intercept", fleet_id));
+  tool("intercept", "艦隊がいる星に居座る敵（異生体、休戦していなければヴァルガ艦隊も）を迎撃して戦闘を始める。自国の星なら対空砲台も働く。", { fleet_id: id }, ({ fleet_id }) => call("intercept", fleet_id));
   tool("invest_research", "資金を研究に投資する（30・60・120）。必要量に達すると次の艦級が完成し、改装上限も上がる。", {
     amount: z.union([z.literal(30), z.literal(60), z.literal(120)]),
   }, ({ amount }) => call("investResearch", amount));
@@ -192,15 +192,15 @@ function buildServer() {
 
   // 戦術戦闘
   tool("battle_state", "戦術戦闘の盤面（ユニット・座標・向き・各自軍艦の移動先と攻撃候補と予測ダメージ）を取得する。", {}, async () => (await call("getState")).battle ?? { ok: false, message: "戦闘中ではありません" });
-  tool("battle_attack", "自軍艦で敵を攻撃する（射程内のみ。武器は最も効く物が自動で選ばれる）。その艦はこの戦闘ターン行動済みになる。", {
+  tool("battle_attack", "自軍艦で敵を攻撃する（射程内のみ。武器は最も効く物が自動で選ばれる）。その艦はこのラウンド行動済みになる。", {
     unit_id: id, target_id: id,
   }, ({ unit_id, target_id }) => call("battleAttack", unit_id, target_id));
-  tool("battle_move", "自軍艦を移動する（移動先は get_summary の「移動先」、battle_state なら moves）。移動した艦はこの戦闘ターン攻撃できない。移動方向を向く。", {
+  tool("battle_move", "自軍艦を移動する（移動先は get_summary の「移動先」、battle_state なら moves）。移動した艦はこのラウンド攻撃できない。移動方向を向く。", {
     unit_id: id, x: id, y: id,
   }, ({ unit_id, x, y }) => call("battleMove", unit_id, x, y));
   tool("battle_wait", "自軍艦を待機させる（何もしない）。", { unit_id: id }, ({ unit_id }) => call("battleWait", unit_id));
   tool("battle_end_phase", "自軍フェイズを終了し、敵フェイズを進める。まだ動いていない艦は何もしないまま終わる（全艦が攻撃・移動・待機を終えれば、呼ばなくても自動で敵の番になる）。", {}, () => call("battleEndPhase"));
-  tool("battle_retreat", "戦闘から撤退する（艦隊は主星へ戻る）。", {}, () => call("battleRetreat"));
+  tool("battle_retreat", "戦闘から撤退する（艦隊は主星へ戻る。防衛戦で撤退すると、その星は敵に攻められる）。", {}, () => call("battleRetreat"));
   tool("battle_close", "終わった戦闘を閉じて作戦卓に戻る。ターン終了中なら次の戦闘やターン処理が続く。", {}, () => call("battleClose"));
   return s;
 }
