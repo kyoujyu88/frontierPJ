@@ -58,7 +58,7 @@ for (let t = 0; t < MAX_TURNS; t++) {
   const home = s.planets.find(p => p.id === 0);
   if (t === 1) await call("build_facility", { planet_id: 1, facility: "mine" });
   if (t === 0) { const r = await call("set_formation", { fleet_id: s.myFleets[0].id, formation: "square" }); console.log("  陣形:", r.message); }
-  if (t === 2) await call("refit_ship", { fleet_id: s.myFleets[0].id, ship_index: 0, sh: 2, ca: 2, bo: 2 });
+  if (t === 2) await call("refit_ship", { fleet_id: s.myFleets[0].id, ship_index: 0, sh: 2, ca: 2, mi: 0, bo: 2, sp: 0 });
   for (const f of (await call("get_state")).myFleets) {
     if (f.repairCost && (await call("get_state")).funds >= f.repairCost) await call("repair_fleet", { fleet_id: f.id });
     const opt = f.moveOptions.find(o => o.kind.includes("攻略") || o.kind.includes("艦隊戦")) ?? f.moveOptions.find(o => o.kind === "移動" && o.to > f.at);

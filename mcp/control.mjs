@@ -119,10 +119,12 @@ function runTrial(s, n) {
     const lines = (stream, err) => { let buf = ""; stream.setEncoding("utf8"); stream.on("data", d => { buf += d; const parts = buf.split(/\r?\n/); buf = parts.pop(); parts.forEach(l => onLine(l, err)); }); stream.on("end", () => buf && onLine(buf, err)); };
     lines(child.stdout, false); lines(child.stderr, true);
     child.on("error", e => sys(`起動できませんでした：${e.message}`));
-    child.on("exit", async (code) => {
-      run.child = null;
-      // ゲームの窓（server.mjs）は少し遅れて閉じ、そのとき録画が確定する。動画の名前を拾うために少し待つ
-      await new Promise(r => setTimeout(r, s.record ? 4000 : 1000));
+    // ゲームの窓（server.mjs）は ai-player より少し遅れて閉じ、そのとき録画が確定する。
+    // server.mjs も同じ出力につながっているので、出力が全部閉じた（close）ところで締める。close が来なければ時間で打ち切る
+    let done = false;
+    const finish = async (code) => {
+      if (done) return;
+      done = true;
       rec.endedAt = new Date().toISOString();
       rec.outcome = over === "win" ? "勝利" : over === "lose" ? "敗北" : llmDown ? "LLM接続エラー" : stopped || run.killed ? "停止" : code ? `エラー終了(${code})` : s.turns && rec.turn >= s.turns ? "ターン上限" : "途中終了";
       if (s.record && !rec.video) rec.video = await latestVideo(Date.parse(rec.startedAt));
@@ -132,7 +134,12 @@ function runTrial(s, n) {
       sys(`── 試行 ${n}/${run.total} 終了：${rec.outcome}（ターン${rec.turn}）${rec.video ? ` 録画 ${rec.video}` : ""}`);
       push({ type: "history" }); push({ type: "videos" });
       resolve({ llmDown, code });
+    };
+    child.on("exit", (code) => {
+      run.child = null;
+      setTimeout(() => finish(code), s.record ? 30000 : 5000);
     });
+    child.on("close", (code) => finish(code));
   });
 }
 

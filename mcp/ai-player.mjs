@@ -17,7 +17,7 @@
  *   --api-key <key>    APIキー（ローカルなら不要）                                  LLM_API_KEY
  *   --name <名前>      プレイヤーの名前。字幕の名前と反省メモのファイル名になる。省くと起動時に聞く（Enter で前回の名前、初回は のあ）  PLAYER_NAME
  *   --persona <file>   のあの人格・口調を書いたテキスト（システムプロンプトの先頭に入る） NOA_PERSONA
- *   --max-steps <n>    1ターンにのあが呼べるツールの上限（既定 40。超えたら自動で進める） NOA_MAX_STEPS
+ *   --max-steps <n>    のあが考える回数の上限。作戦卓では1ターンごと、戦闘では1戦ごとに数える（既定 40。超えたら自動で進める） NOA_MAX_STEPS
  *   --turns <n>        何ターン遊んだら止めるか（既定 無制限）                        NOA_TURNS
  *   --temperature <t>  （既定 0.6）                                                   LLM_TEMPERATURE
  *   --think <none|low|medium|high>  考える量（reasoning_effort）。none で考えずに即答（Ollama の thinking 対応モデル向け）  LLM_THINK
@@ -204,15 +204,28 @@ function cleanTalk(s) {
   return t;
 }
 
-/* ツール結果をのあ向けに短くする（戦闘中は盤面のテキストに置き換える） */
+/* ツール結果をのあ向けに短くする（戦闘中は盤面のテキストに置き換える）。
+ * 状況テキストをつけたときは、あとで古くなったとき用の縮めた版（short）も返す */
 async function digest(name, r) {
   const j = r.json;
-  if (!j || typeof j !== "object" || !("ok" in j)) return r.text.slice(0, 6000);
+  if (!j || typeof j !== "object" || !("ok" in j)) return { content: r.text.slice(0, 6000), short: null };
   const lines = [`${j.ok ? "成功" : "失敗"}：${j.message}`];
   if (j.events?.length) lines.push("出来事：\n " + j.events.slice(-12).join("\n "));
-  if (j.ok && (j.mode === "battle" || j.mode === "battle_ended" || j.dialog)) lines.push(await summary());
-  else if (j.ok) lines.push(`資金${j.funds}`);
-  return lines.join("\n");
+  // 戦闘中・通信・戦闘を閉じて作戦卓に戻ったときは、最新の状況テキストをつける
+  if (j.ok && (j.mode === "battle" || j.mode === "battle_ended" || j.dialog || (name === "battle_close" && j.mode === "map"))) {
+    const short = [lines[0], ...(j.events?.length ? ["出来事：\n " + j.events.slice(-4).join("\n ")] : []), OLD_NOTE].join("\n");
+    return { content: [...lines, await summary()].join("\n"), short };
+  }
+  if (j.ok) lines.push(`資金${j.funds}`);
+  return { content: lines.join("\n"), short: null };
+}
+/* 1ターンの会話は貯まっていくので、状況テキスト（戦闘の盤面など）は最新の1つだけ全文で送り、古いものは縮める */
+const OLD_NOTE = "（このときの状況テキストは省略。最新の状況は後ろのメッセージにあります）";
+const shortOf = new WeakMap();
+function slim(messages) {
+  let last = -1;
+  messages.forEach((m, i) => { if (shortOf.has(m)) last = i; });
+  return messages.map((m, i) => i < last && shortOf.has(m) ? { ...m, content: shortOf.get(m) } : m);
 }
 
 /* ---------- 自動進行（のあが詰まったときの保険） ---------- */
@@ -264,13 +277,27 @@ async function checkEndPhase() {
 let memo = "", turnTalk = "";
 async function playTurn() {
   turnTalk = "";
-  const messages = [
-    { role: "system", content: SYSTEM() },
-    { role: "user", content: `${memo ? `前のターンのあなたの発言：${memo}\n\n` : ""}今の状況です。操作を始めてください。\n\n${await summary()}` },
-  ];
-  let ended = false, over = false, idle = 0, wasted = 0, lastName = "";
-  for (let step = 0; step < MAX_STEPS && wasted < 6; step++) {
-    const msg = await chat(messages);
+  const intro = `${memo ? `前のターンのあなたの発言：${memo}\n\n` : ""}今の状況です。操作を始めてください。`;
+  const first = { role: "user", content: `${intro}\n\n${await summary()}` };
+  shortOf.set(first, `${intro}\n${OLD_NOTE}`);
+  const messages = [{ role: "system", content: SYSTEM() }, first];
+  let ended = false, over = false, idle = 0, wasted = 0, lastName = "", auto = false;
+  // 考える回数は、作戦卓ではこのターンの合計、戦闘では1戦ごとに数える（攻める戦闘と防衛戦が重なっても途中で自動進行にならないように）
+  let step = 0, mapSteps = 0, battleSteps = 0, inBattle = false;
+  while (mapSteps < MAX_STEPS && wasted < 6) {
+    if (inBattle && battleSteps >= MAX_STEPS) {
+      // この戦闘だけ自動で片付けて、作戦卓の続きは本人に戻す
+      log(`この戦闘で ${MAX_STEPS} 回考えたので、残りの戦闘を自動で片付けます`);
+      const s = await autopilot(); auto = true; inBattle = false;
+      if (s.over || ended) return { st: s, auto };
+      const back = { role: "user", content: `残りの戦闘は自動で片付けました。作戦卓の操作を続けてください。\n\n${await summary()}` };
+      shortOf.set(back, `残りの戦闘は自動で片付けました。\n${OLD_NOTE}`);
+      messages.push(back);
+      continue;
+    }
+    if (inBattle) battleSteps++; else mapSteps++;
+    step++;
+    const msg = await chat(slim(messages));
     const talk = cleanTalk(stripThink(msg.content));
     if (talk) { log(`${NAME}：` + talk); memo = turnTalk = talk.slice(0, 200); await say(talk.slice(0, 160)); }
     let calls = msg.tool_calls ?? [];
@@ -302,14 +329,17 @@ async function playTurn() {
       const r = await tool(c.function.name, args ?? {});
       if (c.function.name === "end_turn" && r.json?.ok) ended = true;
       if (r.json?.mode === "over") { over = true; break; } // 勝敗がついた（結果の画面は配信用に出したまま、振り返りへ）
-      const content = await digest(c.function.name, r);
+      if (r.json?.mode) { const b = r.json.mode === "battle" || r.json.mode === "battle_ended"; if (b && !inBattle) battleSteps = 0; inBattle = b; }
+      const { content, short } = await digest(c.function.name, r);
       if (r.json && r.json.ok === false) log("  ✗ " + r.json.message);
-      messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content });
+      const m = { role: "tool", tool_call_id: c.id, name: c.function.name, content };
+      if (short) shortOf.set(m, short);
+      messages.push(m);
     }
-    if (over) return { st: (await tool("get_state")).json, auto: false };
+    if (over) return { st: (await tool("get_state")).json, auto };
     if (ended) {
       const s = (await tool("get_state")).json;
-      if (!s.battle && !s.dialog) return { st: s, auto: false };
+      if (!s.battle && !s.dialog) return { st: s, auto };
     }
   }
   // 上限まで来た・黙った：残りを自動で片付けてターンを終える

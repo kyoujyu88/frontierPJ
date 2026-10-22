@@ -329,7 +329,7 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
           <tbody>
             <tr><td><code>--turns 10</code></td><td>10ターンで止める（既定は無制限）</td></tr>
             <tr><td><code>--loop</code></td><td>ゲームが終わったら新しいゲームを始める（配信の放置用）</td></tr>
-            <tr><td><code>--max-steps 40</code></td><td>1ターンにのあが呼べる操作の上限。超えると残りを自動で片付けて次のターンへ</td></tr>
+            <tr><td><code>--max-steps 40</code></td><td>のあが考える回数の上限（作戦卓は1ターンごと、戦闘は1戦ごと）。超えると残りを自動で片付けて先へ進む</td></tr>
             <tr><td><code>--persona noa.txt</code></td><td>のあの人格・口調を書いたテキスト（UTF-8で保存）をプロンプトの先頭に入れる</td></tr>
             <tr><td><code>--temperature 0.6</code></td><td>発言のばらつき（既定 0.6）</td></tr>
             <tr><td><code>-- --pace 900</code></td><td><code>--</code> の後ろはゲーム側の設定。行動ごとの間を 900ms にする（既定 700）</td></tr>

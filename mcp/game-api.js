@@ -231,10 +231,9 @@ function devSummary(st){
     }
     const bo=f.ships.reduce((s,x)=>s+(x.alloc?.bo||0),0);
     if(!bo&&f.moveOptions.some(o=>o.kind.includes("攻略"))){
-      const x=f.ships[f.ships.length-1],a={...x.alloc};
-      if(x.points.used>=x.points.max){const k=["ca","sh","sp","mi"].sort((p,q)=>a[q]-a[p])[0];a[k]--} // 空きがなければ一番多い項目から1つ回す
-      a.bo=1;
-      L.push(` 改装：${f.name} は爆装0なので惑星を落とせない → refit_ship(fleet_id=${f.id}, ship_index=${x.index}, ${STAT_KEYS.map(k=>`${k}=${a[k]}`).join(", ")})（5項目すべて書く。書かない項目は0になる）`);
+      const x=f.ships[f.ships.length-1],a=x.alloc,ch={bo:1};
+      if(x.points.used>=x.points.max){const k=["ca","sh","sp","mi"].sort((p,q)=>a[q]-a[p])[0];ch[k]=a[k]-1} // 空きがなければ一番多い項目から1つ回す
+      L.push(` 改装：${f.name} は爆装0なので惑星を落とせない → refit_ship(fleet_id=${f.id}, ship_index=${x.index}, ${Object.entries(ch).map(([k,v])=>`${k}=${v}`).join(", ")})（書かない項目は今の値のまま）`);
     }
   }
   const yards=S.planets.filter(p=>p.owner==="P"&&p.yard);
@@ -351,8 +350,11 @@ const api={
     ensureMap();const f=myFleet(fleetId),s=f.ships[Number(shipIndex)];
     if(!s)fail(`${f.name} に ${shipIndex} 番艦はいません（0〜${f.ships.length-1}）`);
     const c=CLASSES[s.cls],cap=capOf("P"),a={};
-    for(const k of STAT_KEYS){const v=alloc?.[k]??0;if(!Number.isInteger(v)||v<0||v>cap)fail(`${k} は 0〜${cap} の整数で指定してください`);a[k]=v}
-    const sum=STAT_KEYS.reduce((t,k)=>t+a[k],0);if(sum>c.pts)fail(`合計 ${sum} が上限 ${c.pts} を超えています（${c.name}）`);
+    if(!STAT_KEYS.some(k=>alloc?.[k]!=null))fail(`変える項目（${STAT_KEYS.join("・")}）を1つ以上書いてください`);
+    // 書かなかった項目は今の値のまま
+    for(const k of STAT_KEYS){const v=alloc?.[k]??s.a[k];if(!Number.isInteger(v)||v<0||v>cap)fail(`${k} は 0〜${cap} の整数で指定してください`);a[k]=v}
+    const sum=STAT_KEYS.reduce((t,k)=>t+a[k],0);
+    if(sum>c.pts)fail(`合計 ${sum} が上限 ${c.pts} を超えています（${c.name}。今の配分 ${STAT_KEYS.map(k=>`${k}=${s.a[k]}`).join(", ")}、書かなかった項目は今の値のまま。増やすなら別の項目を減らす）`);
     showAction(`${f.name} ${shipIndex}番艦を改装`);focusPlanet(f.node,f.id);
     s.a=a;openRefit(f);await sleep(pace*2);if(dialogOpen())closeModal();
     log(`${f.name}の${c.name}を改装（装甲${a.sh}・主砲${a.ca}・ミサイル${a.mi}・爆装${a.bo}・機関${a.sp}）。`);render();
@@ -506,7 +508,7 @@ const RULES=`# 辺境星系戦記 ルール要約（AIプレイヤー向け）
 - 遺跡惑星に研究所があると、ゾア出現時にセラフ級研究が大きく進む。
 - 小惑星探査40（45%で収入+20）、防衛修復30（防衛+15）、修理（損傷の半分の資金）。
 ## 改装（艦ごと）
-- ポイント配分：sh装甲・ca主砲・mi ミサイル・bo爆装・sp機関。合計は艦級のP以下、各項目は改装上限以下。
+- ポイント配分：sh装甲・ca主砲・mi ミサイル・bo爆装・sp機関。合計は艦級のP以下、各項目は改装上限以下。refit_ship は変える項目だけ書けばよい（書かない項目は今の値のまま）。
 - 主砲＝3+主砲×2（射程1〜2）。ミサイル＝2+ミサイル×1.5（射程2〜4、1以上で搭載）。爆装＝4+爆装×3（射程1、惑星中枢・巣の中枢を壊せる唯一の武器）。移動＝1+機関。装甲は被ダメージ軽減（×10/(10+2×装甲)）。
 - 惑星攻略・巣の攻略には爆装を持つ艦が必須。
 ## 戦術戦闘（11×7マス）

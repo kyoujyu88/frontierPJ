@@ -163,12 +163,12 @@ function buildServer() {
   tool("invest_research", "資金を研究に投資する（30・60・120）。必要量に達すると次の艦級が完成し、改装上限も上がる。", {
     amount: z.union([z.literal(30), z.literal(60), z.literal(120)]),
   }, ({ amount }) => call("investResearch", amount));
-  tool("refit_ship", "艦の能力ポイントを振り直す。合計は艦級のポイント以下、各項目は改装上限以下。省略した項目は0になるので、変えない項目も今の値を書く（今の配分は get_summary の[装2砲2ミ0爆0機2]など）。", {
+  tool("refit_ship", "艦の能力ポイントを振り直す。合計は艦級のポイント以下、各項目は改装上限以下。変える項目だけ書けばよく、書かない項目は今の値のまま（今の配分は get_summary の[装2砲2ミ0爆0機2]など）。", {
     fleet_id: id, ship_index: id.describe("艦隊内の番号（0が旗艦）"),
     sh: z.number().int().optional().describe("装甲"), ca: z.number().int().optional().describe("主砲"),
     mi: z.number().int().optional().describe("ミサイル"), bo: z.number().int().optional().describe("爆装（惑星・巣の中枢攻撃に必須）"),
     sp: z.number().int().optional().describe("機関（戦闘時の移動力）"),
-  }, ({ fleet_id, ship_index, sh = 0, ca = 0, mi = 0, bo = 0, sp = 0 }) => call("refitShip", fleet_id, ship_index, { sh, ca, mi, bo, sp }));
+  }, ({ fleet_id, ship_index, sh, ca, mi, bo, sp }) => call("refitShip", fleet_id, ship_index, { sh, ca, mi, bo, sp }));
   tool("set_flagship", "艦隊の旗艦（★、沈むと戦闘に負ける）を指定する。", { fleet_id: id, ship_index: id }, ({ fleet_id, ship_index }) => call("setFlagship", fleet_id, ship_index));
   tool("set_formation", "艦隊の陣形を変える（行動は消費しない）。line横陣＝補正なし／wedge楔形＝1ラウンド目の移動+1／square方陣＝旗艦の隣に味方がいる間、旗艦の被ダメージ-25%／crane鶴翼＝側面・背面への攻撃+15%／rear後衛陣＝ミサイル+1。", {
     fleet_id: id, formation: z.enum(["line", "wedge", "square", "crane", "rear"]),
