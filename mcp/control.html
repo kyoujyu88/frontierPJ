@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AIプレイ操作盤</title>
+<style>
+:root {
+  --bg: #0b1020; --panel: #121a30; --panel2: #18223d; --line: #2a3658; --text: #e6e9f2; --muted: #93a0bf;
+  --gold: #e5b453; --gold-ink: #1b1405; --blue: #6aa6ff; --green: #4fc98a; --red: #ff6b6b; --amber: #f0a43a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 "BIZ UDPGothic", "Yu Gothic UI", "Meiryo", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: #0e1428; position: sticky; top: 0; z-index: 2; }
+header h1 { margin: 0; font-size: 18px; color: var(--gold); letter-spacing: .05em; }
+header .st { margin-left: auto; display: flex; gap: 10px; align-items: center; color: var(--muted); }
+.tools { display: flex; gap: 6px; flex-wrap: wrap; }
+.tools button { padding: 5px 10px; font-size: 13px; }
+#bye { position: fixed; inset: 0; background: rgba(5,8,18,.92); display: grid; place-items: center; z-index: 9; text-align: center; padding: 16px; }
+#bye[hidden] { display: none; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: #555; display: inline-block; }
+.dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+main { display: grid; grid-template-columns: 380px 1fr; gap: 16px; padding: 16px 20px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; padding: 12px 16px; } }
+@media (max-width: 600px) { header { position: static; flex-wrap: wrap; padding: 10px 16px; } header .hint { display: none; } header .st { margin-left: 0; } }
+section.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+section.card + section.card { margin-top: 16px; }
+h2 { font-size: 13px; color: var(--muted); font-weight: normal; margin: 0 0 10px; letter-spacing: .08em; }
+label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
+input, select { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font: inherit; }
+input:focus, select:focus { outline: 2px solid var(--blue); outline-offset: -1px; }
+.row { display: flex; gap: 8px; align-items: end; }
+.row > * { flex: 1; min-width: 0; }
+.row > .narrow { flex: 0 0 auto; }
+.check { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--text); font-size: 14px; cursor: pointer; }
+.check input { width: auto; accent-color: var(--gold); }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+details { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+button { font: inherit; border-radius: 6px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); padding: 7px 12px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--blue); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--gold); color: var(--gold-ink); border-color: var(--gold); font-weight: bold; }
+button.danger { border-color: #7a3640; color: #ffb3b3; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.actions .primary { flex: 1 0 100%; padding: 10px; font-size: 16px; }
+.err { color: var(--red); font-size: 13px; min-height: 1.2em; margin-top: 6px; }
+.progress { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.stat { background: var(--panel2); border-radius: 8px; padding: 8px 12px; }
+.stat b { display: block; font-size: 22px; color: var(--text); font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 12px; }
+.bar { height: 6px; background: var(--panel2); border-radius: 3px; margin-top: 12px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--gold); transition: width .4s; }
+#log { height: 360px; overflow: auto; background: #070b17; border-radius: 8px; padding: 8px 10px; font: 12.5px/1.55 ui-monospace, "BIZ UDGothic", Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+#log .sys { color: var(--gold); }
+#log .op { color: var(--muted); }
+#log .err { color: #8f97ad; }
+#log .talk { color: #bfe0ff; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px 0 12px; }
+.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px; }
+.tabs button[aria-selected="true"] { color: var(--gold); border-bottom-color: var(--gold); }
+.tab[hidden] { display: none; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: normal; font-size: 12px; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tablewrap { overflow-x: auto; }
+.tag { display: inline-block; padding: 0 8px; border-radius: 10px; font-size: 12px; background: var(--panel2); }
+.tag.win { background: #173d2b; color: var(--green); }
+.tag.lose { background: #43202a; color: #ff9b9b; }
+.tag.other { background: #3b3017; color: var(--amber); }
+.tag.run { background: #1b2d4d; color: var(--blue); }
+.trend { display: flex; align-items: end; gap: 3px; height: 70px; padding: 6px 0; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.trend i { flex: 1; max-width: 18px; min-height: 3px; border-radius: 2px 2px 0 0; background: var(--amber); }
+.trend i.win { background: var(--green); } .trend i.lose { background: var(--red); }
+.summary { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+ol.lessons { margin: 0; padding-left: 1.4em; } ol.lessons li { margin: 4px 0; }
+.videos { display: grid; gap: 8px; }
+.video { display: flex; gap: 10px; align-items: center; background: var(--panel2); border-radius: 8px; padding: 8px 10px; }
+.video .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.video small { color: var(--muted); }
+video { width: 100%; max-height: 60vh; background: #000; border-radius: 8px; margin-bottom: 10px; }
+a { color: var(--blue); }
+.empty { color: var(--muted); padding: 10px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AIプレイ操作盤</h1>
+  <span class="hint" id="sub">辺境星系戦記</span>
+  <div class="st"><span class="dot" id="dot"></span><span id="stText">待機中</span></div>
+  <div class="tools">
+    <button type="button" id="check" title="LLMを使わずに、ゲームとMCPサーバーが動くかを確かめる（1〜2分）">動作確認</button>
+    <button type="button" id="openNotes" title="反省メモをメモ帳で開く（手で直せます）">反省メモを開く</button>
+    <button type="button" id="openRec" title="録画の保存先をエクスプローラーで開く">録画フォルダ</button>
+    <button type="button" id="shortcut" hidden title="デスクトップに、この操作盤を開くショートカットを作る">デスクトップに置く</button>
+    <button type="button" id="quit" class="danger" title="操作盤を終える（プレイ中なら止める）。タブを閉じても、プレイ中でなければ90秒ほどで自動で終わります">終了</button>
+  </div>
+</header>
+<div id="bye" hidden><div><h2 style="color:var(--gold);font-size:20px">操作盤を終了しました</h2><p>もう一度使うときは「操作盤を開く」をダブルクリックしてください。このタブは閉じてかまいません。</p></div></div>
+<div id="offline" hidden style="margin:16px 20px 0;padding:14px 16px;border:1px solid #7a3640;border-radius:10px;background:#2a1418;color:#ffd6d6;line-height:1.8">
+  <b>操作盤がまだ起動していません。</b>このファイル（control.html）ではなく、同じ mcp フォルダにある <b>「操作盤を開く」</b>（操作盤を開く.cmd）をダブルクリックしてください。ブラウザで操作盤が自動で開きます。<br>
+  起動済みなら、アドレス欄に <code>http://127.0.0.1:3940/</code> と入れて開き直してください。
+</div>
+<main>
+  <div>
+    <section class="card">
+      <h2>設定</h2>
+      <form id="form" autocomplete="off">
+        <label for="baseUrl">LLM の URL（OpenAI互換）</label>
+        <input id="baseUrl" name="baseUrl" placeholder="http://192.168.0.75:11434/v1">
+        <label for="model">モデル</label>
+        <div class="row">
+          <input id="model" name="model" list="models" placeholder="noa-game">
+          <button type="button" class="narrow" id="loadModels" title="URL からモデル一覧を読む">一覧</button>
+        </div>
+        <datalist id="models"></datalist>
+        <div class="row">
+          <div>
+            <label for="name">プレイヤーの名前</label>
+            <input id="name" name="name" list="players" placeholder="のあ">
+            <datalist id="players"></datalist>
+          </div>
+          <div>
+            <label for="think">考える量</label>
+            <select id="think" name="think">
+              <option value="none">考えない（速い）</option>
+              <option value="low">少し</option>
+              <option value="medium">ふつう</option>
+              <option value="high">たくさん</option>
+              <option value="">モデル任せ</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label for="trials">試行回数</label>
+            <input id="trials" name="trials" type="number" min="1" max="999">
+          </div>
+          <div>
+            <label for="turns">1回の上限ターン</label>
+            <input id="turns" name="turns" type="number" min="1" max="999" placeholder="決着まで">
+          </div>
+        </div>
+        <label for="notesMode">反省メモ</label>
+        <select id="notesMode" name="notesMode">
+          <option value="grow">読んで、書き足す（遊ぶほど上達）</option>
+          <option value="readonly">読むだけ（腕前を固定）</option>
+          <option value="off">使わない（毎回はじめて）</option>
+        </select>
+        <label class="check"><input type="checkbox" id="record" name="record"> 録画する（試行ごとに1本、.webm・音なし）</label>
+        <label class="check"><input type="checkbox" id="headless" name="headless"> ゲームの窓を出さない（裏で回す）</label>
+        <details>
+          <summary>詳しい設定</summary>
+          <div class="row">
+            <div><label for="pace">演出の間（ミリ秒）</label><input id="pace" name="pace" type="number" min="0" max="5000" step="100"></div>
+            <div><label for="size">画面の大きさ</label>
+              <select id="size" name="size"><option>1280x720</option><option>1600x900</option><option>1920x1080</option></select></div>
+          </div>
+          <div class="row">
+            <div><label for="maxSteps">1ターンの操作上限</label><input id="maxSteps" name="maxSteps" type="number" min="5" max="200"></div>
+            <div><label for="reflectEvery">途中の振り返り（ターンごと）</label><input id="reflectEvery" name="reflectEvery" type="number" min="0" max="999"></div>
+          </div>
+          <div class="row">
+            <div><label for="temperature">temperature</label><input id="temperature" name="temperature" type="number" min="0" max="2" step="0.1"></div>
+            <div><label for="recordDir">録画の保存先</label><input id="recordDir" name="recordDir" placeholder="recordings"></div>
+          </div>
+          <label for="persona">人格ファイル（任意。mcp フォルダからの相対パス）</label>
+          <input id="persona" name="persona" placeholder="noa.txt">
+          <p class="hint">演出の間を 0 にすると最速で回ります（録画には向きません）。</p>
+        </details>
+        <div class="actions">
+          <button type="submit" class="primary" id="start">連続プレイを開始</button>
+          <button type="button" id="stopAfter" disabled title="いまの試行は最後まで遊ぶ">この試行で終わる</button>
+          <button type="button" id="stop" disabled title="反省メモを書いてから止める">いま止める</button>
+          <button type="button" id="kill" class="danger" disabled title="反省メモを書かずにすぐ止める">強制終了</button>
+        </div>
+        <div class="err" id="err"></div>
+      </form>
+    </section>
+  </div>
+
+  <div>
+    <section class="card">
+      <h2>進行</h2>
+      <div class="progress">
+        <div class="stat"><span>試行</span><b id="pTrial">–</b></div>
+        <div class="stat"><span>ターン</span><b id="pTurn">–</b></div>
+        <div class="stat"><span>資金</span><b id="pFunds">–</b></div>
+        <div class="stat"><span>経過</span><b id="pTime">–</b></div>
+      </div>
+      <div class="bar"><i id="pBar"></i></div>
+    </section>
+
+    <section class="card">
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="tLog">ログ</button>
+        <button role="tab" aria-selected="false" data-tab="tHist">戦績</button>
+        <button role="tab" aria-selected="false" data-tab="tNotes">反省メモ</button>
+        <button role="tab" aria-selected="false" data-tab="tVideo">録画</button>
+      </div>
+      <div class="tab" id="tLog">
+        <div id="log"></div>
+        <label class="check"><input type="checkbox" id="showOps" checked> ツール操作も表示する</label>
+      </div>
+      <div class="tab" id="tHist" hidden>
+        <div class="summary" id="histSummary"></div>
+        <div class="trend" id="trend" title="左が古い試行。高さは到達ターン、緑=勝利 赤=敗北 橙=途中"></div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>日時</th><th>試行</th><th>名前</th><th>モデル</th><th>結果</th><th>ターン</th><th>自動進行</th><th>操作失敗</th><th>録画</th></tr></thead>
+          <tbody id="histBody"></tbody>
+        </table></div>
+        <div class="actions"><button type="button" id="clearHist" class="danger">この画面の戦績を消す</button></div>
+      </div>
+      <div class="tab" id="tNotes" hidden>
+        <div class="summary" id="notesFile"></div>
+        <ol class="lessons" id="lessons"></ol>
+        <h2 style="margin-top:14px">反省メモに残っている戦績</h2>
+        <div id="records" class="hint"></div>
+      </div>
+      <div class="tab" id="tVideo" hidden>
+        <video id="player" controls hidden></video>
+        <div class="summary" id="videoDir"></div>
+        <div class="videos" id="videos"></div>
+      </div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const FIELDS = ["baseUrl", "model", "name", "think", "trials", "turns", "notesMode", "record", "headless", "pace", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona"];
+let status = {}, history = [], tick = null;
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `エラー ${r.status}`);
+  return j;
+}
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+function formValues() {
+  const v = {};
+  for (const f of FIELDS) { const el = $(f); v[f] = el.type === "checkbox" ? el.checked : el.value; }
+  return v;
+}
+function fill(s) {
+  for (const f of FIELDS) { const el = $(f); if (!el || s[f] === undefined) continue; if (el.type === "checkbox") el.checked = !!s[f]; else el.value = s[f]; }
+}
+
+/* ---------- 状態 ---------- */
+function fmtTime(ms) { const s = Math.floor(ms / 1000); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return h ? `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; }
+function renderStatus() {
+  const s = status, run = s.running, c = s.current;
+  $("dot").classList.toggle("on", run);
+  $("stText").textContent = s.check ? "動作確認中…" : run ? (s.stopAfter ? "止めています…" : `プレイ中（${s.trial}/${s.total}）`) : "待機中";
+  $("start").disabled = run; $("check").disabled = run; $("stopAfter").disabled = !run || s.stopAfter || s.check; $("stop").disabled = !run; $("kill").disabled = !run || s.check;
+  for (const f of FIELDS) $(f).disabled = run;
+  $("loadModels").disabled = run;
+  $("pTrial").textContent = run ? `${s.trial} / ${s.total}` : "–";
+  $("pTurn").textContent = c?.turn ? c.turn : "–";
+  $("pFunds").textContent = c?.funds ?? "–";
+  $("pBar").style.width = run && s.total ? `${Math.round(((s.trial - 1) / s.total) * 100)}%` : "0";
+  clearInterval(tick);
+  const upd = () => { $("pTime").textContent = run && s.startedAt ? fmtTime(Date.now() - Date.parse(s.startedAt)) : "–"; };
+  upd(); if (run) tick = setInterval(upd, 1000);
+  document.title = run ? `▶ ${s.trial}/${s.total} AIプレイ操作盤` : "AIプレイ操作盤";
+}
+
+/* ---------- ログ ---------- */
+const log = $("log");
+function addLog(item) {
+  const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
+  const div = document.createElement("div");
+  const talk = /^\S+：/.test(item.line.replace(/^[\d:]+\s+/, "")) && !item.kind;
+  div.className = item.kind || (talk ? "talk" : "");
+  if (item.kind === "op" || item.kind === "err") div.dataset.op = "1";
+  div.hidden = !!div.dataset.op && !$("showOps").checked;
+  div.textContent = item.kind === "sys" ? `${item.t} ${item.line}` : item.line;
+  log.appendChild(div);
+  while (log.childElementCount > 1500) log.firstChild.remove();
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+$("showOps").onchange = () => { for (const d of log.querySelectorAll("[data-op]")) d.hidden = !$("showOps").checked; log.scrollTop = log.scrollHeight; };
+
+/* ---------- 戦績 ---------- */
+const cls = (o) => o === "勝利" ? "win" : o === "敗北" ? "lose" : o === "プレイ中" ? "run" : "other";
+async function loadHistory() {
+  history = await api("/api/history");
+  const rows = [...(status.current ? [status.current] : []), ...history];
+  $("histBody").innerHTML = rows.map(r => `<tr>
+    <td>${esc(new Date(r.startedAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</td>
+    <td class="num">${r.n}/${r.of}</td><td>${esc(r.name)}</td><td>${esc(r.model)}</td>
+    <td><span class="tag ${cls(r.outcome)}">${esc(r.outcome)}</span></td>
+    <td class="num">${r.turn || "–"}</td><td class="num">${r.autoTurns ?? 0}</td><td class="num">${r.failures ?? 0}</td>
+    <td>${r.video ? `<a href="#" data-video="${esc(r.video)}">再生</a>` : "–"}</td></tr>`).join("") || `<tr><td colspan="9" class="empty">まだありません</td></tr>`;
+  const name = $("name").value || status.name;
+  const mine = history.filter(r => r.name === name);
+  const c = { win: 0, lose: 0, other: 0 };
+  for (const r of mine) c[cls(r.outcome)]++;
+  const turns = mine.filter(r => r.turn).map(r => r.turn);
+  $("histSummary").textContent = mine.length
+    ? `${name}：${mine.length}試行　勝利${c.win}・敗北${c.lose}・その他${c.other}　平均到達ターン ${(turns.reduce((a, b) => a + b, 0) / (turns.length || 1)).toFixed(1)}`
+    : `${name} の試行はまだありません`;
+  const recent = mine.slice(0, 40).reverse(), max = Math.max(10, ...recent.map(r => r.turn || 0));
+  $("trend").innerHTML = recent.map(r => `<i class="${cls(r.outcome)}" style="height:${Math.max(4, (r.turn || 0) / max * 100)}%" title="${esc(r.outcome)} ターン${r.turn}"></i>`).join("");
+}
+$("clearHist").onclick = async () => { if (confirm("この画面の戦績の一覧を消します（反省メモと録画は消えません）")) { await api("/api/history/clear", {}); loadHistory(); } };
+
+/* ---------- 反省メモ ---------- */
+async function loadNotes() {
+  const n = await api(`/api/notes?name=${encodeURIComponent($("name").value || "のあ")}`);
+  $("notesFile").textContent = n.file;
+  $("lessons").innerHTML = n.lessons.length ? n.lessons.map(l => `<li>${esc(l)}</li>`).join("") : `<li class="empty" style="list-style:none">まだありません（1試行目のあとに書かれます）</li>`;
+  $("records").innerHTML = n.records.slice(0, 10).map(esc).join("<br>") || "まだありません";
+}
+
+/* ---------- 録画 ---------- */
+const mb = (b) => b > 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${(b / 1e6).toFixed(1)} MB`;
+async function loadVideos() {
+  const v = await api("/api/videos");
+  $("videoDir").textContent = `保存先：${v.dir}`;
+  $("videos").innerHTML = v.videos.map(x => `<div class="video"><span class="name">${esc(x.file)}</span><small>${mb(x.size)}・${new Date(x.mtime).toLocaleString("ja-JP")}</small>
+    <button type="button" data-video="${esc(x.file)}">再生</button><a href="/videos/${encodeURIComponent(x.file)}" download>保存</a></div>`).join("") || `<div class="empty">まだありません</div>`;
+}
+function play(file) {
+  selectTab("tVideo");
+  const p = $("player"); p.hidden = false; p.src = `/videos/${encodeURIComponent(file)}`; p.play().catch(() => {});
+  p.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+document.addEventListener("click", (e) => { const v = e.target.closest("[data-video]"); if (v) { e.preventDefault(); play(v.dataset.video); } });
+
+/* ---------- タブ ---------- */
+function selectTab(id) {
+  for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", b.dataset.tab === id);
+  for (const t of document.querySelectorAll(".tab")) t.hidden = t.id !== id;
+  if (id === "tHist") loadHistory(); if (id === "tNotes") loadNotes(); if (id === "tVideo") loadVideos();
+}
+for (const b of document.querySelectorAll(".tabs button")) b.onclick = () => selectTab(b.dataset.tab);
+
+/* ---------- 操作 ---------- */
+$("form").onsubmit = async (e) => {
+  e.preventDefault(); $("err").textContent = "";
+  const v = formValues();
+  if (!v.model.trim()) { $("err").textContent = "モデルを入れてください（「一覧」で選べます）"; return; }
+  try { await api("/api/start", v); selectTab("tLog"); } catch (x) { $("err").textContent = x.message; }
+};
+$("stopAfter").onclick = () => api("/api/stop-after", {});
+const tool = (id, path, body = {}) => { $(id).onclick = async () => { $("err").textContent = ""; try { await api(path, body); } catch (x) { $("err").textContent = x.message; } }; };
+tool("openNotes", "/api/open", { what: "notes" });
+tool("openRec", "/api/open", { what: "recordings" });
+tool("shortcut", "/api/shortcut");
+$("check").onclick = async () => { $("err").textContent = ""; try { await api("/api/check", {}); selectTab("tLog"); } catch (x) { $("err").textContent = x.message; } };
+$("quit").onclick = async () => {
+  if (!confirm(status.running ? "プレイ中です。止めて操作盤を終了しますか？（この試行の反省メモは書きません）" : "操作盤を終了しますか？")) return;
+  quitting = true; await api("/api/quit", {}).catch(() => {}); $("bye").hidden = false;
+};
+let quitting = false;
+$("stop").onclick = () => api("/api/stop", {});
+$("kill").onclick = () => { if (confirm("反省メモを書かずに、いますぐ止めます")) api("/api/kill", {}); };
+$("loadModels").onclick = async () => {
+  $("err").textContent = "";
+  try {
+    const { models } = await api(`/api/models?baseUrl=${encodeURIComponent($("baseUrl").value)}`);
+    $("models").innerHTML = models.map(m => `<option value="${esc(m)}">`).join("");
+    $("err").textContent = models.length ? "" : "モデルが見つかりませんでした";
+    $("model").focus();
+    if (models.length && $("model").showPicker) try { $("model").showPicker(); } catch {}
+  } catch (x) { $("err").textContent = x.message; }
+};
+$("name").onchange = () => { loadNotes(); loadHistory(); };
+// 入力した設定は開始しなくても覚えておく
+let saveT; $("form").oninput = () => { clearTimeout(saveT); saveT = setTimeout(() => api("/api/settings", formValues()).catch(() => {}), 800); };
+
+/* ---------- 起動 ---------- */
+(async () => {
+  let st;
+  try { if (location.protocol === "file:") throw new Error("file"); st = await api("/api/state"); }
+  catch { $("offline").hidden = false; $("start").disabled = true; $("loadModels").disabled = true; $("stText").textContent = "サーバー未起動"; return; }
+  fill(st.settings); status = st.status; renderStatus();
+  $("shortcut").hidden = st.platform !== "win32";
+  $("players").innerHTML = st.players.map(p => `<option value="${esc(p)}">`).join("");
+  loadHistory(); loadNotes();
+  const es = new EventSource("/api/events");
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "hello") { log.textContent = ""; ev.logs.forEach(addLog); status = ev.status; renderStatus(); }
+    else if (ev.type === "log") addLog(ev);
+    else if (ev.type === "state") { const wasCur = status.current?.id; status = ev.status; renderStatus(); if (!$("tHist").hidden || wasCur !== status.current?.id) loadHistory(); }
+    else if (ev.type === "history") { loadHistory(); loadNotes(); }
+    else if (ev.type === "videos" && !$("tVideo").hidden) loadVideos();
+  };
+  es.onerror = () => { if (quitting) { es.close(); return; } $("stText").textContent = "操作盤が止まっています（「操作盤を開く」をダブルクリック）"; $("dot").classList.remove("on"); };
+})();
+</script>
+</body>
+</html>

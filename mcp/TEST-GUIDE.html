@@ -1,0 +1,564 @@
+<title>のあ MCPテスト手順書</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=DotGothic16&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: 左に工程の目次（広い画面のみ）、右に工程カードを縦に並べる作業手順書。各手順はチェックできる */
+:root {
+  --bg: #f2f4f7;
+  --paper: #ffffff;
+  --ink: #1b2233;
+  --muted: #5b6478;
+  --line: #d9dee8;
+  --accent: #2c55b8;
+  --accent-soft: #e5ecfb;
+  --code-bg: #eef1f6;
+  --ok: #1f7a4d;
+  --ok-soft: #e1f3e9;
+  --warn: #9a5b00;
+  --warn-soft: #fbf0dc;
+  --bad: #b3261e;
+  --font-display: "DotGothic16", "BIZ UDPGothic", sans-serif;
+  --font-body: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1320; --paper: #161d2e; --ink: #dfe5f1; --muted: #9aa5bb; --line: #2a344a;
+    --accent: #8cb0ff; --accent-soft: #1d2a48; --code-bg: #0b0f19;
+    --ok: #6fd3a0; --ok-soft: #12301f; --warn: #f0b860; --warn-soft: #33260f; --bad: #ff8a80;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1320; --paper: #161d2e; --ink: #dfe5f1; --muted: #9aa5bb; --line: #2a344a;
+  --accent: #8cb0ff; --accent-soft: #1d2a48; --code-bg: #0b0f19;
+  --ok: #6fd3a0; --ok-soft: #12301f; --warn: #f0b860; --warn-soft: #33260f; --bad: #ff8a80;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 15.5px; line-height: 1.8;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px; align-items: start; }
+@media (max-width: 860px) { .wrap { grid-template-columns: minmax(0, 1fr); } nav.toc { display: none; } }
+
+header.top { max-width: 1120px; margin: 0 auto 28px; display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-code); font-size: 12px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+h1 { font-family: var(--font-display); font-weight: 400; font-size: clamp(26px, 4.4vw, 38px); line-height: 1.3; margin: 0; text-wrap: balance; }
+.lead { margin: 0; color: var(--muted); max-width: 62ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.chip { font-size: 12.5px; border: 1px solid var(--line); background: var(--paper); border-radius: 999px; padding: 2px 10px; color: var(--muted); }
+.chip b { color: var(--ink); font-weight: 700; }
+
+nav.toc { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); font-size: 13.5px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+nav.toc a { display: flex; justify-content: space-between; gap: 8px; color: var(--ink); text-decoration: none; padding: 5px 10px; border-radius: 6px; }
+nav.toc a:hover, nav.toc a:focus-visible { background: var(--accent-soft); outline: none; }
+nav.toc .cnt { font-family: var(--font-code); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+nav.toc .cnt.done { color: var(--ok); }
+.reset { margin-top: 14px; font: inherit; font-size: 12.5px; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.reset:hover { color: var(--ink); }
+
+main { display: grid; gap: 22px; min-width: 0; }
+section.step { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 22px 24px; min-width: 0; scroll-margin-top: 16px; }
+@media (max-width: 520px) { section.step { padding: 18px 16px; } }
+.step-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+.num { font-family: var(--font-display); font-size: 15px; color: var(--accent); white-space: nowrap; }
+h2 { font-family: var(--font-display); font-weight: 400; font-size: 22px; line-height: 1.35; margin: 0; text-wrap: balance; }
+h3 { font-size: 15.5px; margin: 18px 0 4px; }
+.time { margin-left: auto; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+p { margin: 6px 0; max-width: 68ch; }
+.why { color: var(--muted); font-size: 14px; }
+
+ul.checks { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 10px; }
+ul.checks > li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: start; }
+ul.checks input[type=checkbox] { width: 18px; height: 18px; margin: 5px 0 0; accent-color: var(--accent); cursor: pointer; }
+ul.checks label { cursor: pointer; }
+ul.checks li.is-done > div > label { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+ul.checks .body { min-width: 0; }
+
+.cmd { position: relative; margin: 8px 0 4px; }
+pre { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font-family: var(--font-code); font-size: 13.5px; line-height: 1.6; }
+.cmd pre { padding-right: 70px; }
+code { font-family: var(--font-code); font-size: .9em; background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; overflow-wrap: anywhere; }
+pre code { background: none; border: 0; padding: 0; font-size: inherit; overflow-wrap: normal; }
+.copy { position: absolute; top: 7px; right: 7px; font: inherit; font-size: 12px; background: var(--paper); color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 2px 9px; cursor: pointer; }
+.copy:hover, .copy:focus-visible { color: var(--accent); border-color: var(--accent); outline: none; }
+.prompt { color: var(--muted); user-select: none; }
+.out { color: var(--muted); }
+
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; font-size: 14.5px; }
+.note.warn { border-color: var(--warn); background: var(--warn-soft); }
+.note.ok { border-color: var(--ok); background: var(--ok-soft); }
+.note p { margin: 2px 0; }
+.note strong { font-weight: 700; }
+
+.tbl { overflow-x: auto; margin: 10px 0; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 520px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { background: var(--code-bg); font-weight: 700; font-size: 13px; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+
+.tree { font-family: var(--font-code); font-size: 13.5px; }
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 12px 0 4px; font-size: 13.5px; }
+.flow span.box { border: 1px solid var(--line); background: var(--code-bg); border-radius: 6px; padding: 3px 10px; white-space: nowrap; }
+.flow span.arrow { color: var(--muted); }
+
+details { border-top: 1px solid var(--line); padding: 10px 0 2px; margin-top: 10px; }
+details summary { cursor: pointer; font-weight: 700; font-size: 14.5px; }
+details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+a { color: var(--accent); }
+.kbd { font-family: var(--font-code); font-size: 12.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--paper); white-space: nowrap; }
+@media (prefers-reduced-motion: no-preference) { nav.toc a, .copy { transition: background-color .15s, color .15s, border-color .15s; } }
+</style>
+
+<header class="top">
+  <div class="eyebrow">辺境星系戦記 · MCP / ローカルLLM · Windows デスクトップ向け · D:\dev で実行</div>
+  <h1>のあにゲームを遊ばせる<br>テスト手順書</h1>
+  <p class="lead">上から順に進めて、終わった項目にチェックを入れてください。チェックはこのブラウザに残るので、途中で閉じても続きから再開できます。LLMを使わない動作確認を先に済ませてから、本物のモデルにつなぐ順番にしてあります。</p>
+  <div class="meta">
+    <span class="chip">所要 <b>1〜2時間</b>（モデルのダウンロード込み）</span>
+    <span class="chip">ディスク <b>約12GB</b>（14Bモデルの場合）</span>
+    <span class="chip">Node.js <b>20以上</b></span>
+    <span class="chip">確認日 <b>2026-10-21</b></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="工程">
+    <ol id="toc"></ol>
+    <button class="reset" id="reset" type="button">チェックをすべて外す</button>
+  </nav>
+
+  <main>
+
+    <section class="step" id="overview" data-title="全体の流れ">
+      <div class="step-head"><span class="num">00</span><h2>全体の流れ</h2></div>
+      <p>今回つなぐ部品は次のとおりです。のあ（ローカルLLM）が考え、<code>ai-player.mjs</code> がその指示をMCPツール呼び出しに変え、<code>server.mjs</code> がブラウザのゲーム画面を操作します。</p>
+      <div class="flow" aria-label="構成">
+        <span class="box">Ollama（のあの頭脳）</span><span class="arrow">⇄</span>
+        <span class="box">ai-player.mjs</span><span class="arrow">⇄ MCP ⇄</span>
+        <span class="box">server.mjs</span><span class="arrow">→</span>
+        <span class="box">Chromium の窓（ゲーム画面）</span><span class="arrow">→</span>
+        <span class="box">OBS</span>
+      </div>
+      <p class="why">問題が起きたときに切り分けやすいよう、「LLMなしで動くか」→「LLMをつないで動くか」→「配信に載るか」の順に確かめます。</p>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-ov-1"><div class="body"><label for="c-ov-1">Windows 10 / 11 のデスクトップPCで、インターネットにつながっている</label></div></li>
+        <li><input type="checkbox" id="c-ov-2"><div class="body"><label for="c-ov-2">GPUのビデオメモリ（VRAM）の量を確認した</label>
+          <p class="why">タスクマネージャー（<span class="kbd">Ctrl</span>+<span class="kbd">Shift</span>+<span class="kbd">Esc</span>）→「パフォーマンス」→「GPU」→「専用GPUメモリ」。NVIDIAなら PowerShell で <code>nvidia-smi</code> でもわかります。手順06でモデルを選ぶときに使います。</p></div></li>
+      </ul>
+    </section>
+
+    <section class="step" id="files" data-title="ファイルを置く">
+      <div class="step-head"><span class="num">01</span><h2>ファイルを置く</h2><span class="time">5分</span></div>
+      <p>プロジェクトの共有フォルダにある <code>game</code> と <code>mcp</code> の2つのフォルダを、PCの<strong>同じ親フォルダの中に並べて</strong>置きます。<code>server.mjs</code> は「自分の1つ上の <code>game\frontier-war.html</code>」を探すので、並び方が大事です。</p>
+      <pre class="tree">D:\dev\frontier\
+├─ game\
+│   ├─ frontier-war.html
+│   ├─ art\      （画像 42個）
+│   └─ audio\    （BGM・効果音 9個）
+└─ mcp\
+    ├─ server.mjs       ├─ ai-player.mjs    ├─ notes.mjs
+    ├─ game-api.js      ├─ selftest.mjs     ├─ notes-test.mjs
+    ├─ package.json     ├─ README.md
+    ├─ noa-player.mjs   （ai-player.mjs の旧名。同じものが動きます）
+    └─ TEST-GUIDE.html  （この手順書。オフラインでも開けます）</pre>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-f-1"><div class="body"><label for="c-f-1"><code>frontier-mcp-kit.zip</code> をダウンロードして <code>D:\dev</code> に展開し、上の形になった</label>
+          <p class="why">zip の中身は共有フォルダの <code>game</code> と <code>mcp</code> をそのまま <code>frontier</code> フォルダに入れたものです。プログラムはフォルダの場所を決め打ちしていないので、<code>game</code> と <code>mcp</code> が並んでいれば <code>D:\dev</code> の下のどこでも動きます。</p></div></li>
+        <li><input type="checkbox" id="c-f-2"><div class="body"><label for="c-f-2"><code>D:\dev\frontier\mcp</code> をエクスプローラーで開き、空いている所を右クリック →「ターミナルで開く」で PowerShell を開いた</label>
+          <p class="why">以降のコマンドは、特に書いていなければこの <code>mcp</code> フォルダで打ちます。プロンプトが <code>PS D:\dev\frontier\mcp&gt;</code> になっていればOKです。</p></div></li>
+      </ul>
+      <div class="note"><p><strong>Dドライブで動かすときの注意</strong></p><p>PowerShell なら <code>cd D:\dev\frontier\mcp</code> だけでドライブも切り替わります（コマンドプロンプトの場合は <code>cd /d D:\dev\frontier\mcp</code>）。</p><p>このフォルダ以外に、Chromium（約600MB、<code>%LOCALAPPDATA%\ms-playwright</code>）と Ollama のモデル（数GB〜、<code>%USERPROFILE%\.ollama\models</code>）は既定で C ドライブに入ります。C の空きが少ないときは、インストールの前に次を打って PowerShell を開き直すと D に入ります。</p>
+        <div class="cmd"><pre><code>setx PLAYWRIGHT_BROWSERS_PATH D:\dev\ms-playwright
+setx OLLAMA_MODELS D:\dev\ollama-models</code></pre></div>
+        <p><code>OLLAMA_MODELS</code> を変えたら、Ollama をトレイから「Quit Ollama」で終了して起動し直します。</p></div>
+      <div class="note"><p>フォルダ名に日本語や空白が入っていても動くように、テスト用スクリプト（selftest.mjs）の不具合を直しておきました。それでも、トラブルを減らすため英数字だけのパスにしておくのが無難です。</p></div>
+    </section>
+
+    <section class="step" id="node" data-title="Node.js を入れる">
+      <div class="step-head"><span class="num">02</span><h2>Node.js を入れる</h2><span class="time">10分</span></div>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-n-1"><div class="body"><label for="c-n-1"><a href="https://nodejs.org/ja/download" target="_blank" rel="noopener">nodejs.org</a> から <strong>LTS 版</strong>の Windows インストーラー（.msi）を入れた</label>
+          <p class="why">インストーラーの選択肢はすべて既定のままで大丈夫です。「Tools for Native Modules」のチェックは不要です。winget が使えるなら、次の1行でも入ります（「winget は認識されません」と出たら winget のない PC なので、.msi のほうで入れてください）。</p>
+          <div class="cmd"><pre><code>winget install OpenJS.NodeJS.LTS</code></pre></div></div></li>
+        <li><input type="checkbox" id="c-n-2"><div class="body"><label for="c-n-2">PowerShell を<strong>いったん閉じて開き直し</strong>、バージョンを確認した</label>
+          <div class="cmd"><pre><code>node -v
+npm -v</code></pre></div>
+          <p class="why"><code>v20</code> 以上と表示されればOK（v22 / v24 なら安心）。こちらの確認環境は v22 です。</p></div></li>
+      </ul>
+      <div class="note warn">
+        <p><strong>「このシステムではスクリプトの実行が無効になっているため、npm.ps1 を読み込むことができません」と出たら</strong></p>
+        <p>Windows の初期設定で PowerShell のスクリプトが止められています。自分のユーザーだけ許可する次のコマンドを打ち、<code>Y</code> で答えてください（以後は不要）。</p>
+        <div class="cmd"><pre><code>Set-ExecutionPolicy -Scope CurrentUser RemoteSigned</code></pre></div>
+        <p>設定を変えたくなければ、<code>npm</code> の代わりに <code>npm.cmd</code>、<code>npx</code> の代わりに <code>npx.cmd</code> と打っても動きます。</p>
+      </div>
+    </section>
+
+    <section class="step" id="install" data-title="部品を入れる">
+      <div class="step-head"><span class="num">03</span><h2>部品（npm と Chromium）を入れる</h2><span class="time">5〜10分</span></div>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-i-1"><div class="body"><label for="c-i-1">依存パッケージを入れた</label>
+          <div class="cmd"><pre><code>cd D:\dev\frontier\mcp
+npm install</code></pre></div>
+          <p class="why">MCP SDK・Playwright・zod が <code>node_modules</code> に入ります（約40MB）。最後に <code>added ○○ packages</code> と出ればOK。<code>npm notice</code> の行は無視してかまいません。</p></div></li>
+        <li><input type="checkbox" id="c-i-2"><div class="body"><label for="c-i-2">ゲームを映す Chromium を入れた</label>
+          <div class="cmd"><pre><code>npx playwright install chromium</code></pre></div>
+          <p class="why">ゲーム専用のブラウザを <code>%LOCALAPPDATA%\ms-playwright</code> に入れます。普段使いの Chrome とは別物なので、Chrome の設定や拡張機能には影響しません。</p></div></li>
+      </ul>
+    </section>
+
+    <section class="step" id="selftest" data-title="LLMなしで動作確認">
+      <div class="step-head"><span class="num">04</span><h2>LLMなしで動作確認する</h2><span class="time">5分</span></div>
+      <p>簡単なボットがMCPツールを通してゲームを遊びます。ここが通れば「ゲーム・MCPサーバー・ブラウザ」の部分は正常です。</p>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-s-1"><div class="body"><label for="c-s-1">窓なしで30ターン通しプレイが最後まで走った</label>
+          <div class="cmd"><pre><code>npm test</code></pre></div>
+          <p class="why">こちらの環境で約30秒。最初に <code>27 tools</code>、続いて <code>ターン1 資金160 …</code> とターンが進み、最後に次の2行が出れば成功です。</p>
+          <pre><code class="out">最終：ターン18 資金1678 over=lose 自国惑星1 異生体=true
+ツール呼び出し 339 回、拒否 10 回</code></pre>
+          <p class="why">ボットは単純なので、負けて途中で終わること（<code>over=lose</code>）や、<code>✗ battle_state: 戦闘中ではありません</code> のような <code>✗</code> 行が混じるのは正常です。「押せない操作をしたら理由つきで断られる」仕組みが働いている印です。</p></div></li>
+        <li><input type="checkbox" id="c-s-2"><div class="body"><label for="c-s-2">窓を出して、演出つきの画面を目で見た</label>
+          <div class="cmd"><pre><code>$env:TURNS=5; node selftest.mjs --show</code></pre></div>
+          <p class="why">Chromium の窓に「辺境星系戦記」が開き、移動のハイライト・戦闘アニメ・右上の「のあ：〇〇」・画面下の字幕「テストを始めるよ！」が見えればOKです。BGMも鳴ります。終わると窓は自動で閉じます。途中でやめるときは <span class="kbd">Ctrl</span>+<span class="kbd">C</span>。</p>
+          <p class="why">終わったら <code>Remove-Item Env:TURNS</code> で設定を消しておきます（PowerShell を閉じても消えます）。</p></div></li>
+        <li><input type="checkbox" id="c-s-3"><div class="body"><label for="c-s-3">反省メモの仕組みのテストがすべて ✓ になった</label>
+          <div class="cmd"><pre><code>npm run test:notes</code></pre></div>
+          <p class="why">にせのLLMを立てて <code>ai-player.mjs</code> を4回走らせ、反省メモの保存と読み込みを確かめます。約20秒。<code>✓</code> が8行並び、<code>✗</code> がなければ成功です。</p></div></li>
+      </ul>
+      <div class="note ok"><p>ここまで通れば、残りは「LLMをつなぐ部分」だけです。この先で止まったら、原因はほぼ Ollama かモデルの設定です。</p></div>
+    </section>
+
+    <section class="step" id="ollama" data-title="Ollama を入れる">
+      <div class="step-head"><span class="num">05</span><h2>Ollama を入れて、コンテキストを広げる</h2><span class="time">10分</span></div>
+      <div class="note ok">
+        <p><strong>別のPCの Ollama を使う場合（例：のあが動いている 192.168.0.75）</strong></p>
+        <p>デスクトップに Ollama は要りません。この手順05と06は飛ばし、次の3つだけ確かめてください。</p>
+        <ul class="checks">
+          <li><input type="checkbox" id="c-lan-1"><div class="body"><label for="c-lan-1">デスクトップからモデルの一覧が返ってきた</label>
+            <div class="cmd"><pre><code>curl.exe http://192.168.0.75:11434/v1/models</code></pre></div>
+            <p class="why">一覧の <code>"id"</code> が <code>--model</code> に渡す名前です。つながらないときは、向こうの Ollama が自分のPCからしか受け付けない設定になっています。<code>OLLAMA_HOST=0.0.0.0:11434</code> を設定して再起動し（Linux の systemd なら <code>sudo systemctl edit ollama</code> で <code>[Service]</code> の下に <code>Environment="OLLAMA_HOST=0.0.0.0:11434"</code>）、ファイアウォールで LAN からの 11434 番だけを許可します。</p></div></li>
+          <li><input type="checkbox" id="c-lan-2"><div class="body"><label for="c-lan-2">向こうのPCで <code>ollama ps</code> を打ち、<code>CONTEXT</code> が 16384 以上だった</label>
+            <p class="why">コンテキスト長はサーバー側の設定で決まります。足りないとき（192.168.0.75 は既定で 8192 でした）は、普段のモデルはそのままに、コンテキストだけ広げたゲーム用のコピー <code>noa-game</code> をデスクトップから作れます。</p>
+            <div class="cmd"><pre><code>$body = @{ model="noa-game"; from="noa:latest"; parameters=@{ num_ctx=16384 }; stream=$false } | ConvertTo-Json
+Invoke-RestMethod http://192.168.0.75:11434/api/create -Method Post -Body $body</code></pre></div></div></li>
+          <li><input type="checkbox" id="c-lan-3"><div class="body"><label for="c-lan-3">手順07からは <code>--base-url</code> を付けて動かした</label>
+            <div class="cmd"><pre><code>node ai-player.mjs --base-url http://192.168.0.75:11434/v1 --model noa-game --think none --turns 3</code></pre></div>
+            <p class="why"><code>--think none</code> はモデルが返事の前に考える時間を省きます。thinking 対応のモデル（noa・gemma4 など）では、これを付けると1手ごとの待ち時間が大きく減ります。</p>
+            <p class="why">先に <code>$env:LLM_BASE_URL="http://192.168.0.75:11434/v1"</code> を打っておけば、そのPowerShellでは <code>--base-url</code> を省けます。</p></div></li>
+        </ul>
+        <p>普段ののあと同時に使うと、返事が順番待ちになって遅くなります。Ollama には認証がないので、ルーターでポートを外に開けないでください。</p>
+      </div>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-o-1"><div class="body"><label for="c-o-1"><a href="https://ollama.com/download" target="_blank" rel="noopener">ollama.com/download</a> から Windows 版を入れ、タスクトレイにラマのアイコンが出た</label>
+          <div class="cmd"><pre><code>ollama --version</code></pre></div>
+          <p class="why">バージョンが表示されればOK。Ollama はトレイに常駐して <code>http://127.0.0.1:11434</code> で待ち受けます。<code>ai-player.mjs</code> の既定の接続先もここです。</p></div></li>
+        <li><input type="checkbox" id="c-o-2"><div class="body"><label for="c-o-2">コンテキスト長を <strong>16384 以上</strong>にした（VRAMに余裕があれば 32768）</label>
+          <p class="why">のあへの指示とルールで約3千字、状況テキストで2〜4千字あり、ツールの説明も加わります。こちらで実測したところ、1ターン目の最初の呼び出しだけで約5,000トークンでした。ターンの中で操作を重ねるほど増えるので、既定の 4096 では足りません。次のどちらか一方で設定します。</p>
+          <h3>A. Ollama の画面で設定する（簡単）</h3>
+          <p class="why">トレイのアイコン → Ollama の画面を開く →「Settings」→「Context length」のスライダーを 16k（または 32k）にします。</p>
+          <h3>B. 環境変数で設定する</h3>
+          <div class="cmd"><pre><code>setx OLLAMA_CONTEXT_LENGTH 16384</code></pre></div>
+          <p class="why">打ったあと、トレイのアイコンを右クリック →「Quit Ollama」で終了し、スタートメニューから Ollama を起動し直します（<code>setx</code> は新しく起動したものにだけ効きます）。</p></div></li>
+      </ul>
+      <div class="note"><p>設定が効いているかは、手順06でモデルを動かした直後に <code>ollama ps</code> を打つとわかります。<code>CONTEXT</code> 欄が <code>16384</code>（または 32768）なら成功です。</p></div>
+    </section>
+
+    <section class="step" id="model" data-title="モデルを選ぶ">
+      <div class="step-head"><span class="num">06</span><h2>モデルを選んでダウンロードする</h2><span class="time">10〜30分</span></div>
+      <p>必須条件は<strong>ツール呼び出し（function calling）に対応していること</strong>です。戦術戦闘では座標を扱うので、小さすぎるモデルは失敗が増えます。VRAMに収まる中で大きめを選んでください。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>VRAM</th><th>おすすめ</th><th>ダウンロード量</th><th>メモ</th></tr></thead>
+        <tbody>
+          <tr><td>8GB</td><td><code>qwen3:8b</code></td><td>約5GB</td><td>動作確認には十分。戦闘のミスはやや多め</td></tr>
+          <tr><td>12〜16GB</td><td><code>qwen3:14b</code></td><td>約9GB</td><td>README の例と同じ。まずはこれ</td></tr>
+          <tr><td>16GB以上</td><td><code>gpt-oss:20b</code></td><td>約14GB</td><td>比較用の2本目に</td></tr>
+          <tr><td>24GB</td><td><code>qwen3:30b</code></td><td>約19GB</td><td>速さと賢さのバランスがよい</td></tr>
+        </tbody>
+      </table></div>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-m-1"><div class="body"><label for="c-m-1">モデルをダウンロードした</label>
+          <div class="cmd"><pre><code>ollama pull qwen3:14b</code></pre></div></div></li>
+        <li><input type="checkbox" id="c-m-2"><div class="body"><label for="c-m-2">ツール呼び出しに対応しているか確かめた</label>
+          <div class="cmd"><pre><code>ollama show qwen3:14b</code></pre></div>
+          <p class="why"><code>Capabilities</code> の欄に <code>tools</code> があればOKです。ollama.com のモデル一覧でも「tools」の札がついているものを選びます。</p></div></li>
+        <li><input type="checkbox" id="c-m-3"><div class="body"><label for="c-m-3">日本語で返事が来ること、GPUで動いていることを確かめた</label>
+          <div class="cmd"><pre><code>ollama run qwen3:14b "こんにちは。ひとことで自己紹介して"
+ollama ps</code></pre></div>
+          <p class="why"><code>ollama ps</code> の <code>PROCESSOR</code> が <code>100% GPU</code> なら理想です。<code>CPU/GPU</code> に分かれていると、はみ出した分だけ遅くなります。そのときは1段小さいモデルか、コンテキストを 16384 に下げます。</p></div></li>
+      </ul>
+      <div class="note warn"><p><strong>README の比較例にある <code>gemma3</code> はツール呼び出しに対応していません。</strong>つなぐと <code>LLM API 400: … does not support tools</code> で止まります。モデル比べをするときは、<code>tools</code> 対応のモデル同士で比べてください。</p></div>
+    </section>
+
+    <section class="step" id="play" data-title="のあに遊ばせる">
+      <div class="step-head"><span class="num">07</span><h2>のあに遊ばせる</h2><span class="time">15分〜</span></div>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-p-1"><div class="body"><label for="c-p-1">まず3ターンだけ遊ばせて、最後まで動いた</label>
+          <div class="cmd"><pre><code>cd D:\dev\frontier\mcp
+node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
+          <p class="why">ゲームの窓が開き、PowerShell には次のような行が流れます。</p>
+          <pre><code class="out">10:15:02 のあ（qwen3:14b @ http://127.0.0.1:11434/v1）がプレイを始めます
+10:15:02 反省メモはまだありません。プレイ後に D:\dev\frontier\mcp\notes\のあ.md に書きます
+10:15:02 === ターン1 資金160 ===
+10:15:20 のあ：まずは研究に投資して、足場を固めるよ！
+10:15:20 → invest_research {"amount":60}
+10:15:31 → move_fleet {"fleet_id":1,"to":2}
+   ✗ ……（失敗した操作と理由。のあは次の手で取り返します）</code></pre>
+          <p class="why">最初の1回はモデルの読み込みで時間がかかります。3ターン終わると反省メモを書いて止まります。</p></div></li>
+        <li><input type="checkbox" id="c-p-2"><div class="body"><label for="c-p-2">画面で次の3つを確認した</label>
+          <p class="why">① 画面下にのあのセリフが字幕で出る　② 右上に「のあ：〇〇」と行動が出る　③ 戦闘が始まると、のあが1隻ずつ動かして、終わると作戦卓に戻る</p></div></li>
+        <li><input type="checkbox" id="c-p-3"><div class="body"><label for="c-p-3">1ターンにかかる時間をメモした</label>
+          <p class="why">配信のテンポを決める材料になります。長すぎる場合は「トラブルシューティング」の「返事がとても遅い」を見てください。</p></div></li>
+        <li><input type="checkbox" id="c-p-4"><div class="body"><label for="c-p-4">ターン数の制限なしで長めに遊ばせた（止めるときは <span class="kbd">Ctrl</span>+<span class="kbd">C</span>）</label>
+          <div class="cmd"><pre><code>node ai-player.mjs --model qwen3:14b</code></pre></div>
+          <p class="why"><span class="kbd">Ctrl</span>+<span class="kbd">C</span> を1回押すと、そこまでの記録で反省メモを書いてから終わります。すぐ止めたいときはもう1回押します。</p></div></li>
+      </ul>
+      <details>
+        <summary>よく使うオプション</summary>
+        <div class="tbl"><table>
+          <thead><tr><th>書き方</th><th>意味</th></tr></thead>
+          <tbody>
+            <tr><td><code>--turns 10</code></td><td>10ターンで止める（既定は無制限）</td></tr>
+            <tr><td><code>--loop</code></td><td>ゲームが終わったら新しいゲームを始める（配信の放置用）</td></tr>
+            <tr><td><code>--max-steps 40</code></td><td>1ターンにのあが呼べる操作の上限。超えると残りを自動で片付けて次のターンへ</td></tr>
+            <tr><td><code>--persona noa.txt</code></td><td>のあの人格・口調を書いたテキスト（UTF-8で保存）をプロンプトの先頭に入れる</td></tr>
+            <tr><td><code>--temperature 0.6</code></td><td>発言のばらつき（既定 0.6）</td></tr>
+            <tr><td><code>-- --pace 900</code></td><td><code>--</code> の後ろはゲーム側の設定。行動ごとの間を 900ms にする（既定 700）</td></tr>
+            <tr><td><code>-- --size 1920x1080</code></td><td>ゲーム画面の大きさ（OBS の解像度に合わせる。既定 1280x720）</td></tr>
+          </tbody>
+        </table></div>
+        <div class="cmd"><pre><code>node ai-player.mjs --model qwen3:14b --persona noa.txt -- --pace 900 --size 1920x1080</code></pre></div>
+        <p class="why">LM Studio を使う場合は <code>--base-url http://127.0.0.1:1234/v1 --model &lt;LM Studioのモデル名&gt;</code> を付けます。</p>
+      </details>
+    </section>
+
+    <section class="step" id="notes" data-title="反省メモを見る">
+      <div class="step-head"><span class="num">08</span><h2>反省メモを確かめる</h2><span class="time">5分</span></div>
+      <p>ローカルLLMはプレイ中に学習しないので、プレイを振り返って「次に活かすこと」を書かせ、次のターンと次のゲームの最初に読ませています。書き直すのは、ゲーム終了時・10ターンごと・<code>--turns</code> で止まったとき・<span class="kbd">Ctrl</span>+<span class="kbd">C</span> のときです。</p>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-r-1"><div class="body"><label for="c-r-1"><code>D:\dev\frontier\mcp\notes\のあ.md</code> ができていて、メモ帳で開くと「反省メモ」と「戦績」が書かれていた</label>
+          <pre><code class="out">## 反省メモ（大事な順）
+- 爆装を2以上積んだ艦隊で惑星を攻める
+- 通信ウィンドウが出たら先に dismiss_dialog してから end_turn
+## 戦績（新しい順）
+- 2026-10-22 qwen3:14b 途中終了 ターン4 最大3星 戦闘1回（勝1） 操作失敗2回</code></pre>
+          <p class="why">手で直したり、項目を消したりしてかまいません。最大1200字に収まるよう、本人が要らない項目を消していきます。</p></div></li>
+        <li><input type="checkbox" id="c-r-2"><div class="body"><label for="c-r-2">2回目のプレイで、ログに「反省メモ ○項目を読み込みました」と出た</label></div></li>
+        <li><input type="checkbox" id="c-r-3"><div class="body"><label for="c-r-3">（任意）モデルを比べるときは名前を分けた</label>
+          <div class="cmd"><pre><code>node ai-player.mjs --model gpt-oss:20b --name ジーピー</code></pre></div>
+          <p class="why">メモは <code>notes\ジーピー.md</code> に別に育ち、字幕の名前も「ジーピー」になります。のあのメモを別のモデルに引き継ぐなら <code>--notes notes\のあ.md</code> を付けます。</p></div></li>
+      </ul>
+      <details>
+        <summary>メモの使い方を切り替えるオプション</summary>
+        <div class="tbl"><table>
+          <thead><tr><th>書き方</th><th>意味</th></tr></thead>
+          <tbody>
+            <tr><td><code>--notes-readonly</code></td><td>メモを読むだけで書き換えない（育てた腕前を固定して見せる）</td></tr>
+            <tr><td><code>--no-notes</code></td><td>メモを使わない（毎回はじめて遊ぶ状態。上達の比較用）</td></tr>
+            <tr><td><code>--reflect-every 5</code></td><td>5ターンごとに振り返る（既定10、0でゲーム終了時だけ）</td></tr>
+            <tr><td><code>--notes-chars 1200</code></td><td>プロンプトに入れるメモの上限文字数</td></tr>
+          </tbody>
+        </table></div>
+      </details>
+    </section>
+
+    <section class="step" id="series" data-title="連続プレイと録画">
+      <div class="step-head"><span class="num">09</span><h2>操作盤で連続プレイと録画をする</h2><span class="time">15分〜</span></div>
+      <p>ブラウザで開く操作盤から、試行回数を決めて続けて遊ばせ、試行ごとに自動で録画します。1試行＝1ゲームで、前の試行で書いた反省メモが次の試行の最初から効きます。録画に OBS は要りません（音は入りません）。</p>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-sr-1"><div class="body"><label for="c-sr-1">新しい一式に入れ替えた</label>
+          <p class="why">新しい <code>frontier-mcp-kit.zip</code> を展開し、中の <code>frontier</code> フォルダを <code>D:\dev</code> にドラッグして「ファイルを置き換える」を選びます。<code>notes</code>（反省メモ）と <code>node_modules</code> は zip に入っていないので、そのまま残ります。</p>
+          <p class="why">エクスプローラーで <code>D:\dev\frontier\mcp</code> を開き、<strong>「操作盤を開く」</strong>（操作盤を開く.cmd）があればOKです。</p></div></li>
+        <li><input type="checkbox" id="c-sr-2"><div class="body"><label for="c-sr-2">「操作盤を開く」をダブルクリックして、操作盤が開いた</label>
+          <p class="why">黒い窓が出て、いつものブラウザで「AIプレイ操作盤」が開くと、黒い窓は自動で閉じます。プレイ中にブラウザのタブを閉じても、プレイは裏で続きます。タブを閉じてプレイもしていなければ、90秒ほどで操作盤は自動で終わります（もう一度ダブルクリックすれば開き直します）。<strong>はじめての1回は部品のダウンロードで数分かかる</strong>ので、黒い窓は閉じずに待ちます。「セキュリティの警告」が出たら「実行」を、「Windows によって PC が保護されました」と出たら「詳細情報」→「実行」を押します。</p>
+          <p class="why">操作盤の右上の「デスクトップに置く」を押すと、デスクトップにショートカットができます。次からはそれをダブルクリックします。終えるときは右上の「終了」です。</p></div></li>
+        <li><input type="checkbox" id="c-sr-8"><div class="body"><label for="c-sr-8">右上の「動作確認」を押して、ログの最後に「動作確認：成功しました」と出た</label>
+          <p class="why">LLM を使わずに、ゲームと MCP サーバーが動くかを確かめます（窓なしで10ターン、1〜2分）。手順04の <code>npm test</code> と同じことを、操作盤からできます。</p></div></li>
+        <li><input type="checkbox" id="c-sr-3"><div class="body"><label for="c-sr-3">設定を入れて、2試行×3ターンで「連続プレイを開始」した</label>
+          <div class="tbl"><table>
+            <thead><tr><th>欄</th><th>入れるもの</th></tr></thead>
+            <tbody>
+              <tr><td>LLM の URL</td><td><code>http://192.168.0.75:11434/v1</code></td></tr>
+              <tr><td>モデル</td><td>「一覧」を押して <code>noa-game</code> を選ぶ（一覧が出れば、Ollama のPCにつながっています）</td></tr>
+              <tr><td>プレイヤーの名前</td><td><code>のあ</code></td></tr>
+              <tr><td>考える量</td><td>考えない（速い）＝ これまでの <code>--think none</code></td></tr>
+              <tr><td>試行回数／1回の上限ターン</td><td><code>2</code> ／ <code>3</code>（お試し。空欄にすると決着まで）</td></tr>
+              <tr><td>反省メモ</td><td>読んで、書き足す</td></tr>
+              <tr><td>録画する</td><td>チェックを入れる</td></tr>
+            </tbody>
+          </table></div>
+          <p class="why">入れた設定は次に開いたときも残ります。</p></div></li>
+        <li><input type="checkbox" id="c-sr-4"><div class="body"><label for="c-sr-4">ゲームの窓が開いて遊び始め、1試行目が終わると窓が閉じて、2試行目の窓が開いた</label>
+          <p class="why">操作盤の「ログ」にこれまで PowerShell に出ていた行が流れ、「進行」に試行・ターン・資金・経過時間が出ます。試行の終わりには <code>── 試行 1/2 終了：ターン上限（ターン3） 録画 のあ_…_1of2.webm</code> と出ます。</p></div></li>
+        <li><input type="checkbox" id="c-sr-5"><div class="body"><label for="c-sr-5">「戦績」に2行並び、「録画」タブの「再生」で動画が見られた</label>
+          <p class="why">動画は <code>D:\dev\frontier\mcp\recordings</code> にも保存されています（WebM、1時間で約450MB）。字幕と行動表示は映りますが、音は入りません。「反省メモ」タブでは、試行のたびに書き直されたメモが見られます。</p></div></li>
+        <li><input type="checkbox" id="c-sr-6"><div class="body"><label for="c-sr-6">止め方を試した</label>
+          <p class="why">「この試行で終わる」は今のゲームを最後まで遊んでから止めます。「いま止める」は反省メモを書いてから止めます（返事待ちの途中なら1分ほどかかります）。「強制終了」はメモを書かずにすぐ止めます。操作盤ごと終えるときは右上の「終了」です。</p></div></li>
+        <li><input type="checkbox" id="c-sr-7"><div class="body"><label for="c-sr-7">（長時間）試行回数を 5 くらい、上限ターンを空欄にして放置した</label>
+          <p class="why">戦績の棒グラフ（高さ＝到達ターン、緑＝勝利・赤＝敗北・橙＝途中）で、試行を重ねて上達しているかがわかります。窓を出さずに裏で回すなら「ゲームの窓を出さない」にチェック（録画はできます）。</p></div></li>
+      </ul>
+      <div class="note"><p><strong>OBS で配信しながら使うとき：</strong>試行ごとにゲームの窓が開き直しますが、窓のタイトル（辺境星系戦記）は同じなので、OBS のウィンドウキャプチャは自動で映り直します。映らなくなったら、ウィンドウキャプチャの「ウィンドウの一致優先度」を「ウィンドウタイトルに一致する必要があります」にします（操作盤も Chrome で開いていると、別の窓を拾うことがあるため）。</p></div>
+      <details>
+        <summary>うまくいかないとき</summary>
+        <div class="tbl"><table>
+          <thead><tr><th>症状</th><th>対処</th></tr></thead>
+          <tbody>
+            <tr><td>黒い窓に「Node.js が見つかりません」</td><td>手順02の Node.js を入れてから、もう一度ダブルクリックします</td></tr>
+            <tr><td>黒い窓に「準備に失敗しました」</td><td>インターネットにつながっているか確かめて、もう一度ダブルクリックします</td></tr>
+            <tr><td>黒い窓に「操作盤を起動できませんでした」</td><td>窓に出た最後の数行（<code>mcp\notes\.control.log</code> にも残ります）を教えてください</td></tr>
+            <tr><td>「一覧」で「つながりません」</td><td>URL の打ち間違いか、Ollama のPCが起きていません。手順05〜06の確認をもう一度</td></tr>
+            <tr><td>「LLM接続エラー」で止まった</td><td>残りの試行はやめます。Ollama のPCを確認してから、もう一度開始します</td></tr>
+            <tr><td>画面右上が「操作盤が止まっています」</td><td>「操作盤を開く」をダブルクリックし直します（戦績と設定は残っています）</td></tr>
+          </tbody>
+        </table></div>
+      </details>
+    </section>
+
+    <section class="step" id="obs" data-title="OBS に映す">
+      <div class="step-head"><span class="num">10</span><h2>OBS に映す</h2><span class="time">10分</span></div>
+      <p>のあを動かしている間に設定します。<code>--turns</code> なしで動かしておくと作業しやすいです。</p>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-b-1"><div class="body"><label for="c-b-1">OBS の「設定」→「映像」の基本解像度を、ゲーム画面の大きさに合わせた</label>
+          <p class="why">既定は 1280x720 です。1920x1080 で配信するなら、のあ側にも <code>-- --size 1920x1080</code> を付けます。</p></div></li>
+        <li><input type="checkbox" id="c-b-2"><div class="body"><label for="c-b-2">ソースに「ウィンドウキャプチャ」を追加し、ゲームの窓を選んだ</label>
+          <p class="why">ウィンドウの一覧では <code>[chrome.exe]: 辺境星系戦記</code> のように表示されます。<strong>キャプチャ方法は「Windows 10 (1903以降)」</strong>を選びます。「BitBlt」だと Chromium の画面が真っ黒になります。</p></div></li>
+        <li><input type="checkbox" id="c-b-3"><div class="body"><label for="c-b-3">音を拾えた</label>
+          <p class="why">ウィンドウキャプチャの「音声をキャプチャ」にチェックするか、別に「アプリケーション音声キャプチャ」を追加して同じ窓を選びます。音声ミキサーにメーターが動けばOKです。</p></div></li>
+        <li><input type="checkbox" id="c-b-4"><div class="body"><label for="c-b-4">字幕と行動表示が OBS のプレビューにも出ている</label>
+          <p class="why">どちらもゲーム画面の中に描いているので、OBS 側で文字のソースを足す必要はありません。</p></div></li>
+      </ul>
+      <div class="note warn"><p><strong>ゲームの窓は最小化しない・閉じない。</strong>最小化すると OBS に映らなくなります。閉じても次の操作で開き直しますが、戦況は最初からになります。</p></div>
+    </section>
+
+    <section class="step" id="trouble" data-title="困ったとき">
+      <div class="step-head"><span class="num">11</span><h2>困ったとき（トラブルシューティング）</h2></div>
+      <p>PowerShell に出たメッセージで探してください。<code>LLM API 400</code> や <code>404</code> のときも最後に「ローカルLLMに接続できないため止めます」と出るので、その<strong>1つ上の行</strong>を見てください。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>出たもの・症状</th><th>原因</th><th>直し方</th></tr></thead>
+        <tbody>
+          <tr><td><code>node</code> や <code>ollama</code> が「認識されません」</td><td>インストール直後で PATH が古い</td><td>PowerShell を閉じて開き直す。それでもだめならPCを再起動</td></tr>
+          <tr><td><code>npm.ps1 を読み込むことができません</code></td><td>PowerShell のスクリプト実行制限</td><td>手順02の <code>Set-ExecutionPolicy</code>、または <code>npm.cmd</code> を使う</td></tr>
+          <tr><td><code>Cannot find package '@modelcontextprotocol/sdk'</code></td><td><code>npm install</code> を <code>mcp</code> フォルダで実行していない</td><td><code>cd D:\dev\frontier\mcp</code> してから <code>npm install</code></td></tr>
+          <tr><td><code>browser launch failed: … Executable doesn't exist</code></td><td>Chromium が入っていない</td><td><code>npx playwright install chromium</code> をもう一度</td></tr>
+          <tr><td><code>gameAPI is not defined</code> がたくさん出る</td><td>ゲームの HTML が見つからない</td><td><code>game</code> と <code>mcp</code> が同じ親フォルダに並んでいるか確認。別の場所なら <code>-- --game D:\dev\どこか\frontier-war.html</code></td></tr>
+          <tr><td><code>--model を指定してください</code></td><td>モデル名を付け忘れた</td><td><code>--model qwen3:14b</code> を付ける</td></tr>
+          <tr><td><code>LLM API 404: … model … not found</code></td><td>モデル名の打ち間違い、または未ダウンロード</td><td><code>ollama list</code> で正しい名前を確認、なければ <code>ollama pull</code></td></tr>
+          <tr><td><code>LLM API 400: … does not support tools</code></td><td>ツール呼び出し非対応のモデル</td><td>手順06の表から <code>tools</code> 対応モデルを選ぶ</td></tr>
+          <tr><td><code>ローカルLLMに接続できないため止めます</code>（すぐ上に <code>LLM API</code> の行がない）</td><td>Ollama が起動していない、または URL 違い</td><td>トレイのアイコンを確認。<code>curl.exe http://127.0.0.1:11434/v1/models</code> でモデル一覧が返るか見る（<code>curl</code> ではなく <code>curl.exe</code>）</td></tr>
+          <tr><td>返事がとても遅い（1回に1分以上）</td><td>GPUからはみ出している、またはモデルの「考える」時間が長い</td><td><code>ollama ps</code> で <code>100% GPU</code> か確認。はみ出していたら1段小さいモデルにするか、コンテキストを 16384 に下げる</td></tr>
+          <tr><td><code>自動進行に切り替えます</code> が毎ターン出る</td><td>モデルがツールをうまく使えず、上限まで迷っている</td><td>大きいモデルにする。黙り込む場合はコンテキスト不足も疑う（<code>ollama ps</code> の <code>CONTEXT</code>）</td></tr>
+          <tr><td>途中からルールを忘れたような動きになる</td><td>コンテキストがあふれて指示が切れている</td><td>コンテキストを 32768 に上げる、または <code>--max-steps 25</code> で1ターンの操作数を減らす</td></tr>
+          <tr><td><code>✗</code>（操作失敗）がときどき出る</td><td>射程外・資金不足など。正常な動き</td><td>理由がのあに返り、次の手で取り返します。あまりに多ければ大きいモデルへ</td></tr>
+          <tr><td>日本語が文字化けする</td><td>古いコンソール</td><td>「ターミナル」（Windows Terminal）で開く。応急処置は <code>chcp 65001</code></td></tr>
+          <tr><td>OBS でゲーム画面が真っ黒</td><td>キャプチャ方法が BitBlt</td><td>「Windows 10 (1903以降)」に変える</td></tr>
+          <tr><td>音が鳴らない</td><td>Windows の音量ミキサーで chrome.exe が小さい</td><td>音量ミキサーを確認。ゲーム側は自動再生できる設定で起動しています</td></tr>
+          <tr><td><span class="kbd">Ctrl</span>+<span class="kbd">C</span> で止まらない</td><td>反省メモを書いている最中</td><td>少し待つ。急ぐならもう1回 <span class="kbd">Ctrl</span>+<span class="kbd">C</span></td></tr>
+          <tr><td>ファイアウォールの許可を聞かれた</td><td>Node.js がPC内だけの通信を始めた</td><td>「プライベートネットワーク」だけ許可でOK。外部には公開していません</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section class="step" id="report" data-title="結果を教えてください">
+      <div class="step-head"><span class="num">12</span><h2>テストが終わったら教えてほしいこと</h2></div>
+      <p>次の調整に使います。わかる範囲でかまいません。</p>
+      <ul class="checks">
+        <li><input type="checkbox" id="c-x-1"><div class="body"><label for="c-x-1">GPU と VRAM、使ったモデル名とコンテキスト長</label></div></li>
+        <li><input type="checkbox" id="c-x-2"><div class="body"><label for="c-x-2">1ターンにかかった時間の目安と、<code>ollama ps</code> の <code>PROCESSOR</code> 欄</label></div></li>
+        <li><input type="checkbox" id="c-x-3"><div class="body"><label for="c-x-3">「自動進行に切り替えます」や <code>✗</code> がどのくらい出たか</label></div></li>
+        <li><input type="checkbox" id="c-x-4"><div class="body"><label for="c-x-4"><code>notes\のあ.md</code> の中身（貼り付けてもらえれば読みます）</label></div></li>
+        <li><input type="checkbox" id="c-x-5"><div class="body"><label for="c-x-5">止まったときは、PowerShell に出ていた最後の20行ほど</label></div></li>
+      </ul>
+    </section>
+
+    <section class="step" id="other-os" data-title="Mac / Linux の場合">
+      <div class="step-head"><span class="num">付録</span><h2>Mac / Linux で試す場合の違い</h2></div>
+      <p>コマンドの中身は同じです。違うのは入れ方と書き方だけです。</p>
+      <div class="tbl"><table>
+        <thead><tr><th>項目</th><th>Mac</th><th>Linux</th></tr></thead>
+        <tbody>
+          <tr><td>Node.js</td><td>nodejs.org の .pkg、または <code>brew install node</code></td><td>nvm やディストリのパッケージで 20 以上</td></tr>
+          <tr><td>Chromium</td><td><code>npx playwright install chromium</code></td><td><code>npx playwright install --with-deps chromium</code>（足りないライブラリも入れる）</td></tr>
+          <tr><td>Ollama</td><td>ollama.com の Mac 版アプリ。コンテキストは Settings の Context length</td><td><code>curl -fsSL https://ollama.com/install.sh | sh</code>。コンテキストは <code>sudo systemctl edit ollama</code> で <code>Environment="OLLAMA_CONTEXT_LENGTH=16384"</code></td></tr>
+          <tr><td>一時的な環境変数</td><td colspan="2"><code>TURNS=5 node selftest.mjs --show</code>（<code>$env:</code> は不要）</td></tr>
+          <tr><td>パス</td><td colspan="2"><code>~/frontier/game</code> と <code>~/frontier/mcp</code> のように並べる</td></tr>
+          <tr><td>OBS</td><td>「macOS 画面キャプチャ」→ 方法を「ウィンドウキャプチャ」。音も同じソースで拾える（macOS 13以降）</td><td>X11 は「ウィンドウキャプチャ (Xcomposite)」、Wayland は「画面キャプチャ (PipeWire)」</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+(function () {
+  var KEY = "noa-mcp-guide-v1";
+  var state = {};
+  try { state = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { state = {}; }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+  var sections = Array.prototype.slice.call(document.querySelectorAll("section.step"));
+  var toc = document.getElementById("toc");
+
+  sections.forEach(function (sec) {
+    var li = document.createElement("li");
+    var a = document.createElement("a");
+    a.href = "#" + sec.id;
+    var t = document.createElement("span");
+    t.textContent = sec.querySelector(".num").textContent + "  " + sec.dataset.title;
+    var c = document.createElement("span");
+    c.className = "cnt";
+    a.appendChild(t); a.appendChild(c);
+    li.appendChild(a); toc.appendChild(li);
+    sec._cnt = c;
+  });
+
+  function refresh() {
+    sections.forEach(function (sec) {
+      var boxes = sec.querySelectorAll("ul.checks input[type=checkbox]");
+      var done = 0;
+      boxes.forEach(function (b) { if (b.checked) done++; b.closest("li").classList.toggle("is-done", b.checked); });
+      if (!boxes.length) { sec._cnt.textContent = ""; return; }
+      sec._cnt.textContent = done + "/" + boxes.length;
+      sec._cnt.classList.toggle("done", done === boxes.length);
+    });
+  }
+
+  document.querySelectorAll("ul.checks input[type=checkbox]").forEach(function (b) {
+    b.checked = !!state[b.id];
+    b.addEventListener("change", function () { state[b.id] = b.checked; save(); refresh(); });
+  });
+  document.getElementById("reset").addEventListener("click", function () {
+    state = {}; save();
+    document.querySelectorAll("ul.checks input[type=checkbox]").forEach(function (b) { b.checked = false; });
+    refresh();
+  });
+
+  document.querySelectorAll(".cmd").forEach(function (box) {
+    var btn = document.createElement("button");
+    btn.type = "button"; btn.className = "copy"; btn.textContent = "コピー";
+    btn.addEventListener("click", function () {
+      var text = box.querySelector("code").textContent;
+      var done = function () { btn.textContent = "コピーしました"; setTimeout(function () { btn.textContent = "コピー"; }, 1500); };
+      var fallback = function () {
+        var r = document.createRange(); r.selectNodeContents(box.querySelector("code"));
+        var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        btn.textContent = "選択しました";
+        setTimeout(function () { btn.textContent = "コピー"; }, 1500);
+      };
+      try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
+    });
+    box.appendChild(btn);
+  });
+
+  refresh();
+})();
+</script>

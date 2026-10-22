@@ -1,0 +1,1657 @@
+<title>辺境星系戦記</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DotGothic16&family=BIZ+UDPGothic:wght@400;700&display=swap">
+<style>
+/* Layout: 作戦卓（星図＋右の指令パネル）と、全画面に重なる戦術戦闘画面の二層 */
+:root{
+  --void:#080b16; --deck:#10152a; --deck2:#171e3a; --line:#2b3566; --ink:#e4e7f4; --dim:#8c94bd;
+  --ally:#f2b84b; --ally-soft:#f2b84b33; --foe:#ea5a4f; --foe-soft:#ea5a4f30; --xeno:#b974ff; --xeno-soft:#b974ff30;
+  --neutral:#6f7aa8; --move:#3aa0ff40; --move-line:#3aa0ff; --good:#5fd38d;
+  --f-display:"DotGothic16","Hiragino Kaku Gothic ProN","Meiryo",monospace;
+  --f-body:"BIZ UDPGothic","Hiragino Sans","Meiryo",system-ui,sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--void);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.55;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px;box-sizing:border-box}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+button{font:inherit;color:var(--ink);background:var(--deck2);border:1px solid var(--line);border-radius:4px;padding:6px 10px;cursor:pointer;touch-action:manipulation}
+button:hover:not(:disabled){border-color:var(--ally);color:var(--ally)}
+button:focus-visible{outline:2px solid var(--ally);outline-offset:2px}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.primary{background:var(--ally);color:#1a1405;border-color:var(--ally);font-weight:700}
+button.primary:hover:not(:disabled){filter:brightness(1.1);color:#1a1405}
+button.danger{border-color:var(--foe);color:var(--foe)}
+.app{max-width:1280px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+header.bar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 18px;border-bottom:1px solid var(--line);padding-bottom:8px}
+header.bar h1{font-family:var(--f-display);font-weight:400;font-size:24px;margin:0;letter-spacing:.08em;color:var(--ally)}
+.stat{font-family:var(--f-display);font-size:15px;color:var(--dim);font-variant-numeric:tabular-nums}
+.stat b{color:var(--ink);font-weight:400;margin-left:4px}
+.bar .spacer{flex:1}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:12px;align-items:start}
+@media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr)}}
+.mapwrap{background:var(--void) url(art/bg_map.webp) center/cover no-repeat;border:1px solid var(--line);border-radius:6px;overflow:hidden;position:relative}
+#map{display:block;width:100%;height:auto}
+aside.side{display:flex;flex-direction:column;gap:10px;min-width:0}
+.panel{background:var(--deck);border:1px solid var(--line);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.panel h2{font-family:var(--f-display);font-weight:400;font-size:16px;margin:0;letter-spacing:.06em;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.panel h3{font-family:var(--f-display);font-weight:400;font-size:14px;margin:0;color:var(--dim);letter-spacing:.05em}
+.tag{font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid currentColor;letter-spacing:.06em}
+.own-P{color:var(--ally)}.own-E{color:var(--foe)}.own-M,.own-H{color:var(--xeno)}.own-N{color:var(--neutral)}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;font-variant-numeric:tabular-nums}
+.kv dt{color:var(--dim)} .kv dd{margin:0}
+.progress{height:8px;background:var(--deck2);border-radius:4px;overflow:hidden;border:1px solid var(--line)}
+.progress i{display:block;height:100%;background:var(--ally)}
+.fleet{border:1px solid var(--line);border-radius:5px;padding:8px;display:flex;flex-direction:column;gap:6px}
+.fleet.sel{border-color:var(--ally);box-shadow:0 0 0 1px var(--ally) inset}
+.fleet .title{display:flex;justify-content:space-between;gap:6px;align-items:center;font-family:var(--f-display)}
+.ships{display:flex;flex-direction:column;gap:3px}
+.shipline{display:grid;grid-template-columns:16px 1fr 70px;gap:6px;align-items:center;font-size:12px}
+.hpbar{height:6px;background:var(--deck2);border-radius:3px;overflow:hidden}
+.hpbar i{display:block;height:100%;background:var(--good)}
+.hint{color:var(--dim);font-size:12px}
+.log{background:var(--deck);border:1px solid var(--line);border-radius:6px;padding:8px 12px;font-size:12.5px;max-height:132px;overflow:auto;display:flex;flex-direction:column;gap:2px}
+.log p{margin:0}.log p:first-child{color:var(--ink)}.log p{color:var(--dim)}
+.overlay{position:fixed;inset:0;background:#04060ecc;display:flex;align-items:center;justify-content:center;z-index:20;
+  padding:max(12px,env(safe-area-inset-top,0px)) max(12px,env(safe-area-inset-right,0px)) max(12px,env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px))}
+.card{background:var(--deck);border:1px solid var(--line);border-radius:8px;max-width:640px;width:100%;max-height:100%;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.card h2{font-family:var(--f-display);font-weight:400;margin:0;font-size:20px;color:var(--ally);letter-spacing:.06em;text-wrap:balance}
+.card p{margin:0}
+.speaker{font-family:var(--f-display);color:var(--ally);font-size:13px;letter-spacing:.1em}
+.comm{border-left:3px solid var(--ally);padding:4px 0 4px 12px;display:flex;flex-direction:column;gap:4px}
+.comm.has-face{display:grid;grid-template-columns:72px minmax(0,1fr);gap:4px 12px;align-items:start}
+.comm .face{width:72px;height:72px;border-radius:6px;border:1px solid var(--line);object-fit:cover;background:var(--deck2)}
+.comm-body{display:flex;flex-direction:column;gap:4px;min-width:0}
+.keyart{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:var(--void)}
+.pthumb{width:30px;height:30px;object-fit:contain;flex:none}
+@media (max-width:700px){.comm.has-face{grid-template-columns:56px minmax(0,1fr)}.comm .face{width:56px;height:56px}}
+.comm.foe{border-color:var(--foe)}.comm.foe .speaker{color:var(--foe)}
+.comm.xeno{border-color:var(--xeno)}.comm.xeno .speaker{color:var(--xeno)}
+.refit-ship{border:1px solid var(--line);border-radius:6px;padding:10px;display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px}
+.refit-ship svg{width:96px;height:64px;background:var(--void);border-radius:4px}
+.alloc{display:grid;grid-template-columns:64px 26px 1fr 26px 22px;gap:4px 6px;align-items:center;font-size:12.5px}
+.alloc button{padding:0;height:24px;width:26px}
+.pips{display:flex;gap:2px}.pips i{flex:1;height:10px;background:var(--deck2);border:1px solid var(--line);border-radius:1px}
+.pips i.on{background:var(--ally);border-color:var(--ally)}
+.form-opt{display:flex;gap:10px;align-items:center;text-align:left;padding:6px 8px}
+.form-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.form-grid{display:grid;grid-template-columns:repeat(5,11px);grid-template-rows:repeat(7,11px);gap:1px;flex:none}
+.form-grid i{font-style:normal;font-size:9px;line-height:11px;text-align:center;background:rgba(127,140,200,.12);color:var(--ally)}
+.form-grid i.flag{color:var(--ally);font-weight:bold}
+.form-opt.primary .form-grid i{background:rgba(0,0,0,.18);color:#1a1405}
+.form-opt.primary .hint{color:#1a1405;opacity:.85}
+.derived{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+.classes{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.cls{border:1px solid var(--line);border-radius:6px;padding:8px;display:flex;flex-direction:column;gap:4px;font-size:12.5px}
+.cls svg{width:100%;height:56px;background:var(--void);border-radius:4px}
+.cls.locked{opacity:.4}
+/* battle */
+.battle{position:fixed;inset:0;background:var(--void);z-index:15;overflow:auto;
+  padding:max(10px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(10px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.battle-in{max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.bhead{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:6px}
+.bhead h2{font-family:var(--f-display);font-weight:400;margin:0;font-size:20px;letter-spacing:.06em}
+.bgrid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:10px;align-items:start}
+@media (max-width:860px){.bgrid{grid-template-columns:minmax(0,1fr)}}
+.bfield{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#0a0f20 url(art/bg_battle.webp) center/cover no-repeat}
+#bsvg{display:block;width:100%;height:auto;touch-action:manipulation}
+.phase{font-family:var(--f-display);font-size:15px}
+.phase.P{color:var(--ally)}.phase.E{color:var(--foe)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--dim)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.flash{animation:flash .5s ease-out}
+@keyframes flash{from{opacity:.2}to{opacity:1}}
+
+/* 戦闘の操作バー（全サイズ共通、画面下に追従） */
+.bgrid>.bfield{grid-column:1}
+.bgrid>#bSide{grid-column:2;grid-row:1 / span 2}
+@media (max-width:860px){.bgrid>#bSide{grid-column:1;grid-row:auto}}
+.bbar{position:sticky;bottom:0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--deck);border:1px solid var(--line);border-radius:6px;padding:8px 10px;z-index:2;grid-column:1}
+.bbar .bb-info{flex:1 1 140px;min-width:0;font-family:var(--f-display);font-size:14px}
+.mbar{display:none}
+@media (pointer:coarse){button{min-height:42px;padding:8px 14px}.alloc{grid-template-columns:56px 40px 1fr 40px 20px}.alloc button{height:38px;width:40px}}
+@media (max-width:700px){
+  body{padding-block:8px 0}
+  header.bar{gap:4px 12px}
+  header.bar h1{font-size:20px;flex-basis:100%}
+  #btnEnd{display:none}
+  .stat{font-size:13px}
+  .side .p-fleet{order:1}.side .p-planet{order:2}.side .p-all{order:3}.side .p-research{order:4}
+  .app{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
+  .mbar{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:12;gap:8px;align-items:center;background:var(--deck);border-top:1px solid var(--line);
+    padding:8px max(12px,env(safe-area-inset-right,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(12px,env(safe-area-inset-left,0px))}
+  .mb-info{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+  .mb-fleet{font-size:12.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .battle{padding-left:8px;padding-right:8px}
+  .bhead h2{font-size:16px}.bhead .hint{display:block;font-size:11.5px}
+  .bbar{bottom:env(safe-area-inset-bottom,0px)}
+  .bbar button{flex:1}
+  .bbar .bb-info{flex-basis:100%}
+}
+.slots{display:flex;flex-direction:column;gap:6px}
+.slot{display:grid;grid-template-columns:30px minmax(0,1fr) auto;gap:8px;align-items:center;border:1px solid var(--line);border-radius:5px;padding:6px 8px}
+.slot.empty{border-style:dashed}
+.slot.good{border-color:var(--ally)}
+.slot-mark{font-family:var(--f-display);width:28px;height:28px;display:grid;place-items:center;border:1px solid var(--line);border-radius:4px;color:var(--ally)}
+.slot.empty .slot-mark{color:var(--dim)}
+.slot-body{display:flex;flex-direction:column;min-width:0;line-height:1.35}
+.cls.next svg image{filter:brightness(0) drop-shadow(0 0 3px #3aa0ff) drop-shadow(0 0 1px #9fd4ff)}
+.cls.next{border-style:dashed;border-color:#3aa0ff88}
+/* 演出中は操作を受け付けない（クリックで早送り） */
+body.anim .app,body.anim .mbar{pointer-events:none}
+/* フェイズ・ターンの帯 */
+.banner{position:fixed;left:0;right:0;top:36%;z-index:30;pointer-events:none;display:flex;justify-content:center;--bn-col:var(--ally);--bn-bg:#1a1405e6}
+.banner.E{--bn-col:var(--foe);--bn-bg:#2a0b0ae6}.banner.M{--bn-col:var(--xeno);--bn-bg:#1d0b30e6}.banner.W{--bn-col:#e4e7f4;--bn-bg:#10152ae6}
+.bn-in{width:100%;padding:12px 16px 14px;text-align:center;background:linear-gradient(90deg,transparent,var(--bn-bg) 15%,var(--bn-bg) 85%,transparent);border-block:2px solid var(--bn-col);display:flex;flex-direction:column;gap:2px;animation:bnIn var(--bn-ms,1100ms) ease-in-out both}
+.bn-in b{font-family:var(--f-display);font-weight:400;font-size:clamp(26px,5.4vw,46px);line-height:1.2;letter-spacing:.22em;color:var(--bn-col);text-shadow:0 0 14px var(--bn-col)}
+.bn-in span{font-family:var(--f-display);font-size:14px;letter-spacing:.12em;color:var(--ink)}
+@keyframes bnIn{0%{transform:translateX(-30%) scaleY(.1);opacity:0}14%{transform:none;opacity:1}84%{transform:none;opacity:1}100%{transform:translateX(30%) scaleY(.1);opacity:0}}
+.ffwd{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:31;pointer-events:none;font-family:var(--f-display);font-size:12px;color:var(--dim);background:#080b16cc;border:1px solid var(--line);border-radius:4px;padding:3px 8px}
+@media (max-width:700px){.ffwd{bottom:calc(84px + env(safe-area-inset-bottom,0px))}}
+/* 戦闘演出 */
+@keyframes hitShake{0%{transform:translate(0,0)}20%{transform:translate(-5px,2px)}40%{transform:translate(5px,-2px)}60%{transform:translate(-3px,1px)}80%{transform:translate(2px,0)}100%{transform:none}}
+@keyframes hitFlash{0%{filter:brightness(3.2) saturate(0)}35%{filter:brightness(1.8) sepia(1) hue-rotate(-30deg) saturate(4)}100%{filter:none}}
+.u-hit{animation:hitShake .34s linear,hitFlash .34s ease-out}
+@keyframes actorPulse{from{opacity:1;stroke-width:3}to{opacity:.35;stroke-width:1.5}}
+.actor-ring{animation:actorPulse .45s ease-in-out infinite alternate}
+.legend i{display:inline-block;width:11px;height:11px;border:1px solid;vertical-align:-1px;margin-right:4px}
+button.on{border-color:var(--foe);color:var(--foe);background:#2a0b0a}
+.layout>.mapcol{display:flex;flex-direction:column;gap:10px;min-width:0}
+aside.sideL{display:none}
+.kbd{display:none;font-family:var(--f-display);font-size:10.5px;line-height:1;padding:2px 4px;margin-left:6px;border:1px solid currentColor;border-radius:3px;opacity:.6;vertical-align:1px}
+.maphint{display:none}
+/* マウス用のツールチップ */
+.tip{position:fixed;z-index:40;pointer-events:none;max-width:300px;background:#0b1024f2;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font-size:12.5px;line-height:1.5;box-shadow:0 6px 24px #0008;display:flex;flex-direction:column;gap:3px}
+.tip b{font-family:var(--f-display);font-weight:400;font-size:14px}
+.tip .tl{display:flex;justify-content:space-between;gap:10px}
+.tip .tl span:first-child{color:var(--dim)}
+.tip .act{color:#9fd4ff;font-family:var(--f-display)}
+.tip hr{border:0;border-top:1px solid var(--line);margin:3px 0;width:100%}
+/* PC（広い画面）：画面全体を使い、ページはスクロールさせない。指令パネルだけスクロール */
+@media (min-width:1100px) and (min-height:620px){
+  body{height:100vh;overflow:hidden;padding-block:10px}
+  .app{max-width:none;height:100%}
+  .layout{flex:1;min-height:0;grid-template-columns:minmax(0,1fr) 370px;grid-template-rows:minmax(0,1fr);align-items:stretch}
+  .layout>.mapcol{min-height:0}
+  .mapwrap{flex:1;min-height:0}
+  #map{width:100%;height:100%}
+  .log{flex:none;height:118px;max-height:none}
+  .side{overflow-y:auto;min-height:0;padding-right:4px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  .side>.panel{flex:none}
+  .side .p-fleet{order:1}.side .p-planet{order:2}.side .p-research{order:3}.side .p-all{order:4}
+  .kbd{display:inline-block}
+  .maphint{display:block;position:absolute;left:12px;bottom:10px;font-size:12px;color:var(--dim);pointer-events:none;text-shadow:0 1px 2px #000}
+  .card.wide{max-width:1060px}
+  .card.wide .refit-list{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))}
+  /* 戦闘：盤面を画面の高さに合わせて大きく */
+  .battle-in{max-width:1880px}
+  .bgrid{grid-template-columns:minmax(0,1fr) 330px;justify-items:center}
+  .bgrid>.bfield,.bgrid>.bbar{width:min(100%,calc((100vh - 190px) * 11 / 7));justify-self:center}
+  .bgrid>#bSide{justify-self:stretch;max-height:calc(100vh - 110px);overflow-y:auto}
+}
+@media (min-width:1600px) and (min-height:620px){
+  .layout{grid-template-columns:300px minmax(0,1fr) 380px}
+  aside.sideL{display:flex}
+}
+@media (pointer:coarse){.kbd,.maphint,.kbd-help{display:none!important}}
+</style>
+
+<div class="app">
+  <header class="bar">
+    <h1>辺境星系戦記</h1>
+    <span class="stat">星暦<b id="hTurn"></b></span>
+    <span class="stat">資金<b id="hFunds"></b></span>
+    <span class="stat">収入<b id="hIncome"></b></span>
+    <span class="stat">艦級<b id="hTier"></b></span>
+    <span class="spacer"></span>
+    <button id="btnSound" aria-pressed="true">音 ON</button>
+    <button id="btnHelp">遊び方</button>
+    <button id="btnNew">最初から</button>
+    <button id="btnEnd" class="primary">ターン終了<span class="kbd">E</span></button>
+  </header>
+  <div class="layout">
+    <aside class="side sideL" id="sideL"></aside>
+    <div class="mapcol">
+      <section class="mapwrap"><svg id="map" viewBox="0 0 960 540" role="img" aria-label="星図"></svg><div class="maphint" id="mapHint"></div></section>
+      <section class="log" id="log" aria-live="polite"></section>
+    </div>
+    <aside class="side" id="side"></aside>
+  </div>
+</div>
+<div class="mbar" id="mbar">
+</div>
+
+<div class="battle" id="battle" hidden>
+  <div class="battle-in">
+    <div class="bhead"><h2 id="bTitle"></h2><span class="phase" id="bPhase"></span><span class="hint" id="bTip"></span></div>
+    <div class="bgrid">
+      <div class="bfield"><svg id="bsvg" role="img" aria-label="戦術マップ"></svg></div>
+      <div class="bbar" id="bBar"></div>
+      <div class="panel" id="bSide"></div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal" hidden><div class="card" id="modalCard"></div></div>
+<div class="banner" id="banner" hidden><div class="bn-in"><b id="bnMain"></b><span id="bnSub"></span></div></div>
+<div class="ffwd" id="ffwd" hidden>クリックで早送り</div>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+"use strict";
+/* ============ データ ============ */
+const CLASSES=[
+  {name:"ラーク級",type:"コルベット",hp:12,pts:6,cost:40,research:0,code:"LK-1"},
+  {name:"ファルコ級",type:"駆逐艦",hp:20,pts:9,cost:70,research:120,code:"FC-3"},
+  {name:"グレイヴ級",type:"巡洋艦",hp:30,pts:12,cost:110,research:220,code:"GV-7"},
+  {name:"アークライト級",type:"戦艦",hp:44,pts:16,cost:160,research:330,code:"AL-12"},
+  {name:"セラフ級",type:"対異生体戦艦",hp:56,pts:20,cost:200,research:380,code:"SR-0",anti:true}
+];
+const STATS=[["sh","装甲"],["ca","主砲"],["mi","ミサイル"],["bo","爆装"],["sp","機関"]];
+const PLANETS=[
+  [0,"アステリア",90,270,"P",60,40],[1,"リュネ",225,150,"P",25,20],[2,"カルセ",225,390,"P",25,20],
+  [3,"ミラ",385,105,"N",30,14],[4,"オルド",395,270,"N",35,14],[5,"セキア",385,435,"N",30,14],
+  [6,"ヴァルガ",840,270,"E",60,45],[7,"ドラン",690,140,"E",30,24],[8,"ゼフィル",690,400,"E",30,24],
+  [9,"クオン",560,270,"E",30,24],[10,"エリス",560,70,"N",25,14],[11,"ナディア",560,480,"N",25,14],
+  [12,"深淵の巣",880,70,"H",0,0]
+];
+const LINKS=[[0,1],[0,2],[1,2],[1,3],[1,4],[2,4],[2,5],[3,4],[4,5],[3,10],[4,9],[5,11],[9,7],[9,8],[7,6],[8,6],[10,7],[11,8],[12,10],[12,7],[12,6]];
+const HOME=0, CAPITAL=6, HIVE=12;
+/* 惑星特性と施設 */
+const TRAITS={
+  鉱物:{desc:"採掘所の収入が2倍",col:"#e0b25c"},
+  工業:{desc:"この星の造船所は建造費20%引き",col:"#7ec8ff"},
+  要塞:{desc:"防衛衛星群の効果が大きい",col:"#9aa7d6"},
+  遺跡:{desc:"研究所の効果が大きい。異生体の解析に役立つ",col:"#c99bff"},
+  なし:{desc:"特別な性質はない",col:"#6f7aa8"}
+};
+const FAC={
+  mine:{name:"採掘所",mark:"採",cost:60,desc:p=>`収入 +${p.trait==="鉱物"?30:15}`},
+  yard:{name:"造船所",mark:"造",cost:80,desc:p=>p.trait==="工業"?"造船・新艦隊の編成（建造費20%引き）":"造船・新艦隊の編成"},
+  sats:{name:"防衛衛星群",mark:"衛",cost:50,desc:p=>p.trait==="要塞"?"防衛力上限 +35・攻略戦の衛星 +2":"防衛力上限 +20・攻略戦の衛星 +1"},
+  lab:{name:"研究所",mark:"研",cost:70,desc:p=>`毎ターン研究 +${p.trait==="遺跡"?25:10}`},
+  flak:{name:"対空砲台",mark:"砲",cost:60,desc:()=>"この星で迎え撃つ戦闘の開始時、敵全艦に5ダメージ"}
+};
+//          特性,  スロット, 初期施設
+const PLANET_DEV={0:["工業",4,["yard","mine"]],1:["鉱物",2,[]],2:["要塞",2,[]],3:["鉱物",3,[]],4:["工業",3,[]],5:["なし",2,[]],
+  6:["工業",4,["yard","sats","mine"]],7:["要塞",2,["sats"]],8:["鉱物",2,["mine"]],9:["なし",2,["sats"]],10:["遺跡",2,[]],11:["遺跡",2,[]],12:["なし",0,[]]};
+const OWNER_LABEL={P:"自国",E:"ヴァルガ帝国",N:"中立",M:"異生体浸食",H:"異生体の巣"};
+/* ヴァルガ艦隊の戦術ドクトリン：能力配分・初期陣形・戦闘中の動き・星図での動きが変わる
+   role（随伴艦）／flagRole（旗艦）: assault=旗艦へ突撃 sniper=距離を取って撃つ guard=旗艦を守る flank=側面・背後へ回り込む keep=後方で温存 */
+const DOC={
+  line:{name:"戦列艦隊",tag:"戦列",order:["sh","ca","sp","mi","ca","sh"],form:[[9,3],[9,1],[9,5],[10,4]],role:"assault",flagRole:"assault",tip:"正面から押してくる標準的な戦列。"},
+  assault:{name:"突撃戦隊",tag:"突撃",order:["ca","sp","ca","sh","sp","ca"],form:[[8,3],[9,2],[9,4],[10,3]],role:"assault",flagRole:"assault",tip:"旗艦めがけて一気に突っ込んでくる。迎え撃て。"},
+  missile:{name:"砲撃戦隊",tag:"砲撃",order:["mi","mi","sh","mi","sp","sh","mi"],form:[[10,3],[9,0],[9,6],[10,5]],role:"sniper",flagRole:"keep",tip:"距離を取ってミサイルを撃ってくる。懐に飛び込め。"},
+  heavy:{name:"重装戦隊",tag:"重装",order:["sh","sh","ca","sh","ca","sp"],form:[[10,3],[9,2],[9,4],[8,3]],role:"guard",flagRole:"keep",tip:"盾艦が旗艦を囲んで守る。守りを崩すか回り込め。"},
+  raid:{name:"強襲戦隊",tag:"強襲",order:["sp","sp","ca","sp","ca","mi"],form:[[9,3],[6,0],[6,6],[10,5]],role:"flank",flagRole:"flank",tip:"足が速く、側面や背後へ回り込んでくる。向きに注意。"}
+};
+const DOC_KEYS=Object.keys(DOC);
+const docOf=f=>DOC[f&&f.doc]||DOC.line;
+/* 自軍艦隊の陣形：戦闘開始時の並び（旗艦・2番艦・3番艦・4番艦の順）と、戦闘中の補正 */
+const FORM={
+  line:{name:"横陣",pos:[[1,3],[1,1],[1,5],[0,2]],tip:"標準の並び。補正なし。"},
+  wedge:{name:"楔形",pos:[[3,3],[2,2],[2,4],[1,3]],tip:"前に出て始まり、1ラウンド目だけ全艦の移動+1。旗艦も前に出るので狙われやすい。"},
+  square:{name:"方陣",pos:[[0,3],[1,3],[0,2],[0,4]],tip:"旗艦を囲んで守る。旗艦の隣に味方がいる間、旗艦の被ダメージ-25%。"},
+  crane:{name:"鶴翼",pos:[[1,3],[3,0],[3,6],[2,3]],tip:"両翼を前に張り出す。側面・背面への攻撃ダメージ+15%。"},
+  rear:{name:"後衛陣",pos:[[0,3],[0,1],[0,5],[1,3]],tip:"後ろに下がって始まる。ミサイルのダメージ+1。"}
+};
+const FORM_KEYS=Object.keys(FORM);
+const formKey=f=>FORM[f&&f.form]?f.form:"line";
+const formOf=f=>FORM[formKey(f)];
+const BW=11,BH=7,CELL=52;
+/* アートワーク：art/ 以下の画像（艦船・異生体は右向きの俯瞰図） */
+const ART="art/";
+const SHIP_ART=["lark","falco","grave","arclight","seraph"];
+const FACE={総司令部:"hq",作戦参謀:"staff",技術局:"tech",観測所:"obs",ヴァルガ皇帝:"emperor"};
+const TRAIT_ART={鉱物:"mineral",工業:"industry",要塞:"fortress",遺跡:"ruins",なし:"plain"};
+function planetArt(p){return ART+(p.id===HIVE?"planet_hive":p.owner==="M"?"planet_infested":p.id===HOME?"planet_home":p.id===CAPITAL?"planet_varga":"planet_"+TRAIT_ART[p.trait])+".webp"}
+function svgImg(href,x,y,w,h){const i=svgEl("image",{x,y,width:w,height:h,preserveAspectRatio:"xMidYMid meet"});i.setAttribute("href",href);return i}
+
+/* ============ 状態 ============ */
+let S=null, B=null;
+function uid(){return S.nextId++}
+function capOf(side){return 2+(side==="P"?S.tier:S.enemyTier)}
+function allocDefault(cls,side,doc){
+  const c=CLASSES[cls],cap=capOf(side),a={sh:0,ca:0,mi:0,bo:0,sp:0};
+  const order=side==="P"?["sh","ca","bo","sp","mi","ca","sh"]:(DOC[doc]||DOC.line).order;
+  let left=c.pts,guard=0;
+  while(left>0&&guard<200){const k=order[guard%order.length];if(a[k]<cap){a[k]++;left--}guard++}
+  return a;
+}
+function makeShip(cls,side,doc){const c=CLASSES[cls];return{id:uid(),cls,hp:c.hp,maxHp:c.hp,a:allocDefault(cls,side,doc)}}
+/* ヴァルガ艦隊の編成：ドクトリンを選び、旗艦はときどき一段上の艦級（精鋭）、随伴艦はときどき一段下 */
+function vargaFleet(name,node,n,doc){
+  doc=doc||DOC_KEYS[Math.floor(Math.random()*DOC_KEYS.length)];
+  const t=S.enemyTier,elite=t<3&&S.turn>4&&Math.random()<.3,ships=[];
+  for(let i=0;i<n;i++){const c=i===0?t+(elite?1:0):t-(Math.random()<.35?1:0);ships.push(makeShip(Math.max(0,Math.min(3,c)),"E",doc))}
+  return{id:uid(),name:name||`ヴァルガ第${S.turn}${DOC[doc].name}`,side:"E",node,doc,ships};
+}
+function makeXeno(kind){
+  const T={brood:{hp:42,name:"ゾア・ブルード"},drone:{hp:22,name:"ゾア・ドローン"}};
+  const neo=S.evolved;
+  return{id:uid(),xeno:kind,neo,hp:T[kind].hp+(neo?8:0),maxHp:T[kind].hp+(neo?8:0)};
+}
+function newGame(){
+  S={turn:1,funds:160,tier:0,research:0,enemyTier:0,monster:false,evolved:false,truce:false,xenoKills:0,respawn:0,
+     nextId:1,sel:HOME,selFleet:null,mode:null,log:[],over:null,
+     planets:PLANETS.map(p=>{const d=PLANET_DEV[p[0]];const o={id:p[0],name:p[1],x:p[2],y:p[3],owner:p[4],income:p[5],def:p[6],maxDef:p[6],survey:2,trait:d[0],slots:d[1],fac:[...d[2]]};syncFac(o);o.def=o.maxDef;return o}),
+     fleets:[]};
+  const f1={id:uid(),name:"第1艦隊",side:"P",node:HOME,ships:[0,0,0,0].map(c=>makeShip(c,"P")),moved:false};
+  const f2={id:uid(),name:"第2艦隊",side:"P",node:2,ships:[0,0].map(c=>makeShip(c,"P")),moved:false};
+  S.fleets.push(f1,f2);
+  S.fleets.push(vargaFleet("ヴァルガ前衛",9,3,Math.random()<.5?"assault":"raid"));
+  S.fleets.push(vargaFleet("ヴァルガ本隊",6,4,Math.random()<.5?"heavy":"missile"));
+  S.selFleet=f1.id;
+  log("星暦3990年。辺境星系アステリアに戦雲が迫る。");
+  showIntro();
+}
+
+/* ============ ユーティリティ ============ */
+const $=id=>document.getElementById(id);
+function h(tag,attrs,...kids){const e=document.createElement(tag);if(attrs)for(const k in attrs){if(k.startsWith("on"))e.addEventListener(k.slice(2),attrs[k]);else if(k==="html")e.innerHTML=attrs[k];else if(attrs[k]!==false&&attrs[k]!=null)e.setAttribute(k,attrs[k])}for(const k of kids.flat()){if(k==null||k===false)continue;e.append(k.nodeType?k:document.createTextNode(String(k)))}return e}
+function svgEl(tag,attrs){const e=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const k in attrs)e.setAttribute(k,attrs[k]);return e}
+function log(msg){S.log.unshift(`[${3989+S.turn}] ${msg}`);if(S.log.length>40)S.log.pop()}
+function planet(id){return S.planets[id]}
+function fleetsAt(node,side){return S.fleets.filter(f=>f.node===node&&(!side||f.side===side))}
+function hostileSide(side){return side==="P"?["E","M"]:["P"]}
+function linksVisible(){return LINKS.filter(([a,b])=>S.monster||(a!==HIVE&&b!==HIVE))}
+function neighbors(n){const r=[];for(const[a,b]of linksVisible()){if(a===n)r.push(b);if(b===n)r.push(a)}return r}
+function hasF(p,k){return p.fac.includes(k)}
+function syncFac(p){p.yard=p.fac.includes("yard");const base=PLANETS[p.id][6];p.maxDef=base+(hasF(p,"sats")?(p.trait==="要塞"?35:20):0);if(p.def>p.maxDef)p.def=p.maxDef}
+function planetIncome(p){return p.income+(hasF(p,"mine")?(p.trait==="鉱物"?30:15):0)}
+function labRate(){return S.planets.filter(p=>p.owner==="P"&&hasF(p,"lab")).reduce((s,p)=>s+(p.trait==="遺跡"?25:10),0)}
+function bcost(ci,p){return Math.round(CLASSES[ci].cost*(p&&p.trait==="工業"?.8:1))}
+function income(){return S.planets.filter(p=>p.owner==="P").reduce((s,p)=>s+planetIncome(p),0)}
+function bfsPath(from,goalFn,avoid){
+  const prev={[from]:-1},q=[from];
+  while(q.length){const n=q.shift();if(n!==from&&goalFn(n)){const path=[];let c=n;while(c!==from){path.unshift(c);c=prev[c]}return path}
+    for(const m of neighbors(n)){if(m in prev)continue;if(avoid&&avoid(m))continue;prev[m]=n;q.push(m)}}
+  return null;
+}
+function fleetPower(f){return f.ships.reduce((s,x)=>s+x.hp,0)/3}
+
+/* ============ 描画：星図 ============ */
+function render(){
+  if(!S)return;
+  $("hTurn").textContent=`${3989+S.turn}年`;
+  $("hFunds").textContent=S.funds;
+  $("hIncome").textContent=`+${income()}`;
+  $("hTier").textContent=CLASSES[S.tier].name;
+  $("btnEnd").disabled=!!S.over||!!B||ANIM.busy>0;
+  renderMap();renderSide();
+  $("log").replaceChildren(...S.log.slice(0,14).map(t=>h("p",null,t)));
+}
+function ownerColor(o){return{P:"var(--ally)",E:"var(--foe)",N:"var(--neutral)",M:"var(--xeno)",H:"var(--xeno)"}[o]}
+function isNarrow(){return window.matchMedia("(max-width:700px)").matches}
+/* 星図座標：PCは横長、スマホは縦長（主星が下、深淵が上） */
+function mpos(p){return isNarrow()?{x:p.y,y:(960-p.x)*.75}:{x:p.x,y:p.y}}
+function markerPos(p,i){const{x,y}=mpos(p),r=p.id===HIVE?26:10+planetIncome(p)/6;return[x-r-14-i*15,y-r-2]}
+function renderMap(){
+  const svg=$("map");svg.replaceChildren();
+  const narrow=isNarrow();
+  svg.setAttribute("viewBox",narrow?"0 0 540 720":"0 0 960 540");
+  // 背景の星
+  const g0=svgEl("g",{});for(let i=0;i<90;i++){const x=(i*97)%960,y=(i*53+i*i*7)%540,q=narrow?{x:y,y:(960-x)*.75}:{x,y};g0.append(svgEl("circle",{cx:q.x,cy:q.y,r:(i%5===0)?1.3:.7,fill:"#ffffff",opacity:(i%3+1)*.15}))}svg.append(g0);
+  const selF=S.fleets.find(f=>f.id===S.selFleet);
+  const targets=new Set(),warps=new Set();
+  if(S.mode==="move"&&selF){neighbors(selF.node).forEach(n=>targets.add(n));S.planets.forEach(p=>{if(p.owner==="P"&&p.id!==selF.node)warps.add(p.id)})}
+  for(const[a,b]of linksVisible()){const A=mpos(planet(a)),Bp=mpos(planet(b));
+    const hot=selF&&S.mode==="move"&&((a===selF.node&&targets.has(b))||(b===selF.node&&targets.has(a)));
+    svg.append(svgEl("line",{x1:A.x,y1:A.y,x2:Bp.x,y2:Bp.y,stroke:hot?"#3aa0ff":"#2b3566","stroke-width":hot?3:2,"stroke-dasharray":(a===HIVE||b===HIVE)?"6 5":"none"}))}
+  const fs=narrow?18:15;
+  for(const p of S.planets){
+    if(p.id===HIVE&&!S.monster)continue;
+    const{x,y}=mpos(p);
+    const g=svgEl("g",{style:"cursor:pointer",tabindex:0,role:"button","aria-label":p.name});
+    const r=p.id===HIVE?26:10+planetIncome(p)/6;
+    g.append(svgEl("circle",{cx:x,cy:y,r:Math.max(r+14,36),fill:"transparent"}));
+    if(targets.has(p.id))g.append(svgEl("circle",{cx:x,cy:y,r:r+9,fill:"#3aa0ff22",stroke:"#3aa0ff","stroke-width":2.5}));
+    else if(warps.has(p.id))g.append(svgEl("circle",{cx:x,cy:y,r:r+9,fill:"none",stroke:"#3aa0ff","stroke-width":1.5,"stroke-dasharray":"3 4"}));
+    if(S.sel===p.id)g.append(svgEl("circle",{cx:x,cy:y,r:r+5,fill:"none",stroke:"#e4e7f4","stroke-width":1.5}));
+    if(p.id===HIVE){
+      g.append(svgImg(planetArt(p),x-r*1.3,y-r*1.3,r*2.6,r*2.6));
+    }else{
+      g.append(svgEl("circle",{cx:x,cy:y,r:r+1.5,fill:"#0e1430",stroke:ownerColor(p.owner),"stroke-width":3}));
+      g.append(svgImg(planetArt(p),x-r*1.08,y-r*1.08,r*2.16,r*2.16));
+      for(let i=0;i<p.slots;i++)g.append(svgEl("rect",{x:x+r+5,y:y-r+i*8,width:6,height:6,fill:i<p.fac.length?ownerColor(p.owner):"none",stroke:ownerColor(p.owner),"stroke-width":1}));
+      if(p.trait!=="なし"){const tt=svgEl("text",{x:x+r+14,y:y-r+6,fill:TRAITS[p.trait].col,"font-size":11,"font-family":"DotGothic16, monospace"});tt.textContent=p.trait[0];g.append(tt)}
+    }
+    const t=svgEl("text",{x,y:y+r+fs+3,"text-anchor":"middle",fill:"#e4e7f4","font-size":fs,"font-family":"DotGothic16, monospace"});t.textContent=p.name;g.append(t);
+    // 艦隊マーカー
+    S.fleets.filter(f=>f.node===p.id&&!ANIM.hide.has(f.id)).forEach((f,i)=>{
+      const col=f.side==="P"?"#f2b84b":f.side==="E"?"#ea5a4f":"#b974ff";
+      const[fx,fy]=markerPos(p,i);
+      const tri=f.side==="P"?`${fx-7},${fy+6} ${fx+7},${fy} ${fx-7},${fy-6}`:f.side==="E"?`${fx+7},${fy+6} ${fx-7},${fy} ${fx+7},${fy-6}`:null;
+      if(tri)g.append(svgEl("polygon",{points:tri,fill:col,stroke:f.id===S.selFleet?"#fff":"none","stroke-width":2,opacity:f.side==="P"&&f.moved?.45:1}));
+      else g.append(svgEl("circle",{cx:fx,cy:fy,r:7,fill:col,stroke:"#2a0d45","stroke-width":2}));
+    });
+    g.addEventListener("click",()=>onPlanetClick(p.id));
+    g.addEventListener("contextmenu",e=>{e.preventDefault();hideTip();onPlanetRight(p.id)});
+    g.addEventListener("pointerenter",e=>{if(e.pointerType==="mouse")showTip(planetTip(p),e)});
+    g.addEventListener("pointermove",e=>{if(e.pointerType==="mouse")moveTip(e)});
+    g.addEventListener("pointerleave",hideTip);
+    g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();onPlanetClick(p.id)}});
+    svg.append(g);
+  }
+  const hint=$("mapHint");if(hint)hint.textContent=S.mode==="move"?"移動先を左クリック／右クリックかEscで取消":"左クリック：星を選択　右クリック：選択中の艦隊をその星へ移動　M：移動　1〜3：艦隊の切替　E：ターン終了";
+  if(S.mode==="move"){const t=svgEl("text",{x:16,y:30,fill:"#3aa0ff","font-size":narrow?20:16,"font-family":"DotGothic16, monospace"});t.textContent=narrow?"移動先をタップ":"移動先を選択（実線：隣接星／点線：亜空間移動）";svg.append(t)}
+  renderMobileBar();
+}
+/* スマホ用の下部操作バー */
+function renderMobileBar(){
+  const bar=$("mbar");if(!bar)return;
+  const f=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");
+  const moving=S.mode==="move"&&f;
+  bar.replaceChildren(
+    h("div",{class:"mb-info"},h("span",{class:"stat"},`資金`,h("b",null,S.funds)),h("span",{class:"mb-fleet"},f?`${f.name}・${planet(f.node).name}${f.moved?"（行動済）":""}`:"艦隊未選択")),
+    h("button",{id:"mbMove",class:moving?"primary":"",disabled:!f||f.moved||!!S.over,onclick:()=>{S.mode=moving?null:"move";render()}},moving?"取消":"移動"),
+    h("button",{id:"mbEnd",class:"primary",disabled:!!S.over||!!B||ANIM.busy>0,onclick:()=>endTurn()},"ターン終了"));
+}
+function shipSvg(cls,w,h,col){
+  const s=svgEl("svg",{viewBox:"-50 -30 100 60",width:w,height:h});
+  s.append(drawHull({cls,side:"P"},0,0,0,92,col||"#f2b84b",true));
+  return s;
+}
+
+/* ============ 指令パネル ============ */
+function isWide3(){return window.matchMedia("(min-width:1600px) and (min-height:620px)").matches}
+function renderSide(){
+  const side=$("side"),sideL=$("sideL");side.replaceChildren();sideL.replaceChildren();
+  const left=isWide3()?sideL:side; // 横に広い画面では技術局と艦隊一覧を左列に
+  const p=planet(S.sel);
+  // 研究
+  const next=S.tier+1;
+  const rp=h("div",{class:"panel p-research"},h("h2",null,"技術局"));
+  if(next<CLASSES.length&&(next<4||S.monster)){
+    const c=CLASSES[next];
+    rp.append(h("div",{class:"row",style:"justify-content:space-between"},h("span",null,`開発中：${c.name}（${c.type}）`),h("span",{class:"stat"},`${S.research}/${c.research}`)),
+      h("div",{class:"progress"},h("i",{style:`width:${Math.min(100,S.research/c.research*100)}%`})),
+      h("div",{class:"row"},...[30,60,120].map(v=>h("button",{disabled:S.funds<v||!!S.over,onclick:()=>invest(v)},`投資 ${v}`))));
+  }else if(next===4&&!S.monster){rp.append(h("p",{class:"hint"},"現行技術の上限に到達。これ以上の艦級は未知の脅威への対抗研究が必要です。"))}
+  else rp.append(h("p",{class:"hint"},"全艦級の開発が完了しました。"));
+  rp.append(h("p",{class:"hint"},`改装上限：各項目 ${capOf("P")} まで・研究所から毎ターン +${labRate()}`));
+  left.append(rp);
+
+  // 惑星
+  const pp=h("div",{class:"panel p-planet"},h("h2",null,h("img",{class:"pthumb",src:planetArt(p),alt:""}),p.name,h("span",{class:`tag own-${p.owner}`},OWNER_LABEL[p.owner])));
+  const kv=h("dl",{class:"kv"},h("dt",null,"特性"),h("dd",null,h("span",{style:`color:${TRAITS[p.trait].col}`},p.trait)," ",h("span",{class:"hint"},TRAITS[p.trait].desc)),
+    h("dt",null,"収入"),h("dd",null,planetIncome(p)),h("dt",null,"防衛力"),h("dd",null,`${p.def}/${p.maxDef}`));
+  if(p.owner==="P")kv.append(h("dt",null,"探査余地"),h("dd",null,p.survey>0?`あと${p.survey}回`:"なし"));
+  pp.append(kv);
+  if(p.owner==="P"&&!S.over){
+    pp.append(h("div",{class:"row"},
+      h("button",{disabled:S.funds<40||p.survey<=0,onclick:()=>survey(p)},"小惑星探査 40"),
+      h("button",{disabled:S.funds<30||p.def>=p.maxDef,onclick:()=>fortify(p)},"防衛修復 30")));
+  }
+  if(p.slots>0){
+    const slots=h("div",{class:"slots"});
+    for(let i=0;i<p.slots;i++){
+      const k=p.fac[i];
+      if(k)slots.append(h("div",{class:"slot"},h("span",{class:"slot-mark"},FAC[k].mark),h("div",{class:"slot-body"},h("b",null,FAC[k].name),h("span",{class:"hint"},FAC[k].desc(p))),
+        p.owner==="P"&&!S.over?h("button",{class:"slot-x","aria-label":`${FAC[k].name}を撤去`,onclick:()=>demolish(p,k)},"撤去"):null));
+      else slots.append(h("div",{class:"slot empty"},h("span",{class:"slot-mark"},"＋"),h("div",{class:"slot-body"},h("b",null,"空きスロット")),
+        p.owner==="P"&&!S.over?h("button",{onclick:()=>openBuild(p)},"建設"):null));
+    }
+    pp.append(h("h3",null,`施設 ${p.fac.length}/${p.slots}`),slots);
+  }
+  side.append(pp);
+
+  // 艦隊
+  const here=S.fleets.filter(f=>f.node===p.id);
+  const fp=h("div",{class:"panel p-fleet"},h("h2",null,"駐留艦隊",h("span",{class:"hint"},`${p.name}`)));
+  if(!here.length)fp.append(h("p",{class:"hint"},"この星系に艦隊はいません。"));
+  for(const f of here)fp.append(fleetCard(f,p));
+  const mine=S.fleets.filter(f=>f.side==="P");
+  if(p.owner==="P"&&p.yard&&mine.length<3&&!S.over)fp.append(h("button",{disabled:S.funds<bcost(0,p),onclick:()=>newFleet(p)},`新艦隊を編成（${CLASSES[0].name} 1隻 ${bcost(0,p)}）`));
+  side.append(fp);
+
+  const all=h("div",{class:"panel p-all"},h("h3",null,"自軍艦隊一覧"),...mine.map((f,i)=>h("button",{class:f.id===S.selFleet?"primary":"",onclick:()=>{S.sel=f.node;S.selFleet=f.id;S.mode=null;render()}},`${f.name}（${planet(f.node).name}・${f.ships.length}隻）${f.moved?" 行動済":""}`,h("span",{class:"kbd"},i+1))));
+  left.append(all);
+}
+function fleetCard(f,p){
+  const col=f.side==="P"?"var(--ally)":f.side==="E"?"var(--foe)":"var(--xeno)";
+  const card=h("div",{class:"fleet"+(f.id===S.selFleet?" sel":"")},
+    h("div",{class:"title"},h("span",{style:`color:${col}`},f.name),h("span",{class:"hint"},f.side==="P"?(f.moved?"行動済":"待機中"):`${f.side==="E"?docOf(f).tag+"・":""}戦力 ${Math.round(fleetPower(f))}`)));
+  const list=h("div",{class:"ships"});
+  f.ships.forEach((s,i)=>{
+    const nm=s.xeno?(s.xeno==="brood"?"ゾア・ブルード":"ゾア・ドローン")+(s.neo?"改":""):CLASSES[s.cls].name;
+    list.append(h("div",{class:"shipline"},h("span",{style:`color:${col}`},i===0?"★":"・"),h("span",null,nm),
+      h("div",{class:"hpbar",title:`${s.hp}/${s.maxHp}`},h("i",{style:`width:${s.hp/s.maxHp*100}%;background:${s.hp/s.maxHp<.35?"var(--foe)":"var(--good)"}`}))));
+  });
+  card.append(list);
+  if(f.side==="P"&&!S.over){
+    const dmg=f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);
+    const row=h("div",{class:"row"},
+      h("button",{class:S.mode==="move"&&S.selFleet===f.id?"primary":"",disabled:f.moved,onclick:()=>{S.selFleet=f.id;S.mode=S.mode==="move"&&S.selFleet===f.id?null:"move";render()}},S.mode==="move"&&S.selFleet===f.id?"移動取消":"移動",f.id===S.selFleet?h("span",{class:"kbd"},"M"):null),
+      h("button",{onclick:()=>openRefit(f)},"改装"),
+      h("button",{title:formOf(f).tip,onclick:()=>openFormation(f)},`陣形：${formOf(f).name}`,f.id===S.selFleet?h("span",{class:"kbd"},"F"):null),
+      p.owner==="P"?h("button",{disabled:!dmg||S.funds<Math.ceil(dmg/2),onclick:()=>repair(f)},`修理 ${Math.ceil(dmg/2)}`):null,
+      p.owner==="P"&&p.yard?h("button",{onclick:()=>openYard(f)},"造船"):null,
+      intruder(f)?h("button",{class:"danger",disabled:f.moved,onclick:()=>intercept(f)},"迎撃"):null);
+    card.append(row);
+    card.addEventListener("click",e=>{if(e.target.tagName!=="BUTTON"&&S.selFleet!==f.id){S.selFleet=f.id;S.mode=null;render()}});
+  }
+  return card;
+}
+
+/* ============ 戦略コマンド ============ */
+function invest(v){
+  S.funds-=v;S.research+=v;checkResearch();render();
+}
+function researchOpen(){const n=S.tier+1;return n<CLASSES.length&&(n<4||S.monster)}
+function checkResearch(){
+  if(!researchOpen())return;
+  const next=S.tier+1,c=CLASSES[next];
+  if(S.research>=c.research){S.research=0;S.tier=next;sfx("jingle");
+    log(`新型艦「${c.name}」（${c.type}）完成！改装上限が ${capOf("P")} に上昇。`);
+    showComm([{who:"技術局",text:`新型${c.type}「${c.name}」（${c.code}）の設計が完了しました。造船所のある星で建造できます。各項目の改装上限も ${capOf("P")} に上がりました。`}],null,c.code?next:null);
+  }
+  render();
+}
+function survey(p){S.funds-=40;p.survey--;
+  if(Math.random()<.45){p.income+=20;log(`${p.name}で鉱物資源帯を発見。収入+20。`)}else log(`${p.name}の小惑星探査は空振りに終わった。`);render()}
+function fortify(p){S.funds-=30;p.def=Math.min(p.maxDef,p.def+15);log(`${p.name}の防衛設備を修復（防衛力 ${p.def}）。`);render()}
+function buildFac(p,k){S.funds-=FAC[k].cost;p.fac.push(k);syncFac(p);if(k==="sats")p.def=Math.min(p.maxDef,p.def+15);log(`${p.name}に${FAC[k].name}を建設。`);render()}
+function demolish(p,k){p.fac=p.fac.filter(x=>x!==k);syncFac(p);log(`${p.name}の${FAC[k].name}を撤去。`);render()}
+function openBuild(p){
+  openModal(card=>{
+    card.append(h("h2",null,`${p.name}に建設`),h("p",{class:"hint"},`特性：${p.trait}（${TRAITS[p.trait].desc}）。資金 ${S.funds}。`));
+    const list=h("div",{class:"slots"});
+    for(const k in FAC){
+      const built=hasF(p,k),f=FAC[k],good=(k==="mine"&&p.trait==="鉱物")||(k==="yard"&&p.trait==="工業")||(k==="sats"&&p.trait==="要塞")||(k==="lab"&&p.trait==="遺跡");
+      list.append(h("div",{class:"slot"+(good?" good":"")},h("span",{class:"slot-mark"},f.mark),h("div",{class:"slot-body"},h("b",null,f.name,good?h("span",{class:"tag",style:"margin-left:6px"},"特性一致"):null),h("span",{class:"hint"},f.desc(p))),
+        h("button",{class:good?"primary":"",disabled:built||S.funds<f.cost,onclick:()=>{$("modal").hidden=true;buildFac(p,k)}},built?"建設済":`${f.cost}`)));
+    }
+    card.append(list,h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:closeModal},"閉じる")));
+  });
+}
+function repair(f){const dmg=f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);S.funds-=Math.ceil(dmg/2);f.ships.forEach(x=>x.hp=x.maxHp);log(`${f.name}の修理完了。`);render()}
+function newFleet(p){S.funds-=bcost(0,p);const used=new Set(S.fleets.filter(f=>f.side==="P").map(f=>f.name));let n=1;while(used.has(`第${n}艦隊`))n++;
+  const f={id:uid(),name:`第${n}艦隊`,side:"P",node:p.id,ships:[makeShip(0,"P")],moved:true};S.fleets.push(f);S.selFleet=f.id;log(`${f.name}を${p.name}で編成。`);render()}
+
+function intruder(f){return S.fleets.find(x=>x.node===f.node&&(x.side==="M"||(x.side==="E"&&!S.truce)))}
+function intercept(f){const ef=intruder(f);if(!ef)return;f.moved=true;log(`${f.name}が${ef.name}を迎撃。`);startBattle({kind:"fleet",pf:f,ef,node:f.node,attack:true})}
+function onPlanetClick(id){
+  if(ANIM.busy)return;
+  const f=S.fleets.find(x=>x.id===S.selFleet);
+  if(S.mode==="move"&&f&&!f.moved){
+    const adj=neighbors(f.node).includes(id);
+    const warp=planet(id).owner==="P"&&id!==f.node;
+    if(adj||warp){S.mode=null;orderMove(f,id,!adj);return}
+  }
+  S.sel=id;S.mode=null;
+  const mine=fleetsAt(id,"P");if(mine.length&&!mine.some(x=>x.id===S.selFleet))S.selFleet=mine[0].id;
+  render();
+}
+function onPlanetRight(id){
+  if(ANIM.busy||S.over)return;
+  if(S.mode==="move"){S.mode=null;render();return}
+  const f=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");if(!f||f.moved||f.node===id)return;
+  const adj=neighbors(f.node).includes(id),warp=planet(id).owner==="P";
+  if(adj||warp)orderMove(f,id,!adj);
+}
+/* 星図・戦術マップのツールチップ（マウス操作時のみ） */
+function showTip(nodes,e){const t=$("tip");if(!nodes){t.hidden=true;return}t.replaceChildren(...nodes);t.hidden=false;moveTip(e)}
+function moveTip(e){const t=$("tip");if(t.hidden)return;const w=t.offsetWidth,hh=t.offsetHeight;let x=e.clientX+16,y=e.clientY+14;if(x+w>innerWidth-8)x=e.clientX-w-12;if(y+hh>innerHeight-8)y=innerHeight-hh-8;t.style.left=x+"px";t.style.top=y+"px"}
+function hideTip(){const t=$("tip");if(t)t.hidden=true}
+const tl=(k,v)=>h("div",{class:"tl"},h("span",null,k),h("span",null,v));
+function planetTip(p){
+  const out=[h("b",{style:`color:${ownerColor(p.owner)}`},p.name),h("span",{class:"hint"},`${OWNER_LABEL[p.owner]}${p.trait!=="なし"?`・${p.trait}`:""}`)];
+  if(p.id!==HIVE){out.push(tl("収入",planetIncome(p)),tl("防衛力",`${p.def}/${p.maxDef}`));if(p.slots)out.push(tl("施設",p.fac.length?p.fac.map(k=>FAC[k].name).join("・"):`なし（空き${p.slots}）`))}
+  const fl=S.fleets.filter(f=>f.node===p.id);
+  if(fl.length){out.push(h("hr"));for(const f of fl)out.push(h("div",{class:"tl"},h("span",{style:`color:${f.side==="P"?"var(--ally)":f.side==="E"?"var(--foe)":"var(--xeno)"}`},`${f.name}${f.side==="E"?`〈${docOf(f).tag}〉`:""}`),h("span",null,`${f.ships.length}隻・戦力${Math.round(fleetPower(f))}${f.side==="P"?`・${formOf(f).name}`:""}${f.side==="P"&&f.moved?"・行動済":""}`)))}
+  const sf=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");
+  if(sf&&!sf.moved&&sf.node!==p.id&&!S.over){
+    const adj=neighbors(sf.node).includes(p.id),warp=!adj&&p.owner==="P";
+    if(adj||warp){const foes=S.fleets.filter(x=>x.node===p.id&&(x.side==="E"||x.side==="M"));
+      const what=S.truce&&(p.owner==="E"||fleetsAt(p.id,"E").length)?"休戦中のため進めない":foes.length?`艦隊戦（${foes[0].name}）`:p.owner==="H"?"巣への突入戦":p.owner!=="P"?"惑星攻略戦":warp?"亜空間移動":"移動";
+      out.push(h("hr"),h("span",{class:"act"},`右クリック：${sf.name}が${what}`))}
+  }
+  return out;
+}
+function unitTip(u){
+  const out=[h("b",{style:`color:${u.side==="P"?"var(--ally)":u.xeno?"var(--xeno)":"var(--foe)"}`},(u.flag?"★":"")+u.name),
+    tl("耐久",`${Math.ceil(u.hp)}/${u.maxHp}`),tl("装甲・移動",`${u.armor}・${u.move}`),
+    tl("武装",u.w.map(w=>`${w.n}${w.d}(${w.min}${w.max>w.min?`〜${w.max}`:""})`).join(" "))];
+  if(u.core)out.push(h("span",{class:"hint"},"爆装でしか壊せない"));
+  else if(u.xeno)out.push(h("span",{class:"hint"},u.neo?"弱点：正面":"弱点：側面"));
+  else if(!u.sat)out.push(h("span",{class:"hint"},"弱点：背面・側面"));
+  const sel=B.sel&&B.units.find(v=>v.uid===B.sel);
+  if(u.side==="E"&&sel&&!sel.acted&&B.phase==="P"&&!B.busy){const a=bestAttack(B.hover?{...sel,x:B.hover[0],y:B.hover[1]}:sel,u);
+    out.push(h("hr"),h("span",{class:"act"},a?`${B.hover?"移動後に":""}${a.w.n}で ${a.dmg} ダメージ${a.zone&&a.zone!=="正面"?`（${a.zone}）`:""}`:"射程外"))}
+  return out;
+}
+async function orderMove(f,to,isWarp){
+  const p=planet(to);
+  if(S.truce&&(p.owner==="E"||fleetsAt(to,"E").length)){toast("ヴァルガ帝国とは休戦中です。異生体を先に叩きましょう。");render();return}
+  f.moved=true;S.sel=to;
+  setBusy(true);try{await animateFleetMove(f,f.node,to,isWarp)}finally{setBusy(false)}
+  const foes=S.fleets.filter(x=>x.node===to&&(x.side==="E"||x.side==="M"));
+  if(foes.length){
+    log(`${f.name}、${p.name}で${foes[0].name}と交戦開始。`);
+    startBattle({kind:"fleet",pf:f,ef:foes[0],node:to,attack:true});return;
+  }
+  if(p.owner!=="P"){
+    log(`${f.name}、${p.name}へ攻撃を開始。`);
+    startBattle({kind:p.owner==="H"?"hive":"planet",pf:f,planet:p,node:to,attack:true});return;
+  }
+  f.node=to;log(`${f.name}、${isWarp?"亜空間移動で":""}${p.name}へ移動。`);render();
+}
+
+/* ============ 造船・改装 ============ */
+function openModal(build){hideTip();const card=$("modalCard");card.className="card";card.replaceChildren();build(card);$("modal").hidden=false;card.querySelector("button")?.focus()}
+function closeModal(){$("modal").hidden=true;render()}
+function openRefit(f){
+  openModal(card=>{
+    card.append(h("h2",null,`${f.name} 改装`),h("p",{class:"hint"},"艦ごとに搭載能力ポイントを振り分けます。主砲は射程1〜2、ミサイルは射程2〜4、爆装は惑星中枢・巣への攻撃に必須。機関は戦闘時の移動力。"));
+    card.classList.add("wide");
+    const wrap=h("div",{class:"refit-list",style:"display:flex;flex-direction:column;gap:8px"});card.append(wrap);
+    const draw=()=>{wrap.replaceChildren();
+      f.ships.forEach((s,i)=>{
+        const c=CLASSES[s.cls],used=Object.values(s.a).reduce((a,b)=>a+b,0),cap=capOf("P");
+        const st=shipStats(s);
+        const alloc=h("div",{class:"alloc"});
+        for(const[k,lab]of STATS){
+          alloc.append(h("span",null,lab),
+            h("button",{"aria-label":`${lab}を下げる`,disabled:s.a[k]<=0,onclick:()=>{s.a[k]--;draw()}},"−"),
+            h("div",{class:"pips"},...Array.from({length:cap},(_,j)=>h("i",{class:j<s.a[k]?"on":""}))),
+            h("button",{"aria-label":`${lab}を上げる`,disabled:s.a[k]>=cap||used>=c.pts,onclick:()=>{s.a[k]++;draw()}},"＋"),
+            h("span",{class:"stat"},s.a[k]));
+        }
+        wrap.append(h("div",{class:"refit-ship"},
+          h("div",{style:"display:flex;flex-direction:column;gap:4px;align-items:center"},shipSvg(s.cls,96,64),h("span",{class:"hint"},c.code)),
+          h("div",{style:"display:flex;flex-direction:column;gap:6px;min-width:0"},
+            h("div",{class:"row",style:"justify-content:space-between"},h("b",null,`${i===0?"★旗艦 ":""}${c.name}`),h("span",{class:"stat"},`残り ${c.pts-used}/${c.pts}`)),
+            alloc,
+            h("div",{class:"derived"},`耐久 ${s.hp}/${s.maxHp}・移動 ${st.move}・主砲 ${st.cannon}・ミサイル ${st.missile||"—"}・爆装 ${st.bomb||"—"}`),
+            i>0?h("div",null,h("button",{onclick:()=>{f.ships.splice(i,1);f.ships.unshift(s);draw()}},"旗艦に指定")):null)));
+      });
+    };
+    draw();
+    card.append(h("div",{class:"row",style:"justify-content:flex-end"},h("button",{class:"primary",onclick:closeModal},"完了")));
+  });
+}
+/* 陣形の選択（行動は消費しない）。図は左が自軍、右が敵 */
+function formDiagram(key,n){
+  const pos=FORM[key].pos.slice(0,Math.max(1,n)),g=h("div",{class:"form-grid","aria-hidden":"true"});
+  for(let y=0;y<BH;y++)for(let x=0;x<5;x++){const i=pos.findIndex(([a,b])=>a===x&&b===y);g.append(h("i",{class:i<0?"":i===0?"flag":"ship"},i===0?"★":i>0?"●":""))}
+  return g;
+}
+function openFormation(f){
+  openModal(card=>{
+    card.append(h("h2",null,`${f.name} 陣形`),h("p",{class:"hint"},"戦闘開始時の並びと補正が変わります。いつでも変更でき、行動は消費しません。図の右側が敵陣です。"));
+    const wrap=h("div",{style:"display:flex;flex-direction:column;gap:6px"});card.append(wrap);
+    const draw=()=>{wrap.replaceChildren(...FORM_KEYS.map(k=>h("button",{class:"form-opt"+(formKey(f)===k?" primary":""),"aria-pressed":formKey(f)===k,onclick:()=>{f.form=k;draw()}},
+      formDiagram(k,f.ships.length),h("span",{class:"form-txt"},h("b",null,FORM[k].name),h("span",{class:"hint"},FORM[k].tip)))))};
+    draw();
+    card.append(h("div",{class:"row",style:"justify-content:flex-end"},h("button",{class:"primary",onclick:closeModal},"完了")));
+  });
+}
+function openYard(f){
+  openModal(card=>{
+    const yp=planet(f.node);card.classList.add("wide");
+    const draw=()=>{card.replaceChildren(h("h2",null,`造船所：${f.name}`),h("p",{class:"hint"},`資金 ${S.funds}。艦隊は最大4隻。旧艦は置換すると建造費の半額で下取りします。${yp.trait==="工業"?"工業惑星のため建造費20%引き。":""}`));
+      const grid=h("div",{class:"classes"});
+      CLASSES.forEach((c,ci)=>{
+        // 開発済みの艦と、いま開発中の次の1隻だけを見せる（それより先は秘密）
+        if(ci>S.tier+1||(ci===S.tier+1&&!researchOpen()))return;
+        const locked=ci>S.tier;
+        const el=h("div",{class:"cls"+(locked?" next":"")},shipSvg(ci,150,56),h("b",null,c.name),h("span",{class:"hint"},`${c.type}・耐久${c.hp}・P${c.pts}${c.anti?"・対異生体":""}`),h("span",{class:"stat"},locked?`開発中 ${S.research}/${c.research}`:`建造 ${bcost(ci,yp)}`));
+        if(!locked){
+          const cc=bcost(ci,yp);
+          el.append(h("button",{disabled:f.ships.length>=4||S.funds<cc,onclick:()=>{S.funds-=cc;f.ships.push(makeShip(ci,"P"));log(`${f.name}に${c.name}を配備。`);draw()}},"追加建造"));
+          const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<f.ships[m].cls)?i:m,-1);
+          if(worst>=0){const refund=Math.floor(CLASSES[f.ships[worst].cls].cost/2);
+            el.append(h("button",{disabled:S.funds+refund<cc,onclick:()=>{S.funds+=refund-cc;const old=f.ships[worst];f.ships[worst]=makeShip(ci,"P");log(`${CLASSES[old.cls].name}を${c.name}に置換。`);draw()}},`旧艦と置換（実費 ${cc-refund}）`))}
+        }
+        grid.append(el);
+      });
+      card.append(grid,h("div",{class:"row",style:"justify-content:flex-end"},h("button",{class:"primary",onclick:closeModal},"閉じる")));
+    };
+    draw();
+  });
+}
+
+/* ============ 通信・ヘルプ ============ */
+function showComm(lines,after,showCls,art){
+  openModal(card=>{
+    card.append(h("h2",null,"通信"));
+    const pic=showCls!=null?`show_${SHIP_ART[showCls]}`:art;
+    if(pic)card.append(h("img",{class:"keyart",src:`${ART}${pic}.webp`,alt:""}));
+    for(const l of lines){const f=FACE[l.who];
+      card.append(h("div",{class:"comm "+(l.cls||"")+(f?" has-face":"")},f?h("img",{class:"face",src:`${ART}face_${f}.webp`,alt:l.who}):null,h("div",{class:"comm-body"},h("span",{class:"speaker"},l.who),h("p",null,l.text))));}
+    card.append(h("div",{class:"row",style:"justify-content:flex-end"},h("button",{class:"primary",onclick:()=>{$("modal").hidden=true;render();after&&after()}},"了解")));
+  });
+}
+function toast(t){log(t);render()}
+function showIntro(){
+  showComm([
+    {who:"総司令部",text:"星暦3990年、辺境星系。隣国ヴァルガ帝国が国境のクオン星系に艦隊を集結させています。元首閣下、我が国アステリアの舵取りをお願いします。"},
+    {who:"作戦参謀",text:"星図の惑星を選び、右の指令パネルから命令を出します。艦隊は1ターンに1回、隣の星へ移動するか、自国の星へ亜空間移動できます。敵のいる星へ進むと戦術戦闘になります。"},
+    {who:"技術局",text:"資金を研究に投資すれば新型艦が完成します。完成した艦は「造船」で配備し、「改装」でポイントを振り分けてください。惑星の中枢は爆装でしか壊せません。"},
+    {who:"作戦参謀",text:"戦闘は旗艦（★）を沈めた側の勝ちです。艦を選ぶと青いマスが移動先、赤いマスが射程として表示されます。敵をタップするとその敵の射程、「敵の射程」ボタンで敵全体の射程が見えます。敵艦の背後や側面から撃つと大きな損害を与えられます。ヴァルガの艦隊は突撃・砲撃・重装・強襲など戦い方がそれぞれ違うので、戦闘前のヒントを確かめてください。主星アステリアを奪われたら敗北です。"}
+  ],null,null,"key_title");
+}
+
+/* ============ ターン処理 ============ */
+async function endTurn(){
+  if(S.over||B||ANIM.busy)return;
+  S.mode=null;setBusy(true);
+  try{
+    render();
+    await banner("ターン終了",`星暦${3989+S.turn}年 ── 敵軍の行動`,"W",950);
+    const inc=income();S.funds+=inc;
+    const lr=researchOpen()?labRate():0;
+    S.fleets.forEach(f=>{if(f.side==="P")f.moved=false});
+    S.planets.forEach(p=>{if(p.owner==="P"&&p.def<p.maxDef)p.def=Math.min(p.maxDef,p.def+3)});
+    S.turn++;S.enemyTier=Math.min(3,Math.floor((S.turn-1)/6));
+    log(`ターン${S.turn}開始。収入 +${inc}${lr?`、研究 +${lr}`:""}。`);
+    const queue=[];
+    ANIM.enemyTurn=true;setFfwd(true);render();
+    // ヴァルガ帝国
+    if(!S.truce&&planet(CAPITAL).owner==="E"){
+      if(S.turn%3===0&&S.fleets.filter(f=>f.side==="E").length<3){
+        const nf=vargaFleet(null,CAPITAL,3+(S.turn>10?1:0));S.fleets.push(nf);
+        log(`ヴァルガ帝国が新たな${DOC[nf.doc].name}を本星に配備。`);render();await mapBurst(CAPITAL,"#ea5a4f");
+      }
+    }
+    if(!S.truce){
+      for(const f of S.fleets.filter(x=>x.side==="E")){
+        if(!S.fleets.includes(f))continue;
+        const doc=f.doc||"line";
+        if(f.node===CAPITAL&&S.fleets.filter(x=>x.side==="E"&&x.node===CAPITAL).length===1&&Math.random()<(doc==="heavy"?.8:.5))continue; // 本星守備
+        // 強襲戦隊は1ターンに2星進む（自国領を通り抜けるときだけ）
+        for(let step=0;step<(doc==="raid"?2:1);step++){
+          const path=vargaPath(f);if(!path)break;const to=path[0];
+          const pf=fleetsAt(to,"P")[0];
+          if(pf){
+            // 突撃戦隊以外は、明らかに強い相手には仕掛けずに様子を見ることがある
+            if(doc!=="assault"&&fleetPower(pf)>fleetPower(f)*1.4&&Math.random()<.7){log(`${f.name}は${planet(f.node).name}で様子をうかがっている。`);break}
+            await mapBurst(to,"#ea5a4f");queue.push({kind:"fleet",pf,ef:f,node:to,attack:false});break;
+          }
+          await animateFleetMove(f,f.node,to);
+          const was=planet(to).owner;f.node=to;siege(f,planet(to));render();
+          if(was!=="E"){await mapBurst(to,"#ea5a4f");break}
+        }
+      }
+    }
+    // 異生体
+    if(S.monster){
+      if(S.respawn>0&&S.fleets.filter(f=>f.side==="M").length<(S.evolved?3:2)&&planet(HIVE).owner==="H"){S.respawn--;spawnXeno();log("深淵の巣から異生体の群れが再び湧き出した。");render();await mapBurst(HIVE,"#b974ff")}
+      for(const f of S.fleets.filter(x=>x.side==="M")){
+        for(let step=0;step<2;step++){
+          const path=bfsPath(f.node,n=>n!==HIVE&&planet(n).owner!=="M");if(!path)break;const to=path[0];
+          const pf=fleetsAt(to,"P")[0];
+          if(pf){if(!queue.some(q=>q.ef===f)){await mapBurst(to,"#b974ff");queue.push({kind:"fleet",pf,ef:f,node:to,attack:false})}break}
+          await animateFleetMove(f,f.node,to);
+          f.node=to;
+          fleetsAt(to,"E").forEach(ef=>{S.fleets=S.fleets.filter(x=>x!==ef);log(`${ef.name}が異生体に呑み込まれた。`)});
+          const p=planet(to);
+          if(p.owner!=="M"&&p.owner!=="H"){siege(f,p);render();await mapBurst(to,"#b974ff");break}
+          render();
+        }
+      }
+    }
+    ANIM.enemyTurn=false;ANIM.fast=false;setFfwd(false);
+    checkMonsterTrigger();
+    render();
+    for(const q of queue){
+      if(!S.fleets.includes(q.pf)||!S.fleets.includes(q.ef)||S.over)continue;
+      if(q.pf.node!==q.node)continue;
+      log(`${q.ef.name}が${planet(q.node).name}の${q.pf.name}に襲いかかる！`);
+      await startBattle(q);
+    }
+    checkLoss();
+    if(!S.over){
+      if(lr){S.research+=lr;checkResearch()}
+      render();
+      await banner(`ターン ${S.turn}`,`星暦${3989+S.turn}年　収入 +${inc}${lr?`・研究 +${lr}`:""}`,"P",1150);
+    }
+  }finally{ANIM.enemyTurn=false;setFfwd(false);setBusy(false);render()}
+}
+/* ヴァルガ艦隊の進路：ドクトリンごとに狙いが違う */
+function vargaPath(f){
+  const avoid=n=>n===HIVE||planet(n).owner==="M";
+  const doc=f.doc||"line";
+  if(doc==="raid"){ // 艦隊のいない、防衛力の低い自国の星を狙う
+    const ts=S.planets.filter(p=>p.owner==="P"&&!fleetsAt(p.id,"P").length).sort((a,b)=>a.def-b.def);
+    for(const t of ts){const p=bfsPath(f.node,n=>n===t.id,avoid);if(p&&p.length<=4)return p}
+  }
+  if(doc==="missile"){ // 近くにいる、自分より弱い艦隊を狩る
+    const pow=fleetPower(f);
+    const p=bfsPath(f.node,n=>fleetsAt(n,"P").some(x=>fleetPower(x)<pow),avoid);if(p&&p.length<=3)return p;
+  }
+  return bfsPath(f.node,n=>planet(n).owner==="P"||planet(n).owner==="N",avoid);
+}
+function siege(f,p){
+  if(p.owner===f.side)return false;
+  const pow=fleetPower(f);
+  if(p.owner==="N"&&f.side==="E"){p.owner="E";p.def=Math.max(10,p.def);log(`${p.name}がヴァルガ帝国に併合された。`);return true}
+  if(pow>p.def){
+    const was=p.owner;p.owner=f.side;p.def=f.side==="M"?20:10;p.maxDef=Math.max(p.maxDef,p.def);if(f.side==="M"){p.fac=[];syncFac(p);p.def=20}
+    log(f.side==="M"?`${p.name}が異生体に浸食された！`:`${p.name}が${OWNER_LABEL[f.side]}に占領された！`);
+    if(was==="P"&&p.id===HOME)checkLoss();return true;
+  }
+  p.def-=Math.ceil(pow/2);const fl=p.owner==="P"&&hasF(p,"flak")?.7:.85;f.ships.forEach(s=>s.hp=Math.max(1,Math.round(s.hp*fl)));
+  if(p.owner==="P")log(`${p.name}が攻撃を受けた（防衛力 ${p.def}）。`);
+  return false;
+}
+function spawnXeno(){const ships=[makeXeno("brood"),makeXeno("drone"),makeXeno("drone")];if(S.evolved)ships.push(makeXeno("drone"));S.fleets.push({id:uid(),name:"異生体の群れ",side:"M",node:HIVE,ships})}
+function checkMonsterTrigger(){
+  if(S.monster)return;
+  if(planet(CAPITAL).owner==="P"||S.turn>=18){
+    S.monster=true;S.truce=planet(CAPITAL).owner==="E";
+    spawnXeno();spawnXeno();S.funds+=150;
+    const ruins=S.planets.filter(p=>p.owner==="P"&&p.trait==="遺跡"&&hasF(p,"lab"));
+    if(ruins.length){S.research+=150*ruins.length;log(`${ruins.map(p=>p.name).join("・")}の遺跡研究所が異生体の記録を発見。セラフ級の研究 +${150*ruins.length}。`)}
+    S.fleets.filter(f=>f.side==="E").forEach(f=>f.name=f.name.replace("ヴァルガ","休戦中のヴァルガ"));
+    log("北東宙域に未知の生命反応。異生体「ゾア」出現！");sfx("roar");
+    const lines=[
+      {who:"観測所",text:"緊急通信！北東の暗黒宙域に巨大な生命反応。艦船サイズの生物が群れを成し、星系へ向かっています！",cls:"xeno"},
+      {who:"技術局",text:"既存の艦砲では外殻を抜くのが困難です。ただし解析の結果、外殻は側面が薄いことが分かりました。対異生体戦艦「セラフ級」の開発に着手できます。"},
+      {who:"作戦参謀",text:"群れは深淵の巣から何度でも湧いてきます。巣の中枢を爆装で破壊しない限り終わりません。議会が緊急予算150を承認しました。"}];
+    if(S.truce)lines.splice(1,0,{who:"ヴァルガ皇帝",text:"……アステリアの元首よ。あれは人類全体の敵だ。今は矛を収めよう。",cls:"foe"});
+    showComm(lines,null,null,"key_xeno");
+  }
+}
+function checkLoss(){if(planet(HOME).owner!=="P"&&!S.over){S.over="lose";showEnd(false)}}
+function showEnd(win){sfx(win?"win":"sad");
+  openModal(card=>{
+    card.append(h("img",{class:"keyart",src:`${ART}key_${win?"victory":"defeat"}.webp`,alt:""}),h("h2",null,win?"深淵の巣、陥落":"アステリア陥落"),
+      h("p",null,win?`星暦${3989+S.turn}年、異生体ゾアの巣は崩れ落ちた。辺境星系に再び静けさが戻る。総ターン数 ${S.turn}。`:"主星が奪われ、アステリアは歴史から姿を消した。"),
+      h("div",{class:"row",style:"justify-content:flex-end"},h("button",{class:"primary",onclick:()=>{$("modal").hidden=true;newGame();render()}},"もう一度遊ぶ")));
+  });
+}
+
+/* ============ 戦術戦闘 ============ */
+function shipStats(s){const a=s.a;return{move:1+a.sp,cannon:3+a.ca*2,missile:a.mi>0?Math.round(2+a.mi*1.5):0,bomb:a.bo>0?4+a.bo*3:0,armor:a.sh}}
+function unitFromShip(s,side,i,doc){
+  const st=shipStats(s);const w=[{n:"主砲",d:st.cannon,min:1,max:2,unit:true}];
+  if(st.missile)w.push({n:"ミサイル",d:st.missile,min:2,max:4,unit:true});
+  if(st.bomb)w.push({n:"爆装",d:st.bomb,min:1,max:1,core:true});
+  const D=DOC[doc]||DOC.line;
+  return{uid:uid(),ref:s,side,cls:s.cls,name:CLASSES[s.cls].name,hp:s.hp,maxHp:s.maxHp,armor:st.armor,move:st.move,w,flag:i===0,anti:!!CLASSES[s.cls].anti,dir:side==="P"?0:2,
+    role:side==="P"?null:i===0?D.flagRole:D.role};
+}
+function unitFromXeno(s,i){
+  const brood=s.xeno==="brood";
+  return{uid:uid(),ref:s,side:"E",xeno:true,neo:s.neo,name:(brood?"ゾア・ブルード":"ゾア・ドローン")+(s.neo?"改":""),hp:s.hp,maxHp:s.maxHp,armor:brood?3:2,move:brood?3:4,
+    w:[{n:brood?"酸弾":"牙",d:brood?7:6,min:1,max:brood?2:1,unit:true}],flag:i===0,dir:2,role:brood?"assault":"flank"};
+}
+/* 異生体の群れの陣形（毎回どれか） */
+const XENO_FORMS=[[[9,3],[9,1],[9,5],[10,4]],[[9,3],[6,0],[6,6],[10,1]],[[10,3],[8,1],[8,5],[7,3]]];
+function startBattle(cfg){
+  return new Promise(resolve=>{
+    const units=[];
+    const fm=formKey(cfg.pf),pos=FORM[fm].pos;
+    cfg.pf.ships.forEach((s,i)=>{const u=unitFromShip(s,"P",i);[u.x,u.y]=pos[i];if(fm==="wedge"){u.move++;u.rush=true}units.push(u)});
+    let title,tip,foeSide="E";
+    if(cfg.kind==="fleet"){
+      const ef=cfg.ef,mirror=Math.random()<.5;
+      const form=ef.side==="M"?XENO_FORMS[Math.floor(Math.random()*XENO_FORMS.length)]:docOf(ef).form;
+      ef.ships.forEach((s,i)=>{const u=s.xeno?unitFromXeno(s,i):unitFromShip(s,"E",i,ef.doc);const[x,y]=form[i];u.x=x;u.y=mirror?BH-1-y:y;units.push(u)});
+      title=`${planet(cfg.node).name}宙域 ${cfg.pf.name} 対 ${ef.name}`;
+      if(ef.side==="M"){foeSide="M";tip=S.evolved?"異生体（改）は正面が弱点。":"異生体は側面が弱点。ドローンは回り込んでくる。"}
+      else tip=`${docOf(ef).name}：${docOf(ef).tip}敵の旗艦★を沈めれば勝利。`;
+    }else{
+      const p=cfg.planet,isHive=cfg.kind==="hive",isNest=p.owner==="M";
+      if(isHive||isNest)foeSide="M";
+      const core={uid:uid(),side:"E",core:true,name:isHive?"巣の中枢":isNest?"浸食核":`${p.name}中枢`,hp:isHive?150:isNest?36:16+p.def,armor:0,move:0,
+        w:[{n:"迎撃砲",d:isHive?7:5,min:1,max:3,unit:true}],flag:true,x:9,y:3,dir:2,xeno:isHive||isNest};
+      core.maxHp=core.hp;units.push(core);
+      if(isHive||isNest){
+        const xs=isHive?[makeXeno("brood"),makeXeno("drone"),makeXeno("drone")]:[makeXeno("drone"),makeXeno("drone")];
+        xs.forEach((s,i)=>{const u=unitFromXeno(s,1);u.flag=false;[u.x,u.y]=[[8,2],[8,4],[7,3]][i];units.push(u)});
+      }else{
+        const n=Math.min(6,1+Math.floor(p.def/14)+(hasF(p,"sats")?(p.trait==="要塞"?2:1):0));
+        [[8,2],[8,4],[9,1],[9,5],[10,2],[10,4]].slice(0,n).forEach(([x,y])=>units.push({uid:uid(),side:"E",sat:true,name:"防衛衛星",hp:9,maxHp:9,armor:1,move:0,w:[{n:"衛星砲",d:4,min:1,max:2,unit:true}],x,y,dir:2}));
+      }
+      title=isHive?"深淵の巣 突入戦":`${p.name} 攻略戦`;
+      tip="中枢★は爆装でしか破壊できない。中枢を落とせば占領。";
+    }
+    // 艦隊戦の宙域には、ときどき小惑星（通れないマス）がある
+    const rocks=new Set();
+    if(cfg.kind==="fleet"&&Math.random()<.75){
+      const n=2+Math.floor(Math.random()*4);let g=0;
+      while(rocks.size<n&&g++<60){const x=3+Math.floor(Math.random()*5),y=Math.floor(Math.random()*BH);if(!units.some(u=>u.x===x&&u.y===y))rocks.add(`${x},${y}`)}
+      if(rocks.size)tip+="灰色の小惑星は通れない。";
+    }
+    const msg=[];const dp=planet(cfg.node);
+    if(fm!=="line")msg.push(`陣形「${FORM[fm].name}」：${FORM[fm].tip}`);
+    if(cfg.kind==="fleet"&&!cfg.attack&&dp.owner==="P"&&hasF(dp,"flak")){units.forEach(u=>{if(u.side==="E")u.hp=Math.max(1,u.hp-5)});msg.push(`${dp.name}の対空砲台が敵艦隊を迎撃（全艦に5ダメージ）`)}
+    B={cfg,units,form:fm,phase:"P",round:1,sel:null,inspect:null,hover:null,danger:false,rocks,foeSide,title,tip,resolve,msg,busy:true};
+    ANIM.fast=false;hideTip();
+    $("battle").hidden=false;renderBattle();render();setMusic(musicFor());
+    banner("自軍フェイズ",`ROUND 1 ── ${foeSide==="M"?"異生体と交戦":"交戦開始"}`,"P",1050).then(()=>{
+      if(!B||B.ended)return;B.busy=false;
+      const first=B.units.find(u=>u.side==="P"&&u.flag);B.sel=first?first.uid:null;renderBattle();
+    });
+  });
+}
+const DIRS=[[1,0],[0,1],[-1,0],[0,-1]];
+function unitAt(x,y){return B.units.find(u=>u.hp>0&&u.x===x&&u.y===y)}
+function isRock(x,y){return!!(B&&B.rocks&&B.rocks.has(`${x},${y}`))}
+function dist(a,b){return Math.abs(a.x-b.x)+Math.abs(a.y-b.y)}
+function reach(u){
+  const res=new Map([[`${u.x},${u.y}`,0]]),q=[[u.x,u.y,0]];
+  while(q.length){const[x,y,d]=q.shift();if(d>=u.move)continue;
+    for(const[dx,dy]of DIRS){const nx=x+dx,ny=y+dy,k=`${nx},${ny}`;if(nx<0||ny<0||nx>=BW||ny>=BH||res.has(k)||unitAt(nx,ny)||isRock(nx,ny))continue;res.set(k,d+1);q.push([nx,ny,d+1])}}
+  res.delete(`${u.x},${u.y}`);return[...res.keys()].map(k=>k.split(",").map(Number));
+}
+/* (x,y) までの最短経路（移動アニメーション用）。始点は含まない */
+function bpath(u,x,y){
+  const prev=new Map([[`${u.x},${u.y}`,null]]),q=[[u.x,u.y]];
+  while(q.length){const[cx,cy]=q.shift();if(cx===x&&cy===y)break;
+    for(const[dx,dy]of DIRS){const nx=cx+dx,ny=cy+dy,k=`${nx},${ny}`;if(nx<0||ny<0||nx>=BW||ny>=BH||prev.has(k)||isRock(nx,ny))continue;const o=unitAt(nx,ny);if(o&&o!==u)continue;prev.set(k,[cx,cy]);q.push([nx,ny])}}
+  const out=[];let c=prev.has(`${x},${y}`)?[x,y]:null;
+  while(c&&!(c[0]===u.x&&c[1]===u.y)){out.unshift(c);c=prev.get(`${c[0]},${c[1]}`)}
+  return out.length?out:[[x,y]];
+}
+/* 武装の射程に入るマス（from は位置の一覧） */
+function rangeCells(u,from,weapons){
+  const out=new Set(),ws=weapons||u.w;
+  for(const[fx,fy]of from)for(let y=0;y<BH;y++)for(let x=0;x<BW;x++){const d=Math.abs(x-fx)+Math.abs(y-fy);if(ws.some(w=>d>=w.min&&d<=w.max))out.add(`${x},${y}`)}
+  return out;
+}
+/* 敵1体の脅威範囲：移動先すべてから撃てるマス */
+function threatOf(e){return rangeCells(e,[[e.x,e.y],...(e.move>0?reach(e):[])],e.w.filter(w=>w.unit))}
+function zone(att,t){
+  const[fx,fy]=DIRS[t.dir],dx=att.x-t.x,dy=att.y-t.y,along=dx*fx+dy*fy,side=Math.abs(dx*-fy+dy*fx);
+  if(along>0&&along>=side)return"正面";if(along<0&&-along>=side)return"背面";return"側面";
+}
+function mult(att,t){
+  if(t.core||t.sat)return 1;
+  const z=zone(att,t);
+  if(t.xeno)return t.neo?{正面:1.6,側面:.9,背面:.9}[z]:{正面:.8,側面:1.6,背面:1}[z];
+  return{正面:1,側面:1.25,背面:1.6}[z];
+}
+function bestAttack(att,t){
+  const d=dist(att,t);let best=null;
+  for(const w of att.w){
+    if(d<w.min||d>w.max)continue;
+    if(t.core&&!w.core&&att.side==="P")continue;
+    if(!t.core&&!w.unit)continue;
+    const z=(t.core||t.sat)?"":zone(att,t),fm=B&&B.form;
+    let dmg=(w.d+(fm==="rear"&&att.side==="P"&&w.n==="ミサイル"?1:0))*mult(att,t)*(att.anti&&t.xeno?1.5:1)*(10/(10+2*t.armor));
+    // 陣形の補正：鶴翼は側面・背面への攻撃+15%、方陣は隣に味方がいる旗艦の被ダメージ-25%
+    if(fm==="crane"&&att.side==="P"&&z&&z!=="正面")dmg*=1.15;
+    if(fm==="square"&&t.side==="P"&&t.flag&&B.units.some(u=>u!==t&&u.side==="P"&&u.hp>0&&dist(u,t)===1))dmg*=.75;
+    dmg=Math.max(1,Math.round(dmg));
+    if(!best||dmg>best.dmg)best={w,dmg,zone:z};
+  }
+  return best;
+}
+function face(u,tx,ty){const dx=tx-u.x,dy=ty-u.y;if(!dx&&!dy)return;u.dir=Math.abs(dx)>=Math.abs(dy)?(dx>0?0:2):(dy>0?1:3)}
+function bmsg(t){B.msg.unshift(t);if(B.msg.length>8)B.msg.pop()}
+async function doAttack(att,t,a){
+  face(att,t.x,t.y);att.acted=true;renderBattle();
+  await animateShot(att,t,a);
+  t.hp=Math.max(0,t.hp-a.dmg);
+  bmsg(`${att.name}の${a.w.n}${a.zone?`（${a.zone}）`:""} → ${t.name}に${a.dmg}ダメージ${t.hp<=0?"、撃沈！":""}`);
+  const killed=t.hp<=0;if(killed)t.hp=.0001;renderBattle();
+  await animateImpact(t,killed,a,att);if(killed)t.hp=0;
+  renderBattle();
+}
+async function doMove(u,x,y){const fx=u.x,fy=u.y,path=bpath(u,x,y);face(u,x,y);u.x=x;u.y=y;u.acted=true;await animateMove(u,fx,fy,path)}
+function battleOver(){
+  const pf=B.units.find(u=>u.side==="P"&&u.flag);
+  const ef=B.units.find(u=>u.side==="E"&&u.flag);
+  if(!pf||pf.hp<=0)return"lose";
+  if(!ef||ef.hp<=0)return"win";
+  if(!B.units.some(u=>u.side==="E"&&u.hp>0))return"win";
+  return null;
+}
+function onCell(x,y){
+  if(!B||B.phase!=="P"||B.busy||B.ended)return;
+  const u=B.sel&&B.units.find(v=>v.uid===B.sel);
+  const tgt=unitAt(x,y);
+  B.hover=null;
+  if(u&&!u.acted){
+    if(tgt&&tgt.side==="E"){const a=bestAttack(u,tgt);if(a){B.sel=null;B.inspect=null;B.busy=true;doAttack(u,tgt,a).then(()=>{B.busy=false;afterPlayerAct()});return}}
+    if(!tgt&&reach(u).some(([a,b])=>a===x&&b===y)){B.sel=null;B.inspect=null;B.busy=true;doMove(u,x,y).then(()=>{B.busy=false;afterPlayerAct()});return}
+  }
+  // 攻撃できない敵をタップ：その敵の移動範囲と射程を表示
+  if(tgt&&tgt.side==="E"){B.inspect=B.inspect===tgt.uid?null:tgt.uid;B.sel=null;renderBattle();return}
+  B.inspect=null;
+  if(tgt&&tgt.side==="P"&&!tgt.acted){B.sel=tgt.uid}else B.sel=null;
+  renderBattle();
+}
+function onHover(x,y){
+  if(!B||B.phase!=="P"||B.busy||B.ended)return;
+  const u=B.sel&&B.units.find(v=>v.uid===B.sel);
+  const nh=x!=null&&u&&!u.acted&&reach(u).some(([a,b])=>a===x&&b===y)?[x,y]:null;
+  if((B.hover?B.hover.join():"")===(nh?nh.join():""))return;
+  B.hover=nh;renderBattle();
+}
+function afterPlayerAct(){
+  const r=battleOver();if(r)return finishBattle(r);
+  if(!B.units.some(u=>u.side==="P"&&u.hp>0&&!u.acted))return enemyPhase();
+  const nx=B.units.find(u=>u.side==="P"&&u.hp>0&&!u.acted);B.sel=nx?nx.uid:null;
+  renderBattle();
+}
+const wait=ms=>new Promise(r=>setTimeout(r,window.FAST||ANIM.fast?0:ms));
+/* 敵AI：役割（role）ごとに攻撃目標と移動先の好みが違う */
+function nearestOf(c,list){let b=null,bd=1e9;for(const t of list){const d=dist(c,t);if(d<bd){bd=d;b=t}}return[b,bd]}
+function enemyDecide(e){
+  const foes=B.units.filter(u=>u.side==="P"&&u.hp>0);if(!foes.length)return null;
+  const role=e.role||"assault";
+  let best=null;
+  for(const t of foes){const a=bestAttack(e,t);if(!a)continue;
+    let sc=a.dmg+(t.hp<=a.dmg?10:0);
+    if(role==="assault")sc+=t.flag?6:0;
+    else if(role==="sniper")sc+=(1-t.hp/t.maxHp)*6+(t.flag?3:0);
+    else if(role==="flank")sc+=(a.zone&&a.zone!=="正面"?5:0)+(t.flag?4:0);
+    else sc+=t.flag?4:0;
+    if(!best||sc>best.sc)best={t,a,sc}}
+  const tiles=e.move>0?reach(e):[];
+  if(best&&tiles.length){
+    // 回り込み役：正面からしか撃てず、とどめも刺せないなら、回り込みを優先することがある
+    if(role==="flank"&&best.a.zone==="正面"&&best.t.hp>best.a.dmg&&Math.random()<.5){const m=pickTile(e,tiles,foes,"flank");if(m)return{move:m}}
+    // 砲撃役：傷ついて接近されたら距離を取る
+    if(role==="sniper"&&e.hp<e.maxHp*.5&&foes.some(f=>dist(e,f)===1)&&Math.random()<.6){const m=pickTile(e,tiles,foes,"sniper");if(m)return{move:m}}
+  }
+  if(best)return{attack:best};
+  if(!tiles.length)return null;
+  const m=pickTile(e,tiles,foes,role);return m?{move:m}:null;
+}
+function pickTile(e,tiles,foes,role){
+  const flag=foes.find(u=>u.flag)||foes[0];
+  const own=B.units.find(u=>u.side==="E"&&u.flag&&u.hp>0);
+  const maxR=Math.max(1,...e.w.filter(w=>w.unit).map(w=>w.max));
+  const inRange=(c,t)=>{const d=dist(c,t);return e.w.some(w=>w.unit&&d>=w.min&&d<=w.max)};
+  const score=c=>{
+    const[nf,nd]=nearestOf(c,foes);
+    switch(role){
+      case"keep":return Math.max(0,4-nd)*3-(inRange(c,nf)&&nd>=3?1:0);
+      case"sniper":return(nd<2?6:nd>maxR?(nd-maxR)*1.2:(maxR-nd)*.3)-(inRange(c,nf)?1:0);
+      case"guard":
+        if(own&&own!==e&&nearestOf(own,foes)[1]>6)return Math.abs(dist(c,own)-1)*1.5+nd*.05;
+        return dist(c,nf)-(inRange(c,nf)?3:0);
+      case"flank":{const t=dist(e,flag)<=8?flag:nf,z=zone(c,t);return dist(c,t)+(z==="正面"?3:z==="側面"?0:-1)-(inRange(c,t)?2:0)}
+      default:return dist(c,flag)-(inRange(c,flag)?3:0);
+    }
+  };
+  const cur=score(e);let best=null;
+  for(const[x,y]of tiles){const sc=score({x,y})+Math.random()*.3;if(!best||sc<best.sc)best={x,y,sc}}
+  return best&&best.sc<cur-.05?best:null;
+}
+async function enemyPhase(){
+  if(!B||B.ended||B.phase==="E")return;
+  B.phase="E";B.sel=null;B.inspect=null;B.hover=null;B.busy=true;renderBattle();
+  await banner("敵軍フェイズ",`ROUND ${B.round}`,B.foeSide,950);
+  if(!B||B.ended)return;
+  setFfwd(true);
+  for(const e of B.units.filter(u=>u.side==="E"&&u.hp>0)){
+    if(!B||B.ended)return;
+    if(e.hp<=0)continue;
+    const d=enemyDecide(e);if(!d)continue;
+    B.actor=e.uid;renderBattle();await wait(300);
+    if(d.attack)await doAttack(e,d.attack.t,d.attack.a);else await doMove(e,d.move.x,d.move.y);
+    B.actor=null;renderBattle();
+    const r=battleOver();if(r){B.busy=false;setFfwd(false);ANIM.fast=false;return finishBattle(r)}
+    await wait(280);
+  }
+  setFfwd(false);ANIM.fast=false;
+  B.units.forEach(u=>{u.acted=false;if(u.rush){u.move--;u.rush=false}});B.round++;B.phase="P";renderBattle();
+  await banner("自軍フェイズ",`ROUND ${B.round}`,"P",950);
+  if(!B||B.ended)return;
+  B.busy=false;
+  const first=B.units.find(u=>u.side==="P"&&u.hp>0&&u.flag)||B.units.find(u=>u.side==="P"&&u.hp>0);B.sel=first?first.uid:null;
+  renderBattle();
+}
+function finishBattle(result){
+  if(B.ended)return;B.ended=true;B.result=result;B.sel=null;B.inspect=null;B.hover=null;sfx(result==="win"?"win":"sad");
+  bmsg(result==="win"?"勝利！":result==="retreat"?"撤退した。":"旗艦を失った……敗北。");
+  banner(result==="win"?"勝利":result==="retreat"?"撤退":"敗北",result==="win"?"敵旗艦を撃破":result==="retreat"?"主星へ帰還する":"旗艦喪失",result==="win"?"P":"E",1500);
+  renderBattle();
+}
+function closeBattle(){
+  const{cfg,units,result}=B;const pf=cfg.pf;
+  // 自軍の損害を反映
+  const survivors=[];
+  for(const s of pf.ships){const u=units.find(v=>v.ref===s);if(u&&u.hp>0){s.hp=u.hp;survivors.push(u)}}
+  // 旗艦が沈んだら次席へ
+  pf.ships=survivors.sort((a,b)=>(b.flag?1:0)-(a.flag?1:0)).map(u=>u.ref);
+  if(cfg.kind==="fleet"){
+    const ef=cfg.ef;
+    if(result==="win"){
+      S.fleets=S.fleets.filter(f=>f!==ef);
+      if(ef.side==="M"){S.respawn++;S.xenoKills++;
+        if(S.xenoKills>=3&&!S.evolved){S.evolved=true;setTimeout(()=>showComm([{who:"技術局",text:"異生体が進化しました！新たな個体は外殻の構造が変わり、正面が脆くなっています。側面狙いは通用しにくくなります。",cls:"xeno"}]),50)}}
+      log(`${pf.name}が${ef.name}を撃破！`);
+      if(cfg.attack&&!S.fleets.some(f=>f.node===cfg.node&&f.side!=="P"))pf.node=cfg.node;
+    }else{
+      const es=[];for(const s of ef.ships){const u=units.find(v=>v.ref===s);if(u&&u.hp>0){s.hp=u.hp;es.push(s)}}
+      ef.ships=es;if(!es.length)S.fleets=S.fleets.filter(f=>f!==ef);
+      log(`${pf.name}は${planet(HOME).name}へ撤退した。`);pf.node=HOME;
+      if(!cfg.attack&&S.fleets.includes(ef)){ef.node=cfg.node;siege(ef,planet(cfg.node))}
+    }
+  }else{
+    const p=cfg.planet;
+    if(result==="win"){
+      if(cfg.kind==="hive"){S.over="win";S.fleets=S.fleets.filter(f=>f.side!=="M");p.owner="P";pf.node=p.id;log("深淵の巣を破壊！");setTimeout(()=>showEnd(true),50)}
+      else{const was=p.owner;p.owner="P";p.def=10;p.maxDef=Math.max(14,p.maxDef);pf.node=p.id;log(`${p.name}を占領！`);
+        if(was==="E"&&p.id===CAPITAL)log("ヴァルガ本星が陥落した。");}
+    }else{log(`${pf.name}は攻略に失敗し${planet(HOME).name}へ撤退した。`);pf.node=HOME}
+  }
+  if(!pf.ships.length){S.fleets=S.fleets.filter(f=>f!==pf);log(`${pf.name}は全滅した。`)}
+  const res=B.resolve;B=null;hideTip();$("battle").hidden=true;$("banner").hidden=true;setMusic("map");
+  checkMonsterTrigger();checkLoss();render();res();
+}
+
+/* 船体の描画：画像スプライト（右向き）を向きに合わせて回転。足元に陣営色の影 */
+function unitArt(u){
+  if(u.core)return u.xeno?(u.name==="巣の中枢"?"xeno_core":"xeno_nest"):"unit_core";
+  if(u.sat)return"unit_sat";
+  if(u.xeno)return`xeno_${u.name.includes("ブルード")?"brood":"drone"}${u.neo?"_neo":""}`;
+  return`${u.side==="E"?"foe":"ship"}_${SHIP_ART[u.cls]}`;
+}
+function drawHull(u,cx,cy,dir,size,col,bare){
+  const g=svgEl("g",{transform:`translate(${cx} ${cy}) rotate(${dir*90})`});
+  const s=size*(u.core?1.1:u.sat?.85:u.xeno?(u.name.includes("ブルード")?1.15:.98):[1,1.08,1.14,1.2,1.2][u.cls]);
+  if(!bare)g.append(svgEl("ellipse",{rx:s*.4,ry:s*.26,fill:"none",stroke:col,"stroke-width":1.5,opacity:.45}));
+  g.append(svgImg(`${ART}${unitArt(u)}.webp`,-s/2,-s/2,s,s));
+  return g;
+}
+/* 戦術マップ表示座標：スマホは縦向き（自軍が下） */
+function bport(){return isNarrow()}
+function cellPos(x,y){return bport()?[y*CELL,(BW-1-x)*CELL]:[x*CELL,y*CELL]}
+function battleDefs(){
+  const d=svgEl("defs",{});
+  d.innerHTML=`<filter id="fxGlow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="2.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+<filter id="fxBlur" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="5"/></filter>
+<pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="#ea5a4f14"/><line x1="0" y1="0" x2="0" y2="7" stroke="#ea5a4f" stroke-width="2" opacity=".55"/></pattern>
+<pattern id="hatchX" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="#b974ff14"/><line x1="0" y1="0" x2="0" y2="7" stroke="#d29bff" stroke-width="2" opacity=".55"/></pattern>`;
+  return d;
+}
+function rockShape(x,y,px,py){
+  const g=svgEl("g",{"pointer-events":"none"});let seed=x*31+y*17;const rnd=()=>{seed=(seed*9301+49297)%233280;return seed/233280};
+  for(let k=0;k<3;k++){const cx=px+CELL*(.3+rnd()*.4),cy=py+CELL*(.3+rnd()*.4),r=CELL*(k?.12+rnd()*.08:.24+rnd()*.06);
+    const pts=Array.from({length:8},(_,i)=>{const a=i/8*Math.PI*2,rr=r*(.75+rnd()*.4);return`${(cx+Math.cos(a)*rr).toFixed(1)},${(cy+Math.sin(a)*rr).toFixed(1)}`}).join(" ");
+    g.append(svgEl("polygon",{points:pts,fill:k?"#4a4f66":"#5b6079",stroke:"#8d93ad","stroke-width":1}))}
+  return g;
+}
+function renderBattle(){
+  if(!B)return;
+  $("bTitle").textContent=B.title;$("bTip").textContent=B.tip;
+  const ph=$("bPhase");ph.className="phase "+(B.ended?"":B.phase);
+  ph.textContent=B.ended?"戦闘終了":`ROUND ${B.round}　${B.phase==="P"?"自軍フェイズ":"敵軍フェイズ"}`;
+  const port=bport(),live=!B.ended&&B.phase==="P"&&!B.busy;
+  const svg=$("bsvg");svg.setAttribute("viewBox",port?`0 0 ${BH*CELL} ${BW*CELL}`:`0 0 ${BW*CELL} ${BH*CELL}`);svg.replaceChildren(battleDefs());
+  const sel=B.sel&&B.units.find(u=>u.uid===B.sel&&u.hp>0);
+  const insp=B.inspect&&B.units.find(u=>u.uid===B.inspect&&u.hp>0);
+  const canAct=sel&&!sel.acted&&live;
+  // 範囲の計算：青＝移動できるマス、赤＝今の位置から撃てるマス、赤い点線＝移動してから撃てるマス
+  const mv=canAct?reach(sel):[];
+  const mvSet=new Set(mv.map(c=>c.join(",")));
+  const at=canAct?(B.hover||[sel.x,sel.y]):null;
+  const atkNow=canAct?rangeCells(sel,[at]):new Set();
+  const atkAfter=canAct&&!B.hover?rangeCells(sel,mv):new Set();
+  const inspMv=insp?new Set((insp.move>0?reach(insp):[]).map(c=>c.join(","))):new Set();
+  const inspAtk=insp?threatOf(insp):new Set();
+  let danger=new Set();
+  if(B.danger&&!B.ended)for(const e of B.units)if(e.side==="E"&&e.hp>0)for(const k of threatOf(e))danger.add(k);
+  const over=svgEl("g",{"pointer-events":"none"});
+  for(let y=0;y<BH;y++)for(let x=0;x<BW;x++){
+    const[px,py]=cellPos(x,y),k=`${x},${y}`;
+    const r=svgEl("rect",{x:px+1,y:py+1,width:CELL-2,height:CELL-2,fill:(x+y)%2?"#0d132899":"#0b112480",stroke:"#1c255099"});
+    r.addEventListener("click",()=>onCell(x,y));
+    r.addEventListener("pointerenter",e=>{if(e.pointerType!=="mouse")return;onHover(x,y);const u=unitAt(x,y);if(u)showTip(unitTip(u),e);else hideTip()});
+    svg.append(r);
+    if(isRock(x,y)){over.append(rockShape(x,y,px,py));continue}
+    const R=(fill,stroke,dash,w)=>over.append(svgEl("rect",{x:px+2.5,y:py+2.5,width:CELL-5,height:CELL-5,rx:3,fill,stroke:stroke||"none","stroke-width":w||1.5,"stroke-dasharray":dash||"none"}));
+    if(danger.has(k))R("url(#hatch)");
+    if(mvSet.has(k))R(B.hover&&B.hover[0]===x&&B.hover[1]===y?"#3aa0ff70":"#3aa0ff3a","#5cb4ff",null,1.5);
+    else if(atkNow.has(k))R("#ea5a4f30","#ea5a4f",null,1.2);
+    else if(atkAfter.has(k))R("#ea5a4f12","#ea5a4f","3 3",1);
+    if(insp){
+      if(inspMv.has(k))R("#b974ff30","#c99bff",null,1.2);
+      else if(inspAtk.has(k))R(insp.xeno?"url(#hatchX)":"url(#hatch)");
+    }
+  }
+  svg.append(over);
+  if(sel){const[px,py]=cellPos(sel.x,sel.y);svg.append(svgEl("rect",{x:px+2,y:py+2,width:CELL-4,height:CELL-4,fill:"none",stroke:"#f2b84b","stroke-width":2.5,"pointer-events":"none"}))}
+  if(insp){const[px,py]=cellPos(insp.x,insp.y);svg.append(svgEl("rect",{x:px+2,y:py+2,width:CELL-4,height:CELL-4,fill:"none",stroke:"#c99bff","stroke-width":2.5,"pointer-events":"none"}))}
+  // 移動先プレビューの残像
+  if(canAct&&B.hover){const[px,py]=cellPos(B.hover[0],B.hover[1]);const gh=svgEl("g",{"pointer-events":"none",opacity:.5});const d=sel.dir;
+    gh.append(drawHull(sel,px+CELL/2,py+CELL/2-3,d-(port?1:0),CELL*.82,"#f2b84b"));svg.append(gh)}
+  const ghost=canAct&&B.hover?{...sel,x:B.hover[0],y:B.hover[1]}:sel;
+  for(const u of B.units){
+    if(u.hp<=0)continue;
+    let[px,py]=u.anim||cellPos(u.x,u.y);
+    const col=u.side==="P"?"#f2b84b":u.xeno?(u.neo?"#ff7a59":"#b974ff"):"#ea5a4f";
+    if(u.trail)u.trail.forEach(([tx,ty],i)=>svg.append(svgEl("circle",{cx:tx+CELL/2,cy:ty+CELL/2-3,r:2+i*.35,fill:u.side==="P"?"#9fd4ff":"#ffb0a0",opacity:(i+1)/u.trail.length*.45,"pointer-events":"none"})));
+    const g=svgEl("g",{"pointer-events":"none","data-uid":u.uid,opacity:u.side==="P"&&u.acted&&B.phase==="P"?.5:1});
+    g.append(drawHull(u,px+CELL/2,py+CELL/2-3,(u.adir??u.dir)-(port?1:0),CELL*.82,col));
+    const w=CELL-12,hp=u.hp/u.maxHp;
+    g.append(svgEl("rect",{x:px+6,y:py+CELL-9,width:w,height:4,fill:"#232a4d"}));
+    g.append(svgEl("rect",{x:px+6,y:py+CELL-9,width:w*hp,height:4,fill:hp<.35?"#ea5a4f":"#5fd38d"}));
+    if(u.flag){const t=svgEl("text",{x:px+6,y:py+15,fill:col,"font-size":14});t.textContent="★";g.append(t)}
+    svg.append(g);
+    if(B.actor===u.uid)svg.append(svgEl("circle",{cx:px+CELL/2,cy:py+CELL/2-2,r:CELL*.48,fill:"none",stroke:col,class:"actor-ring","pointer-events":"none"}));
+    if(canAct&&u.side==="E"){
+      const a=bestAttack(ghost,u);
+      if(a){
+        svg.append(svgEl("rect",{x:px+2,y:py+2,width:CELL-4,height:CELL-4,fill:"#ea5a4f22",stroke:"#ff6b5e","stroke-width":2.5,"pointer-events":"none"}));
+        const t=svgEl("text",{x:px+CELL-4,y:py+14,fill:"#ffe1dc","font-size":12,"text-anchor":"end","pointer-events":"none","font-family":"DotGothic16, monospace",stroke:"#000","stroke-width":2.5,"paint-order":"stroke"});
+        t.textContent=`-${a.dmg}${a.zone&&a.zone!=="正面"?a.zone[0]:""}`;svg.append(t);
+      }
+    }
+  }
+  // 下部操作バー
+  const bar=$("bBar");bar.replaceChildren();
+  if(B.ended){
+    bar.append(h("span",{class:"bb-info",style:`color:${B.result==="win"?"var(--good)":"var(--foe)"}`},B.result==="win"?"勝利":B.result==="retreat"?"撤退":"敗北"),
+      h("button",{class:"primary",onclick:closeBattle},"作戦卓へ戻る",h("span",{class:"kbd"},"Enter")));
+  }else{
+    bar.append(h("span",{class:"bb-info"},sel?`${sel.flag?"★":""}${sel.name} 耐久${sel.hp}/${sel.maxHp}`:insp?`敵：${insp.name}`:B.phase==="P"?(B.busy?"……":"自軍の艦をタップ"):"敵が行動中……（クリックで早送り）"));
+    bar.append(h("button",{class:B.danger?"on":"","aria-pressed":String(!!B.danger),onclick:()=>{B.danger=!B.danger;renderBattle()}},"敵の射程",h("span",{class:"kbd"},"R")));
+    if(B.phase==="P")bar.append(
+      h("button",{disabled:!sel||sel.acted||B.busy,onclick:()=>battleWaitSel()},"待機",h("span",{class:"kbd"},"W")),
+      h("button",{class:"primary",disabled:B.busy,onclick:()=>battleEndPhase()},"ターン終了",h("span",{class:"kbd"},"E")),
+      h("button",{class:"danger",disabled:B.busy,onclick:()=>{if(B.busy)return;finishBattle("retreat")}},"撤退"));
+  }
+  // サイドパネル
+  const side=$("bSide");side.replaceChildren();
+  const info=(u,hint)=>{
+    const ws=u.w.map(w=>`${w.n} ${w.d}（射程${w.min}${w.max>w.min?`〜${w.max}`:""}）`).join("／");
+    side.append(h("h2",{style:u.side==="E"?`color:${u.xeno?"var(--xeno)":"var(--foe)"}`:null},(u.flag?"★":"")+u.name),h("dl",{class:"kv"},h("dt",null,"耐久"),h("dd",null,`${Math.ceil(u.hp)}/${u.maxHp}`),h("dt",null,"装甲"),h("dd",null,u.armor),h("dt",null,"移動"),h("dd",null,u.move),h("dt",null,"武装"),h("dd",null,ws)),
+      h("p",{class:"hint"},hint));
+  };
+  if(sel)info(sel,"青いマスへ移動するか、赤枠の敵を攻撃。赤いマスは今の位置からの射程、赤い点線は移動してから届く範囲。1隻につき移動か攻撃のどちらか1回。");
+  else if(insp)info(insp,insp.core||insp.sat?"斜線のマスがこの目標の射程。":`紫のマスが移動範囲、斜線のマスが次に攻撃してくる範囲。${insp.xeno?(insp.neo?"正面が弱点。":"側面が弱点。"):"背後と側面から撃つと大きな損害を与えられる。"}`);
+  else if(!B.ended)side.append(h("p",{class:"hint"},B.phase==="P"?"自軍の艦をタップして選択。敵をタップするとその射程が見える。":"敵が行動中……"));
+  side.append(h("div",{class:"legend"},
+    h("span",null,h("i",{style:"background:#3aa0ff3a;border-color:#5cb4ff"}),"移動"),
+    h("span",null,h("i",{style:"background:#ea5a4f30;border-color:#ea5a4f"}),"射程"),
+    h("span",null,h("i",{style:"background:#ea5a4f12;border-color:#ea5a4f;border-style:dashed"}),"移動後の射程"),
+    h("span",null,h("i",{style:"background:repeating-linear-gradient(45deg,#ea5a4f88 0 2px,transparent 2px 5px);border-color:#ea5a4f"}),"敵の射程"),
+    h("span",null,"数字末尾 側/背＝側面・背面ボーナス")));
+  side.append(h("p",{class:"hint kbd-help"},"マウス：左クリックで選択・移動・攻撃、右クリックで選択解除。キー：1〜4 艦の選択／W 待機／E ターン終了／R 敵の射程"));
+  if(B.msg.length)side.append(h("div",{class:"log",style:"max-height:240px"},...B.msg.map(t=>h("p",null,t))));
+}
+function battleWaitSel(){if(!B||B.busy||B.ended||B.phase!=="P")return;const sel=B.sel&&B.units.find(u=>u.uid===B.sel);if(!sel||sel.acted)return;sel.acted=true;B.sel=null;afterPlayerAct()}
+function battleEndPhase(){if(!B||B.busy||B.ended||B.phase!=="P")return;B.units.forEach(u=>{if(u.side==="P")u.acted=true});enemyPhase()}
+
+/* ============ サウンド ============
+   BGMと勝敗・研究完了のジングルは audio/ の音声ファイル、攻撃などの効果音はブラウザ内合成（SE）。
+   ファイルが無ければ合成で代用する。window.AUDIO_FILES で追加・上書き可（例: "se:beam":"audio/se-beam.mp3"）。 */
+const AUDIO_FILES=Object.assign({
+  "bgm:map":"audio/bgm-map.mp3","bgm:battle":"audio/bgm-battle.mp3","bgm:xeno":"audio/bgm-xeno.mp3","bgm:hive":"audio/bgm-hive.mp3",
+  "se:jingle":"audio/se-research.mp3","se:win":"audio/se-win.mp3","se:sad":"audio/se-lose.mp3"
+},window.AUDIO_FILES||{});
+const ABUF={};
+function loadAudioFiles(){
+  if(window.FAST)return;
+  for(const[k,url]of Object.entries(AUDIO_FILES))fetch(url).then(r=>r.ok?r.arrayBuffer():Promise.reject()).then(b=>SND.ctx.decodeAudioData(b)).then(buf=>{ABUF[k]=buf;if(k==="bgm:"+SND.track)playBgmFile(SND.track)}).catch(()=>{});
+}
+function playBuf(buf,dest,loop,vol){const c=SND.ctx,s=c.createBufferSource(),g=c.createGain();s.buffer=buf;s.loop=!!loop;g.gain.value=vol??1;s.connect(g);g.connect(dest);s.start();return{s,g}}
+function playBgmFile(name){
+  const c=SND.ctx;if(!c)return false;const buf=ABUF["bgm:"+name];
+  if(SND.file&&SND.file.name===name)return true;
+  if(SND.file){const{g,s}=SND.file;g.gain.setTargetAtTime(0,c.currentTime,.3);s.stop(c.currentTime+1.5);SND.file=null}
+  if(!buf)return false;
+  const h=playBuf(buf,SND.mus,true,0);h.g.gain.setTargetAtTime(2.2,c.currentTime,.4);SND.file={name,...h};return true;
+}
+const MUS_VOL=.32;
+const SND={ctx:null,on:true,master:null,sfx:null,mus:null,track:null,want:"map",step:0,next:0,timer:null};
+try{SND.on=localStorage.getItem("fw-sound")!=="off"}catch(e){}
+function audioInit(){
+  if(SND.ctx||!SND.on)return;
+  try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
+    const c=SND.ctx=new AC();SND.master=c.createGain();SND.master.gain.value=.6;SND.master.connect(c.destination);
+    // 効果音：コンプレッサーで音圧をそろえ、残響を少し足す
+    SND.comp=c.createDynamicsCompressor();SND.comp.threshold.value=-18;SND.comp.knee.value=12;SND.comp.ratio.value=5;SND.comp.attack.value=.002;SND.comp.release.value=.25;SND.comp.connect(SND.master);
+    SND.sfx=c.createGain();SND.sfx.gain.value=1.7;SND.sfx.connect(SND.comp);
+    const ir=c.createBuffer(2,Math.floor(c.sampleRate*1.8),c.sampleRate);for(let ch=0;ch<2;ch++){const d=ir.getChannelData(ch);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3)}
+    SND.verbIn=c.createConvolver();SND.verbIn.buffer=ir;const vo=c.createGain();vo.gain.value=.5;SND.verbIn.connect(vo);vo.connect(SND.comp);
+    SND.mus=c.createGain();SND.mus.gain.value=MUS_VOL;SND.mus.connect(SND.master);
+    SND.noiseBuf=c.createBuffer(1,Math.floor(c.sampleRate*2.5),c.sampleRate);const d=SND.noiseBuf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+    musicStart();loadAudioFiles();
+  }catch(e){SND.ctx=null}
+}
+function soundToggle(){
+  SND.on=!SND.on;try{localStorage.setItem("fw-sound",SND.on?"on":"off")}catch(e){}
+  if(SND.on){if(!SND.ctx)audioInit();else{SND.ctx.resume();SND.master.gain.value=.6}}
+  else if(SND.ctx){SND.master.gain.value=0}
+  $("btnSound").textContent=SND.on?"音 ON":"音 OFF";$("btnSound").setAttribute("aria-pressed",SND.on);
+}
+const mtof=m=>440*Math.pow(2,(m-69)/12);
+/* wet：残響（コンボルバー）へ送る量 */
+function sendWet(node,wet){if(!wet||!SND.verbIn)return;const s=SND.ctx.createGain();s.gain.value=wet;node.connect(s);s.connect(SND.verbIn)}
+function tone(f,dur,type,vol,f2,when,dest,wet){
+  const c=SND.ctx;if(!c)return;const t=when||c.currentTime;
+  const o=c.createOscillator(),g=c.createGain();o.type=type||"sine";o.frequency.setValueAtTime(f,t);
+  if(f2)o.frequency.exponentialRampToValueAtTime(Math.max(20,f2),t+dur);
+  g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(vol||.2,t+Math.min(.02,dur/4));g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g);g.connect(dest||SND.sfx);sendWet(g,wet);o.start(t);o.stop(t+dur+.05);
+}
+function noise(dur,vol,freq,ftype,when,dest,f2,wet){
+  const c=SND.ctx;if(!c)return;const t=when||c.currentTime;
+  const s=c.createBufferSource();s.buffer=SND.noiseBuf;const fl=c.createBiquadFilter();fl.type=ftype||"lowpass";fl.frequency.setValueAtTime(freq||2000,t);
+  if(f2)fl.frequency.exponentialRampToValueAtTime(f2,t+dur);
+  const g=c.createGain();g.gain.setValueAtTime(vol||.2,t);g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  s.connect(fl);fl.connect(g);g.connect(dest||SND.sfx);sendWet(g,wet);s.start(t,Math.random()*.5);s.stop(t+dur+.05);
+}
+/* 効果音はすべてブラウザ内で合成（コンプレッサーと残響を通して厚みを出す） */
+const now=()=>SND.ctx.currentTime;
+const SE={
+  ui(){tone(700,.05,"square",.03)},
+  beam(){const t=now();
+    tone(300,.15,"sine",.05,1900,t);                                   // チャージ音
+    tone(2600,.42,"sawtooth",.1,110,t+.15,0,.35);tone(2540,.42,"sawtooth",.07,96,t+.15);
+    tone(1300,.24,"square",.035,260,t+.15);
+    noise(.32,.16,7000,"highpass",t+.15,0,1500,.25);
+    tone(150,.3,"sine",.34,38,t+.15)},                                // 発射の衝撃
+  launch(){const t=now();tone(95,.18,"sine",.45,40,t);noise(.5,.3,700,"bandpass",t,0,4200,.3);tone(160,.45,"sawtooth",.04,620,t);noise(.06,.2,6000,"highpass",t)},
+  missile(){SE.launch()},
+  pop(){const t=now();noise(.3,.42,3600,"lowpass",t,0,250,.3);tone(130,.22,"sine",.42,40,t);noise(.05,.2,8000,"highpass",t)},
+  bomb(){const t=now();tone(1900,.5,"sine",.09,420,t,0,.3);noise(.5,.1,2500,"bandpass",t,0,600)},
+  claw(){const t=now();[0,.08,.16].forEach(d=>{noise(.09,.28,3200,"bandpass",t+d,0,7000);tone(240,.08,"sawtooth",.04,90,t+d)});tone(110,.25,"sine",.25,45,t+.05,0,.2)},
+  acid(){const t=now();tone(620,.3,"triangle",.2,140,t);noise(.3,.16,1000,"bandpass",t);noise(.6,.1,5000,"highpass",t+.25,0,2000,.2)},
+  hit(){const t=now();noise(.38,.5,5000,"lowpass",t,0,240,.3);tone(170,.32,"sine",.5,40,t);tone(85,.14,"square",.08,30,t);noise(.07,.25,9000,"highpass",t)},
+  crit(){const t=now();tone(1760,.22,"triangle",.08,2400,t,0,.3);tone(2640,.18,"sine",.05,0,t+.04,0,.3)},
+  boom(){const t=now();noise(1.7,.5,3200,"lowpass",t,0,70,.45);tone(95,1.3,"sine",.5,24,t);tone(60,1.5,"triangle",.18,22,t+.05);
+    [.12,.28,.45,.62].forEach((d,i)=>noise(.18,.22-i*.04,2400,"bandpass",t+d,0,600,.3));noise(.1,.24,9000,"highpass",t)},
+  move(){const t=now();noise(.42,.09,350,"lowpass",t,0,1100);tone(80,.38,"sine",.07,150,t)},
+  fleet(){const t=now();noise(.55,.06,300,"bandpass",t,0,1400,.2);tone(110,.5,"sine",.05,180,t)},
+  warp(){const t=now();tone(200,.5,"sine",.07,1600,t,0,.4);tone(400,.5,"triangle",.03,3200,t+.05,0,.4);noise(.5,.04,2000,"bandpass",t,0,8000)},
+  siege(){const t=now();noise(.5,.16,1600,"lowpass",t,0,120,.3);tone(80,.4,"sine",.18,30,t)},
+  phaseP(){const t=now();noise(.5,.07,500,"bandpass",t,0,5000,.3);[76,83].forEach((m,i)=>tone(mtof(m),.5,"triangle",.05,0,t+.06+i*.09,0,.5))},
+  phaseE(){const t=now();noise(.5,.07,400,"bandpass",t,0,3000,.3);[64,63].forEach((m,i)=>tone(mtof(m),.55,"sawtooth",.022,0,t+.06+i*.12,0,.5));tone(55,.6,"sine",.12,45,t)},
+  phaseM(){SE.phaseE()},
+  phaseW(){const t=now();noise(.6,.06,300,"bandpass",t,0,2500,.3);[71,67,62].forEach((m,i)=>tone(mtof(m),.45,"triangle",.04,0,t+.05+i*.1,0,.5))},
+  win(){SE.jingle()},
+  jingle(){const t=now();[72,76,79,84].forEach((m,i)=>tone(mtof(m),.35,"triangle",.07,0,t+i*.11,0,.3))},
+  sad(){const t=now();[64,60,57,52].forEach((m,i)=>tone(mtof(m),.5,"triangle",.06,0,t+i*.22,0,.3))},
+  roar(){const c=SND.ctx;if(!c)return;const t=c.currentTime,o=c.createOscillator(),l=c.createOscillator(),lg=c.createGain(),g=c.createGain(),f=c.createBiquadFilter();
+    o.type="sawtooth";o.frequency.setValueAtTime(90,t);o.frequency.exponentialRampToValueAtTime(45,t+1.4);l.frequency.value=9;lg.gain.value=25;l.connect(lg);lg.connect(o.frequency);
+    f.type="lowpass";f.frequency.value=700;g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.3,t+.15);g.gain.exponentialRampToValueAtTime(.0001,t+1.5);
+    o.connect(f);f.connect(g);g.connect(SND.sfx);o.start(t);l.start(t);o.stop(t+1.6);l.stop(t+1.6);noise(1.2,.12,300,"lowpass")}
+};
+/* 勝敗・研究完了のジングル（音声ファイル）は控えめの音量で鳴らし、その間はBGMを下げる */
+const JINGLE_VOL={win:.2,sad:.22,jingle:.22};
+function duckMusic(sec){
+  const c=SND.ctx;if(!c||!SND.mus)return;const g=SND.mus.gain,t=c.currentTime;
+  g.cancelScheduledValues(t);g.setValueAtTime(g.value,t);g.linearRampToValueAtTime(MUS_VOL*.3,t+.25);g.setValueAtTime(MUS_VOL*.3,t+sec);g.linearRampToValueAtTime(MUS_VOL,t+sec+1.5);
+}
+function sfx(name){if(!SND.on)return;audioInit();if(!SND.ctx)return;
+  try{const b=ABUF["se:"+name];
+    if(b){const v=JINGLE_VOL[name]??1,c=SND.ctx,h=playBuf(b,SND.sfx,false,0);h.g.gain.setValueAtTime(0,c.currentTime);h.g.gain.linearRampToValueAtTime(v,c.currentTime+.08);if(name in JINGLE_VOL)duckMusic(Math.min(b.duration,6))}
+    else if(SE[name]){if(name in JINGLE_VOL)duckMusic(1.5);SE[name]()}}catch(e){}}
+
+/* BGM：3曲（作戦卓／艦隊戦／異生体）。和音とパターンから毎小節生成 */
+const TRACKS={
+  map:{bpm:84,prog:[[57,"m"],[53,"M"],[48,"M"],[55,"M"],[57,"m"],[50,"m"],[53,"M"],[52,"M"]],pad:"triangle",padVol:.05,arp:[0,2,1,2,0,2,1,3],arpType:"sine",arpVol:.05,arpEvery:2,bass:[0,8],drums:false},
+  battle:{bpm:138,prog:[[50,"m"],[46,"M"],[48,"M"],[45,"M"],[50,"m"],[43,"m"],[45,"M"],[45,"M"]],pad:"sawtooth",padVol:.018,arp:[0,1,2,1,3,2,1,2],arpType:"square",arpVol:.025,arpEvery:1,bass:[0,2,3,6,8,10,11,14],drums:true},
+  xeno:{bpm:104,prog:[[48,"m"],[49,"M"],[47,"d"],[48,"m"],[44,"M"],[49,"M"],[47,"d"],[43,"d"]],pad:"sawtooth",padVol:.022,arp:[3,0,2,1,3,1,0,2],arpType:"triangle",arpVol:.04,arpEvery:2,bass:[0,3,6,8,11,14],drums:true,drone:true}
+};
+TRACKS.hive=TRACKS.xeno;
+const CHORD={m:[0,3,7,12],M:[0,4,7,12],d:[0,3,6,9]};
+function setMusic(name){SND.want=name;if(SND.track!==name){SND.track=name;SND.step=0;if(SND.ctx)SND.next=SND.ctx.currentTime+.1}playBgmFile(name)}
+function musicStart(){
+  if(SND.timer||!SND.ctx)return;SND.track=SND.want;SND.next=SND.ctx.currentTime+.15;
+  SND.timer=setInterval(()=>{const c=SND.ctx;if(!c||!SND.on||c.state!=="running")return;
+    while(SND.next<c.currentTime+.15){scheduleStep(SND.next);const tr=TRACKS[SND.track];SND.next+=60/tr.bpm/4;SND.step++}},30);
+}
+function scheduleStep(t){
+  if(SND.file)return;
+  const tr=TRACKS[SND.track],s=SND.step%16,bar=Math.floor(SND.step/16)%tr.prog.length,[root,q]=tr.prog[bar],ch=CHORD[q],dest=SND.mus,sixteenth=60/tr.bpm/4;
+  if(s===0)ch.slice(0,3).forEach(iv=>tone(mtof(root+12+iv),sixteenth*16,tr.pad,tr.padVol,0,t,dest));
+  if(tr.drone&&s===0)tone(mtof(root-12),sixteenth*16,"sine",.08,0,t,dest);
+  if(s%tr.arpEvery===0){const iv=ch[tr.arp[(s/tr.arpEvery)%tr.arp.length]];tone(mtof(root+24+iv),sixteenth*1.6,tr.arpType,tr.arpVol,0,t,dest)}
+  if(tr.bass.includes(s))tone(mtof(root-12+(s%8===6?7:0)),sixteenth*1.8,"triangle",.11,0,t,dest);
+  if(tr.drums){
+    if(s%4===0)tone(150,.18,"sine",.22,40,t,dest);
+    if(s===4||s===12)noise(.14,.1,1800,"bandpass",t,dest);
+    if(s%2===1)noise(.04,.03,7000,"highpass",t,dest);
+  }
+  if(SND.track==="xeno"&&s===10&&Math.random()<.5)tone(mtof(root+36+[1,6,11][bar%3]),.6,"sine",.03,0,t,dest);
+}
+function musicFor(){if(!B)return"map";const c=B.cfg||{};return c.kind==="hive"?"hive":c.ef&&c.ef.side==="M"||c.planet&&c.planet.owner==="M"?"xeno":"battle"}
+document.addEventListener("pointerdown",()=>{audioInit();if(SND.ctx&&SND.ctx.state==="suspended")SND.ctx.resume()},{passive:true});
+document.addEventListener("keydown",()=>{audioInit()});
+document.addEventListener("click",e=>{if(e.target.closest&&e.target.closest("button"))sfx("ui")});
+
+/* ============ 演出 ============ */
+const reduceMotion=window.matchMedia("(prefers-reduced-motion:reduce)").matches;
+/* ANIM.busy：星図の演出中（操作を止める）／fast：クリックで早送り中／hide：星図で描かない艦隊 */
+const ANIM={busy:0,fast:false,enemyTurn:false,hide:new Set()};
+function setBusy(on){ANIM.busy=Math.max(0,ANIM.busy+(on?1:-1));document.body.classList.toggle("anim",ANIM.busy>0);if(!ANIM.busy)ANIM.fast=false}
+function setFfwd(on){const el=$("ffwd");if(el)el.hidden=!on||!!window.FAST}
+function tween(ms,frame){
+  if(window.FAST||reduceMotion||ANIM.fast){frame(1);return Promise.resolve()}
+  return new Promise(res=>{const t0=performance.now();let done=false;
+    const fin=()=>{if(done)return;done=true;frame(1);res()};
+    const tick=t=>{if(done)return;const k=Math.min(1,(t-t0)/ms);if(k>=1||ANIM.fast)return fin();frame(k);requestAnimationFrame(tick)};
+    requestAnimationFrame(tick);setTimeout(fin,ms+300); // 画面が隠れていても止まらないように
+  });
+}
+const ease=k=>k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+/* 画面中央を横切る帯（フェイズ・ターンの切り替わり）。side: P=自軍 E=敵 M=異生体 W=中立 */
+function banner(main,sub,side,ms){
+  if(window.FAST)return Promise.resolve();
+  ms=ms||1100;if(ANIM.fast)ms=Math.min(ms,350);
+  const el=$("banner"),inn=el.firstElementChild;
+  $("bnMain").textContent=main;$("bnSub").textContent=sub||"";
+  el.className="banner "+(side||"P");inn.style.setProperty("--bn-ms",ms+"ms");
+  inn.style.animation="none";el.hidden=false;void inn.offsetWidth;inn.style.animation="";
+  sfx("phase"+(side||"P"));
+  return new Promise(r=>setTimeout(()=>{el.hidden=true;r()},ms));
+}
+function ccenter(u){const[px,py]=u.anim||cellPos(u.x,u.y);return[px+CELL/2,py+CELL/2-3]}
+function fxLayer(){const g=svgEl("g",{"pointer-events":"none"});$("bsvg").append(g);return g}
+function unitG(u){return $("bsvg").querySelector(`[data-uid="${u.uid}"]`)}
+function shake(px){const svg=$("bsvg");return k=>{if(!reduceMotion)svg.style.transform=k<1?`translate(${(Math.random()-.5)*px*(1-k)}px,${(Math.random()-.5)*px*(1-k)}px)`:""}}
+function bez(a,c,b,e){return(1-e)*(1-e)*a+2*(1-e)*e*c+e*e*b}
+async function animateShot(att,t,a){
+  const[ax,ay]=ccenter(att),[tx,ty]=ccenter(t),n=a.w.n,g=fxLayer();
+  const col=att.side==="P"?"#ffd27a":att.xeno?"#b8ff6a":"#ff8a7a";
+  const dx=tx-ax,dy=ty-ay,len=Math.hypot(dx,dy)||1,ux=dx/len,uy=dy/len,nx=-uy,ny=ux;
+  const mx=ax+ux*CELL*.3,my=ay+uy*CELL*.3;
+  const ag=unitG(att);
+  if(n==="主砲"||n==="衛星砲"||n==="迎撃砲"){
+    sfx("beam");
+    const big=n==="主砲";
+    // チャージ
+    const charge=svgEl("circle",{cx:mx,cy:my,r:1,fill:col,filter:"url(#fxGlow)"});g.append(charge);
+    const rays=Array.from({length:6},(_,i)=>{const l=svgEl("line",{stroke:col,"stroke-width":1.5,"stroke-linecap":"round",opacity:.8});g.append(l);return[l,i/6*Math.PI*2]});
+    await tween(150,k=>{charge.setAttribute("r",1+k*(big?7:5));rays.forEach(([l,an])=>{const r1=18*(1-k)+4,r2=r1+6;l.setAttribute("x1",mx+Math.cos(an+k)*r1);l.setAttribute("y1",my+Math.sin(an+k)*r1);l.setAttribute("x2",mx+Math.cos(an+k)*r2);l.setAttribute("y2",my+Math.sin(an+k)*r2);l.setAttribute("opacity",.8*(1-k))})});
+    rays.forEach(([l])=>l.remove());
+    // 発射：外側の光・中間・白い芯の三層。反動で艦が少し下がる
+    const w=big?1:.6;
+    const outer=svgEl("line",{x1:mx,y1:my,x2:mx,y2:my,stroke:col,"stroke-width":16*w,opacity:.22,"stroke-linecap":"round",filter:"url(#fxBlur)"});
+    const mid=svgEl("line",{x1:mx,y1:my,x2:mx,y2:my,stroke:col,"stroke-width":7*w,opacity:.85,"stroke-linecap":"round"});
+    const core=svgEl("line",{x1:mx,y1:my,x2:mx,y2:my,stroke:"#fff","stroke-width":2.6*w,"stroke-linecap":"round"});
+    const flash=svgEl("circle",{cx:mx,cy:my,r:10*w,fill:"#fff",opacity:.9,filter:"url(#fxGlow)"});
+    g.append(outer,mid,core,flash);
+    await tween(340,k=>{const e=Math.min(1,k*4),x=mx+(tx-mx)*e,y=my+(ty-my)*e,fl=1+Math.sin(k*60)*.25;
+      [outer,mid,core].forEach(l=>{l.setAttribute("x2",x);l.setAttribute("y2",y)});
+      mid.setAttribute("stroke-width",7*w*fl*(k>.6?1-(k-.6)/.4:1));core.setAttribute("stroke-width",2.6*w*fl);
+      const f=k>.55?1-(k-.55)/.45:1;outer.setAttribute("opacity",.22*f);mid.setAttribute("opacity",.85*f);core.setAttribute("opacity",f);
+      flash.setAttribute("r",10*w*(1-k)+2);flash.setAttribute("opacity",.9*(1-k));charge.setAttribute("opacity",1-k);
+      if(ag)ag.style.transform=k<1?`translate(${-ux*4*Math.sin(Math.min(1,k*2)*Math.PI)}px,${-uy*4*Math.sin(Math.min(1,k*2)*Math.PI)}px)`:"";
+    });
+  }else if(n==="ミサイル"){
+    // 3発の斉射。白い弾頭に煙の尾
+    const N=3,T=480,gap=90,puffs=[],ms=[];
+    for(let i=0;i<N;i++){const side=(i%2?1:-1)*(.25+Math.random()*.3)*len,ox=(Math.random()-.5)*14,oy=(Math.random()-.5)*14;
+      const head=svgEl("circle",{r:3,fill:"#fff",stroke:col,"stroke-width":2,filter:"url(#fxGlow)",opacity:0});g.append(head);
+      ms.push({head,cx:(ax+tx)/2+nx*side,cy:(ay+ty)/2+ny*side,ex:tx+ox,ey:ty+oy,start:i*gap,fired:false,hit:false,last:null})}
+    await tween(T+gap*(N-1)+120,k=>{const tm=k*(T+gap*(N-1)+120);
+      for(const m of ms){const lk=(tm-m.start)/T;
+        if(lk<0)continue;
+        if(!m.fired){m.fired=true;sfx("launch")}
+        if(lk>=1){if(!m.hit){m.hit=true;m.head.remove();sfx("pop");const b=svgEl("circle",{cx:m.ex,cy:m.ey,r:3,fill:"#fff4c2",filter:"url(#fxGlow)"});g.append(b);puffs.push({el:b,born:tm,boom:true})}continue}
+        const e=lk*lk*(3-2*lk),x=bez(mx,m.cx,m.ex,e),y=bez(my,m.cy,m.ey,e);
+        m.head.setAttribute("cx",x);m.head.setAttribute("cy",y);m.head.setAttribute("opacity",1);
+        if(!m.last||Math.hypot(x-m.last[0],y-m.last[1])>5){const p=svgEl("circle",{cx:x,cy:y,r:2.5,fill:"#c9cde0"});g.insertBefore(p,g.firstChild);puffs.push({el:p,born:tm});m.last=[x,y]}
+      }
+      for(const p of puffs){const age=tm-p.born;
+        if(p.boom){p.el.setAttribute("r",3+age/12);p.el.setAttribute("opacity",Math.max(0,1-age/220))}
+        else{p.el.setAttribute("r",2.5+age/60);p.el.setAttribute("opacity",Math.max(0,.55-age/500))}}
+    });
+  }else if(n==="酸弾"||n==="爆装"){
+    const bomb=n==="爆装";sfx(bomb?"bomb":"acid");
+    const bend=bomb?0:.25*len*(att.uid%2?1:-1);
+    const cx=(ax+tx)/2+nx*bend,cy=(ay+ty)/2+ny*bend-(bomb?CELL*1.6:0);
+    const trail=svgEl("polyline",{points:"",fill:"none",stroke:col,"stroke-width":bomb?3:4,opacity:.55,"stroke-linecap":"round",filter:"url(#fxGlow)"});
+    const head=svgEl("circle",{r:bomb?5:6,fill:bomb?"#fff":"#9dff5a",stroke:col,"stroke-width":2,filter:"url(#fxGlow)"});g.append(trail,head);
+    const pts=[];
+    await tween(bomb?540:440,k=>{const e=bomb?k*k:k*k*(3-2*k),x=bez(mx,cx,tx,e),y=bez(my,cy,ty,e);
+      pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);if(pts.length>10)pts.shift();trail.setAttribute("points",pts.join(" "));
+      head.setAttribute("cx",x);head.setAttribute("cy",y);if(!bomb)head.setAttribute("r",6+Math.sin(k*30)*1.5)});
+  }else{
+    // 牙：踏み込んで三条の斬撃
+    sfx("claw");
+    const slashes=[-12,0,12].map(o=>{const p=svgEl("path",{d:`M${tx-18} ${ty-18+o} Q${tx} ${ty-6+o} ${tx+18} ${ty+18+o}`,fill:"none",stroke:col,"stroke-width":4,"stroke-linecap":"round",filter:"url(#fxGlow)","stroke-dasharray":"60","stroke-dashoffset":"60"});g.append(p);return p});
+    await tween(380,k=>{const lunge=Math.sin(Math.min(1,k*1.4)*Math.PI)*len*.45;
+      if(ag)ag.style.transform=k<1?`translate(${ux*lunge}px,${uy*lunge}px)`:"";
+      slashes.forEach((p,i)=>{const kk=Math.max(0,Math.min(1,(k-.25-i*.08)*3.5));p.setAttribute("stroke-dashoffset",60*(1-kk));p.setAttribute("opacity",k>.8?(1-k)/.2:1)})});
+  }
+  if(ag)ag.style.transform="";
+  g.remove();
+}
+async function animateImpact(t,killed,a,att){
+  const[tx,ty]=ccenter(t),g=fxLayer();
+  const bonus=a&&a.zone&&a.zone!=="正面"&&!t.core&&!t.sat&&mult(att,t)>1;
+  const anti=att&&att.anti&&t.xeno;
+  sfx(killed?"boom":"hit");if(bonus&&!killed)sfx("crit");
+  const ug=unitG(t);if(ug&&!killed){ug.classList.remove("u-hit");void ug.getBoundingClientRect();ug.classList.add("u-hit")}
+  const flash=svgEl("circle",{cx:tx,cy:ty,r:killed?22:12,fill:"#fff4c2",opacity:.95,filter:"url(#fxGlow)"});
+  const ring=svgEl("circle",{cx:tx,cy:ty,r:4,fill:"none",stroke:"#ffd27a","stroke-width":killed?6:4});
+  g.append(flash,ring);
+  const NS=killed?18:8;
+  const sparks=Array.from({length:NS},(_,i)=>{const an=i/NS*Math.PI*2+Math.random()*.5;const l=svgEl("line",{stroke:i%3?"#ffcf6b":"#fff","stroke-width":2,"stroke-linecap":"round"});g.append(l);return{l,an,s:.6+Math.random()*.7}});
+  const debris=killed?Array.from({length:7},()=>{const p=svgEl("polygon",{points:"-3,-2 3,-3 2,3 -2,2",fill:"#8d93ad"});g.append(p);return{p,an:Math.random()*Math.PI*2,v:20+Math.random()*30,rot:Math.random()*720-360}}):[];
+  const bursts=killed?[[.1,-12,-8],[.24,10,6],[.38,-4,12]].map(([d,ox,oy])=>{const c=svgEl("circle",{cx:tx+ox,cy:ty+oy,r:0,fill:"#ffb347",filter:"url(#fxGlow)"});g.append(c);return{c,d}}):[];
+  // ダメージの数字（側面・背面・特効のときはラベルも）
+  const lab=bonus?`${a.zone}！`:anti?"特効！":"";
+  const num=svgEl("text",{x:tx,y:ty,"text-anchor":"middle","font-size":22,"font-family":"DotGothic16, monospace",fill:bonus||anti?"#ffd25e":"#fff",stroke:"#000","stroke-width":4,"paint-order":"stroke"});num.textContent=`-${a?a.dmg:""}`;
+  const tag=lab?svgEl("text",{x:tx,y:ty-22,"text-anchor":"middle","font-size":13,"font-family":"DotGothic16, monospace",fill:a.zone==="背面"?"#ff7a59":"#ffd25e",stroke:"#000","stroke-width":3,"paint-order":"stroke"}):null;
+  if(tag)tag.textContent=lab;
+  g.append(num);if(tag)g.append(tag);
+  const sh=shake(killed?9:bonus?4:0);
+  const T=killed?950:620;
+  await tween(T,k=>{
+    const kk=Math.min(1,k*T/450);
+    flash.setAttribute("opacity",Math.max(0,.95-kk*2.2));
+    ring.setAttribute("r",4+kk*(killed?48:26));ring.setAttribute("opacity",Math.max(0,1-kk));ring.setAttribute("stroke-width",(killed?6:4)*(1-kk)+.5);
+    sparks.forEach(({l,an,s})=>{const r1=6+kk*34*s,r2=r1+9*(1-kk);l.setAttribute("x1",tx+Math.cos(an)*r1);l.setAttribute("y1",ty+Math.sin(an)*r1+kk*kk*8);l.setAttribute("x2",tx+Math.cos(an)*r2);l.setAttribute("y2",ty+Math.sin(an)*r2+kk*kk*8);l.setAttribute("opacity",1-kk)});
+    debris.forEach(({p,an,v,rot})=>p.setAttribute("transform",`translate(${tx+Math.cos(an)*v*k*1.6} ${ty+Math.sin(an)*v*k*1.6+k*k*10}) rotate(${rot*k})`));
+    debris.forEach(({p})=>p.setAttribute("opacity",1-k));
+    bursts.forEach(({c,d})=>{const b=Math.max(0,Math.min(1,(k-d)/.3));c.setAttribute("r",b*16);c.setAttribute("opacity",b>0?1-b:0)});
+    if(killed&&ug){ug.style.opacity=Math.max(0,1-k*1.6);ug.style.transform=`scale(${1+k*.15})`;ug.style.transformOrigin=`${tx}px ${ty}px`}
+    const pk=Math.min(1,k*4);num.setAttribute("y",ty-6-k*24);num.setAttribute("font-size",22*(1+.5*(1-pk)));num.setAttribute("opacity",k>.7?(1-k)/.3:1);
+    if(tag){tag.setAttribute("y",ty-28-k*24);tag.setAttribute("opacity",k>.7?(1-k)/.3:1)}
+    sh(k);
+  });
+  $("bsvg").style.transform="";g.remove();
+}
+async function animateMove(u,fx,fy,path){
+  sfx("move");
+  const cells=[[fx,fy],...(path||[[u.x,u.y]])],pts=cells.map(([x,y])=>cellPos(x,y)),seg=pts.length-1;
+  const port=bport();
+  u.trail=[];
+  await tween(Math.min(720,150*seg+80),k=>{
+    const e=ease(k)*seg,i=Math.min(seg-1,Math.floor(e)),f=e-i,[x0,y0]=pts[i],[x1,y1]=pts[i+1];
+    const[cdx,cdy]=[cells[i+1][0]-cells[i][0],cells[i+1][1]-cells[i][1]];
+    u.adir=cdx>0?0:cdx<0?2:cdy>0?1:3;
+    u.anim=[x0+(x1-x0)*f,y0+(y1-y0)*f];
+    u.trail.push(u.anim);if(u.trail.length>10)u.trail.shift();
+    renderBattle();
+  });
+  void port;
+  u.anim=null;u.adir=null;u.trail=null;renderBattle();
+}
+/* 星図：艦隊マーカーが航路に沿って進む（亜空間移動は消えて現れる） */
+async function animateFleetMove(f,from,to,warp){
+  if(window.FAST||from===to)return;
+  const i0=Math.max(0,fleetsAt(from).filter(x=>!ANIM.hide.has(x.id)).indexOf(f)),i1=fleetsAt(to).filter(x=>!ANIM.hide.has(x.id)).length;
+  ANIM.hide.add(f.id);render();
+  try{
+    const svg=$("map"),g=svgEl("g",{"pointer-events":"none"});svg.append(g);
+    const[ax,ay]=markerPos(planet(from),i0),[bx,by]=markerPos(planet(to),i1);
+    const col=f.side==="P"?"#f2b84b":f.side==="E"?"#ea5a4f":"#b974ff";
+    const ang=Math.atan2(by-ay,bx-ax)*180/Math.PI;
+    const mk=svgEl("g",{});
+    mk.append(f.side==="M"?svgEl("circle",{r:7,fill:col,stroke:"#2a0d45","stroke-width":2}):svgEl("polygon",{points:"-8,-7 9,0 -8,7",fill:col,stroke:"#fff","stroke-width":1.2}));
+    const trail=svgEl("line",{x1:ax,y1:ay,x2:ax,y2:ay,stroke:col,"stroke-width":4,opacity:.55,"stroke-linecap":"round"});
+    g.append(trail,mk);
+    if(warp){
+      sfx("warp");
+      const ring=svgEl("circle",{cx:ax,cy:ay,r:4,fill:"none",stroke:"#9fd4ff","stroke-width":2.5});g.append(ring);
+      await tween(300,k=>{mk.setAttribute("transform",`translate(${ax} ${ay}) rotate(${ang}) scale(${1-k*.9},${1-k*.9})`);ring.setAttribute("r",4+k*22);ring.setAttribute("opacity",1-k)});
+      trail.setAttribute("stroke","#9fd4ff");trail.setAttribute("stroke-dasharray","4 6");trail.setAttribute("x2",bx);trail.setAttribute("y2",by);
+      ring.setAttribute("cx",bx);ring.setAttribute("cy",by);
+      await tween(320,k=>{mk.setAttribute("transform",`translate(${bx} ${by}) rotate(${ang}) scale(${.1+k*.9})`);ring.setAttribute("r",26-k*22);ring.setAttribute("opacity",k);trail.setAttribute("opacity",.55*(1-k))});
+    }else{
+      sfx("fleet");
+      const dur=f.side==="P"?560:f.side==="M"?420:500;
+      await tween(dur,k=>{const e=ease(k),x=ax+(bx-ax)*e,y=ay+(by-ay)*e,lag=Math.max(0,e-.3);
+        mk.setAttribute("transform",`translate(${x} ${y}) rotate(${ang})`);
+        trail.setAttribute("x1",ax+(bx-ax)*lag);trail.setAttribute("y1",ay+(by-ay)*lag);trail.setAttribute("x2",x);trail.setAttribute("y2",y);trail.setAttribute("opacity",.55*(1-k*.6))});
+    }
+    g.remove();
+  }finally{ANIM.hide.delete(f.id)}
+}
+/* 星図：攻撃・占領・出現の閃光 */
+async function mapBurst(id,col){
+  if(window.FAST)return;
+  const p=planet(id);if(p.id===HIVE&&!S.monster)return;
+  const{x,y}=mpos(p),svg=$("map"),g=svgEl("g",{"pointer-events":"none"});svg.append(g);
+  const c1=svgEl("circle",{cx:x,cy:y,r:10,fill:"none",stroke:col,"stroke-width":4}),c2=svgEl("circle",{cx:x,cy:y,r:6,fill:col,opacity:.5});g.append(c2,c1);
+  sfx("siege");
+  await tween(480,k=>{c1.setAttribute("r",10+k*34);c1.setAttribute("opacity",1-k);c1.setAttribute("stroke-width",4*(1-k)+.5);c2.setAttribute("r",6+k*14);c2.setAttribute("opacity",.5*(1-k))});
+  g.remove();
+}
+
+/* ============ 起動 ============ */
+$("btnEnd").addEventListener("click",()=>endTurn());
+$("btnHelp").addEventListener("click",showIntro);
+$("btnSound").addEventListener("click",()=>{if(!SND.ctx&&SND.on){audioInit();return}soundToggle()});
+if(!SND.on){$("btnSound").textContent="音 OFF";$("btnSound").setAttribute("aria-pressed","false")}
+$("btnNew").addEventListener("click",()=>openModal(card=>card.append(h("h2",null,"最初からやり直しますか？"),h("p",null,"現在の戦況は失われます。"),
+  h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:closeModal},"続ける"),h("button",{class:"danger",onclick:()=>{$("modal").hidden=true;newGame();render()}},"やり直す")))));
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("modal").hidden&&!S.over)closeModal()});
+// 敵の行動中はクリックで早送り
+document.addEventListener("pointerdown",e=>{if(e.target.closest&&e.target.closest("#modal"))return;if((B&&B.phase==="E"&&!B.ended)||(!B&&ANIM.enemyTurn))ANIM.fast=true},{capture:true});
+$("bsvg").addEventListener("pointerleave",()=>{onHover(null);hideTip()});
+$("bsvg").addEventListener("pointermove",e=>{if(e.pointerType==="mouse")moveTip(e)});
+$("bsvg").addEventListener("contextmenu",e=>{e.preventDefault();if(B&&!B.busy){B.sel=null;B.inspect=null;B.hover=null;renderBattle()}});
+$("map").addEventListener("contextmenu",e=>e.preventDefault());
+/* キーボード操作（PC） */
+document.addEventListener("keydown",e=>{
+  if(e.ctrlKey||e.metaKey||e.altKey||e.repeat)return;
+  if(!$("modal").hidden||!S)return;
+  const k=e.key.toLowerCase();
+  if(B){
+    if(B.ended){if(k==="enter"){e.preventDefault();closeBattle()}return}
+    if(k==="r"){B.danger=!B.danger;renderBattle();return}
+    if(B.phase!=="P"||B.busy)return;
+    if(k==="w")battleWaitSel();
+    else if(k==="e")battleEndPhase();
+    else if(k==="escape"){B.sel=null;B.inspect=null;B.hover=null;renderBattle()}
+    else if(/^[1-4]$/.test(k)){const u=B.units.filter(v=>v.side==="P"&&v.hp>0)[Number(k)-1];if(u&&!u.acted){B.sel=u.uid;B.inspect=null;B.hover=null;renderBattle()}}
+    return;
+  }
+  if(S.over||ANIM.busy)return;
+  if(k==="e"){e.preventDefault();endTurn()}
+  else if(k==="f"){const f=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");if(f){e.preventDefault();openFormation(f)}}
+  else if(k==="m"){const f=S.fleets.find(x=>x.id===S.selFleet&&x.side==="P");if(f&&!f.moved){S.sel=f.node;S.mode=S.mode==="move"?null:"move";render()}}
+  else if(k==="escape"&&S.mode){S.mode=null;render()}
+  else if(/^[1-4]$/.test(k)){const f=S.fleets.filter(x=>x.side==="P")[Number(k)-1];if(f){S.sel=f.node;S.selFleet=f.id;S.mode=null;render()}}
+});
+
+let lastNarrow=null;
+window.addEventListener("resize",()=>{const n=isNarrow();if(n!==lastNarrow){lastNarrow=n;render();if(B)renderBattle()}});
+function start(data){lastNarrow=isNarrow();
+  if(data&&data.S&&data.S.planets&&data.S.planets[0].fac){S=data.S;S.mode=null;render()}else{newGame();render()}
+}
+window.claude?.hot?.snapshot?.(()=>({S:B?null:S}));
+window.claude?.hot?.ready?window.claude.hot.ready(start):start(window.claude?.hot?.data??{});
+</script>
