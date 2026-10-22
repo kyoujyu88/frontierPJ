@@ -88,7 +88,8 @@ await mcp.connect(new StdioClientTransport({
 }));
 let journal = new Journal();
 async function tool(name, args = {}) {
-  const r = await mcp.callTool({ name, arguments: args });
+  // オート戦闘は演出つきで数分かかることがあるので、MCP の既定（60秒）より長く待つ
+  const r = await mcp.callTool({ name, arguments: args }, undefined, { timeout: 20 * 60 * 1000 });
   const text = r.content.filter(c => c.type === "text").map(c => c.text).join("\n");
   let out;
   try { out = { text, json: JSON.parse(text) }; } catch { out = { text, json: null }; }
@@ -107,6 +108,8 @@ const tools = (await mcp.listTools()).tools.filter(t => !HIDDEN.has(t.name)).map
 }));
 
 const TOOL_NAMES = new Set(tools.map(t => t.function.name));
+// 既定のオート戦闘では battle_* ツールが無い（サーバーを -- --manual-battle で起動したときだけ1隻ずつ操作する）
+const MANUAL_BATTLE = TOOL_NAMES.has("battle_attack");
 const TEXT_CALL = new RegExp(`\\b(${[...TOOL_NAMES].join("|")})\\s*\\(([^()]*)\\)`, "g");
 // Gemma 系がサーバー側で解釈されずに地の文へ漏らす書式：<|tool_call>call:battle_move{unit_id:30,x:3,y:2}<tool_call|>
 const TOKEN_CALL = new RegExp(`call:(${[...TOOL_NAMES].join("|")})\\{([^{}]*)\\}?`, "g");
@@ -143,8 +146,9 @@ const SYSTEM = () => `${persona}
 - 1ターンの流れ：状況を見る → 内政（研究・建設・探査・造船・改装）→ 戦いに行く艦隊は相手に合わせて陣形（set_formation）→ 艦隊の移動 → end_turn。
 - 内政は「■内政の候補」に打てる手が呼び出しの形で並んでいる。毎ターン艦隊を動かす前に、資金の使い道を決めて1つ以上実行する（収入が増えると強い艦を作れる。◎は星の特性に合う施設）。修理のために少し残すのはよいが、使わずに貯めすぎない。
 - 通信ウィンドウが出たら内容をひとことで紹介してから dismiss_dialog。
-- 戦闘中は、攻撃候補（予測ダメージつき）と移動先から1隻ずつ battle_attack / battle_move を選ぶ。動かしたくない艦（傷ついていて前に出したくない・射程外で近づくと不利など）は battle_wait で待機させる。全艦が動く（待機も含む）と自動で敵の番になるので、「敵の動きを見る」ために battle_end_phase を使わない。終わったら battle_close。
-- 惑星の攻略戦では、中枢と防衛衛星はその場から動かない。待っていても撃たれるだけなので、毎ターン近づいて攻撃する。中枢は爆装（射程1）でしか壊せないので、爆装を持つ艦を中枢の隣まで進める。
+${MANUAL_BATTLE ? `- 戦闘中は、攻撃候補（予測ダメージつき）と移動先から1隻ずつ battle_attack / battle_move を選ぶ。動かしたくない艦（傷ついていて前に出したくない・射程外で近づくと不利など）は battle_wait で待機させる。全艦が動く（待機も含む）と自動で敵の番になるので、「敵の動きを見る」ために battle_end_phase を使わない。終わったら battle_close。
+- 惑星の攻略戦では、中枢と防衛衛星はその場から動かない。待っていても撃たれるだけなので、毎ターン近づいて攻撃する。中枢は爆装（射程1）でしか壊せないので、爆装を持つ艦を中枢の隣まで進める。` : `- 戦闘はオートで進む。攻め込む（move_fleet）か襲われると、戦闘は自動で決着して「出来事」に結果が出る。結果をひとこと実況する。
+- あなたの仕事は戦う前の準備：勝てる相手を選ぶ、傷ついた艦隊は修理してから出す、惑星の攻略には爆装を持つ艦を入れる（中枢は爆装でしか壊せない）、相手に合わせて陣形を選ぶ（移動先の「陣形の目安」）、旗艦は打たれ強い艦にする。オートの戦い方はルールの「オートの戦い方」のとおりで、改装の配分がそのまま戦い方になる。`}
 - IDは状況テキストに書かれた数字だけを使う。失敗したら理由を読んで別の手を選ぶ。
 
 ${rules}
@@ -228,7 +232,7 @@ async function digest(name, r) {
   const lines = [`${j.ok ? "成功" : "失敗"}：${j.message}`];
   if (j.events?.length) lines.push("出来事：\n " + j.events.slice(-12).join("\n "));
   // 戦闘中・通信・戦闘を閉じて作戦卓に戻ったときは、最新の状況テキストをつける
-  if (j.ok && (j.mode === "battle" || j.mode === "battle_ended" || j.dialog || (name === "battle_close" && j.mode === "map"))) {
+  if (j.ok && (j.mode === "battle" || j.mode === "battle_ended" || j.dialog || ((name === "battle_close" || j.battles?.length) && j.mode === "map"))) {
     const short = [lines[0], ...(j.events?.length ? ["出来事：\n " + j.events.slice(-4).join("\n ")] : []), OLD_NOTE].join("\n");
     return { content: [...lines, await summary()].join("\n"), short };
   }

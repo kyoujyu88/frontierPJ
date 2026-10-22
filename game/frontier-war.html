@@ -172,6 +172,7 @@ body.anim .app,body.anim .mbar{pointer-events:none}
 .actor-ring{animation:actorPulse .45s ease-in-out infinite alternate}
 .legend i{display:inline-block;width:11px;height:11px;border:1px solid;vertical-align:-1px;margin-right:4px}
 button.on{border-color:var(--foe);color:var(--foe);background:#2a0b0a}
+button.auto-on{border-color:var(--good);color:var(--good);background:#0c2a18}
 .layout>.mapcol{display:flex;flex-direction:column;gap:10px;min-width:0}
 aside.sideL{display:none}
 .kbd{display:none;font-family:var(--f-display);font-size:10.5px;line-height:1;padding:2px 4px;margin-left:6px;border:1px solid currentColor;border-radius:3px;opacity:.6;vertical-align:1px}
@@ -789,9 +790,9 @@ function showIntro(){
     {who:"総司令部",text:"星暦3990年、辺境星系。隣国ヴァルガ帝国が国境のクオン星系に艦隊を集結させています。元首閣下、我が国アステリアの舵取りをお願いします。"},
     {who:"作戦参謀",text:`星図の惑星を選び、指令パネル${isNarrow()?"（星図の下）":""}から命令を出します。艦隊は1ターンに1回、隣の星へ移動するか、自国の星へ亜空間移動できます。自国以外の星や、敵艦隊のいる星へ進むと戦術戦闘になります。当面の目標はヴァルガ帝国の侵攻を退けることです。ただ、観測所が北東の暗黒宙域に不穏な反応をとらえています。ヴァルガ本星を落とすか、星暦4007年を迎えるころには、事態が動くかもしれません。`},
     {who:"技術局",text:"資金を研究に投資すれば新型艦が完成します。完成した艦は「造船」で配備し、「改装」でポイントを振り分けてください。惑星の中枢は爆装でしか壊せません。"},
-    {who:"作戦参謀",text:`戦闘は旗艦（★）を沈めた側の勝ちです。艦を選ぶと青いマスが移動先、赤いマスが射程になり、赤枠の敵を${TAP}すると攻撃します。攻撃できない敵を${TAP}するとその敵の移動範囲と射程、「敵の射程」ボタンで敵全体の射程が見えます。敵艦の背面や側面から撃つと大きな損害を与えられます。ヴァルガの艦隊は突撃・砲撃・重装・強襲など戦い方がそれぞれ違うので、戦闘前のヒントを確かめてください。主星アステリアを奪われたら敗北です。進行はこのブラウザに自動で保存され、次に開くと続きから遊べます。`}
+    {who:"作戦参謀",text:`戦闘は旗艦（★）を沈めた側の勝ちです。艦を選ぶと青いマスが移動先、赤いマスが射程になり、赤枠の敵を${TAP}すると攻撃します。攻撃できない敵を${TAP}するとその敵の移動範囲と射程、「敵の射程」ボタンで敵全体の射程が見えます。敵艦の背面や側面から撃つと大きな損害を与えられます。ヴァルガの艦隊は突撃・砲撃・重装・強襲など戦い方がそれぞれ違うので、戦闘前のヒントを確かめてください。戦闘中に「オート」を押すと自軍の艦が自動で戦い、もう一度押すと手動に戻ります。主星アステリアを奪われたら敗北です。進行はこのブラウザに自動で保存され、次に開くと続きから遊べます。`}
   ];
-  if(TAP==="クリック")lines.push({who:"作戦参謀",text:"マウスとキーでも操作できます。星図：右クリックで選択中の艦隊をその星へ移動、M 移動、F 陣形、1〜3 艦隊の切替、E ターン終了。戦闘：右クリックで選択解除、1〜4 艦の選択、W 待機、E フェイズ終了、R 敵の射程。"});
+  if(TAP==="クリック")lines.push({who:"作戦参謀",text:"マウスとキーでも操作できます。星図：右クリックで選択中の艦隊をその星へ移動、M 移動、F 陣形、1〜3 艦隊の切替、E ターン終了。戦闘：右クリックで選択解除、1〜4 艦の選択、W 待機、E フェイズ終了、R 敵の射程、A オート。"});
   if(S&&S.monster)lines.push({who:"作戦参謀",text:"勝利条件：深淵の巣の中枢★（耐久150）を爆装で破壊すること。巣が残る限り、異生体の群れは何度でも湧いてきます。"});
   showComm(lines,null,null,"key_title");
 }
@@ -1020,12 +1021,13 @@ function startBattle(cfg){
     if(fm!=="line")msg.push(`陣形「${FORM[fm].name}」：${FORM[fm].tip}`);
     if(cfg.kind==="fleet"&&dp.owner==="P"&&hasF(dp,"flak")){ // 防衛戦でも迎撃でも、自国の星での艦隊戦なら撃つ
       units.forEach(u=>{if(u.side==="E")u.hp=Math.max(1,u.hp-5)});msg.push(`${dp.name}の対空砲台が敵艦隊を砲撃（全艦に5ダメージ）`)}
-    B={cfg,units,form:fm,phase:"P",round:1,sel:null,inspect:null,hover:null,danger:false,rocks,foeSide,title,tip,resolve,msg,busy:true};
+    B={cfg,units,form:fm,phase:"P",round:1,sel:null,inspect:null,hover:null,danger:false,rocks,foeSide,title,tip,resolve,msg,busy:true,auto:!!window.AUTO_BATTLE};
     ANIM.fast=false;hideTip();
     $("battle").hidden=false;renderBattle();render();setMusic(musicFor());
     banner("自軍フェイズ",`ROUND 1 ── ${foeSide==="M"?"異生体と交戦":"交戦開始"}`,"P",1050).then(()=>{
       if(!B||B.ended)return;B.busy=false;
       const first=B.units.find(u=>u.side==="P"&&u.flag);B.sel=first?first.uid:null;renderBattle();
+      if(B.auto)autoPhase();
     });
   });
 }
@@ -1107,7 +1109,7 @@ function battleOver(){
   return null;
 }
 function onCell(x,y){
-  if(!B||B.phase!=="P"||B.busy||B.ended)return;
+  if(!B||B.phase!=="P"||B.busy||B.ended||B.autoRun)return;
   const u=B.sel&&B.units.find(v=>v.uid===B.sel);
   const tgt=unitAt(x,y);
   B.hover=null;B.note=null;
@@ -1132,6 +1134,7 @@ function onHover(x,y){
 function afterPlayerAct(){
   const r=battleOver();if(r)return finishBattle(r);
   if(!B.units.some(u=>u.side==="P"&&u.hp>0&&!u.acted))return enemyPhase();
+  if(B.auto&&!B.autoRun)return autoPhase();
   const nx=B.units.find(u=>u.side==="P"&&u.hp>0&&!u.acted);B.sel=nx?nx.uid:null;
   renderBattle();
 }
@@ -1214,8 +1217,82 @@ async function enemyPhase(){
   B.busy=false;
   const first=B.units.find(u=>u.side==="P"&&u.hp>0&&u.flag)||B.units.find(u=>u.side==="P"&&u.hp>0);B.sel=first?first.uid:null;
   renderBattle();
+  if(B.auto)autoPhase();
 }
 const RESULT_LABEL={win:"勝利",retreat:"撤退",lose:"敗北",hold:"防衛成功",timeout:"時間切れ"};
+/* オート戦闘：自軍の艦を1隻ずつ自動で動かす。人のプレイは戦闘ごとに「オート」で切り替え、AIプレイ（MCP）は常にオート */
+function autoGoal(u,foes){
+  const core=foes.find(t=>t.core);
+  if(core&&u.w.some(w=>w.core))return core;              // 爆装艦は中枢へ
+  if(core){const g=foes.filter(t=>!t.core);return g.length?nearestOf(u,g)[0]:core} // ほかは防衛衛星・護衛を払う
+  return foes.find(t=>t.flag)||nearestOf(u,foes)[0];     // 艦隊戦は敵旗艦へ
+}
+function autoDecide(u,threats){
+  const foes=B.units.filter(t=>t.side==="E"&&t.hp>0);if(!foes.length)return null;
+  // 撃てるなら撃つ：とどめ（特に旗艦・中枢）＞ダメージ
+  let best=null;
+  for(const t of foes){const a=bestAttack(u,t);if(!a)continue;
+    const sc=a.dmg+(t.hp<=a.dmg?(t.flag?100:12):0)+(t.flag?5:0);
+    if(!best||sc>best.sc)best={t,a,sc}}
+  if(best)return{attack:best};
+  const tiles=reach(u);if(!tiles.length)return null;
+  // 撃てないなら、目標を次のラウンドに撃てる距離へ動く。艦の武装・耐久と陣形で好みを変える
+  const goal=autoGoal(u,foes),fm=B.form;
+  const mi=u.w.find(w=>w.n==="ミサイル"),ca=u.w.find(w=>w.n==="主砲");
+  const longRange=!goal.core&&mi&&(!ca||mi.d+(fm==="rear"?1:0)>=ca.d); // ミサイルが主力の艦は射程2〜4を保つ
+  const ws=goal.core?u.w.filter(w=>w.core):longRange?[mi]:u.w.filter(w=>w.unit);if(!ws.length)return null;
+  const hpr=u.hp/u.maxHp;
+  const risk=u.flag?(hpr<.5?4:2.5):hpr<.35?1:.3;          // 旗艦と傷ついた艦は敵の射程を避ける
+  const flag=B.units.find(v=>v.side==="P"&&v.flag&&v.hp>0);
+  const score=c=>{
+    const d=dist(c,goal);
+    const gap=Math.min(...ws.map(w=>d<w.min?w.min-d:d>w.max?d-w.max:0));
+    const hits=threats.reduce((n,s)=>n+(s.has(`${c.x},${c.y}`)?1:0),0);
+    let sc=gap*(u.flag?1:2)-(mult(c,goal)-1)*(fm==="crane"?3:2)+hits*risk;
+    // 方陣：護衛は旗艦の隣に残り、旗艦は味方の隣にいる（旗艦の被ダメージ-25%を保つ）
+    if(fm==="square"&&flag){
+      if(u===flag)sc-=B.units.filter(v=>v!==u&&v.side==="P"&&v.hp>0&&dist(v,c)===1).length*.8;
+      else if(dist(c,flag)===1)sc-=1.5;
+    }
+    return sc;
+  };
+  const cur=score(u);let pick=null;
+  for(const[x,y]of tiles){const sc=score({x,y});if(!pick||sc<pick.sc)pick={x,y,sc}}
+  return pick&&pick.sc<cur-.05?{move:pick}:null;
+}
+function autoPick(){
+  const mine=B.units.filter(u=>u.side==="P"&&u.hp>0&&!u.acted);if(!mine.length)return null;
+  const threats=B.units.filter(e=>e.side==="E"&&e.hp>0).map(threatOf);
+  const ds=mine.map(u=>({u,d:autoDecide(u,threats)}));
+  // 撃てる艦から（いちばん良い攻撃を先に）、次に旗艦以外が前へ、旗艦は最後
+  const atk=ds.filter(x=>x.d&&x.d.attack).sort((a,b)=>b.d.attack.sc-a.d.attack.sc)[0];
+  return atk||ds.find(x=>!x.u.flag)||ds[0];
+}
+/* オートでは勝ち目のない攻略戦を続けない（中枢を壊せる爆装艦がいない）。ラウンド上限まで待ったのと同じ「時間切れ」で切り上げる */
+function autoHopeless(){
+  const core=B.units.find(t=>t.side==="E"&&t.core&&t.hp>0);
+  return core&&!B.units.some(u=>u.side==="P"&&u.hp>0&&u.w.some(w=>w.core))?"中枢を壊せる爆装艦がいないので":null;
+}
+async function autoPhase(){
+  if(!B||B.ended||!B.auto||B.phase!=="P"||B.busy||B.autoRun)return;
+  const why=autoHopeless();if(why){bmsg(`オート：${why}攻略を切り上げる。`);return finishBattle(B.cfg.attack?"timeout":"retreat")}
+  B.autoRun=true;B.busy=true;B.sel=null;B.inspect=null;B.hover=null;setFfwd(true);renderBattle();
+  try{
+    while(B&&!B.ended&&B.auto&&B.phase==="P"){
+      const p=autoPick();if(!p)break;
+      if(!p.d){p.u.acted=true;continue}                  // 動く意味がない艦は待機
+      B.actor=p.u.uid;renderBattle();await wait(250);
+      if(!B||B.ended)return;
+      if(p.d.attack)await doAttack(p.u,p.d.attack.t,p.d.attack.a);else await doMove(p.u,p.d.move.x,p.d.move.y);
+      if(!B)return;
+      B.actor=null;renderBattle();
+      const r=battleOver();if(r){B.autoRun=false;B.busy=false;setFfwd(false);ANIM.fast=false;return finishBattle(r)}
+      await wait(200);
+    }
+  }finally{if(B){B.autoRun=false;B.busy=false;B.actor=null}setFfwd(false);ANIM.fast=false}
+  if(B&&!B.ended&&B.phase==="P")afterPlayerAct();
+}
+function toggleAuto(){if(!B||B.ended)return;B.auto=!B.auto;renderBattle();if(B.auto)autoPhase()}
 function finishBattle(result){
   if(B.ended)return;B.ended=true;B.result=result;B.sel=null;B.inspect=null;B.hover=null;const good=result==="win"||result==="hold";sfx(good?"win":"sad");
   bmsg({win:"勝利！",retreat:"撤退した。",hold:"時間切れ。持ちこたえた ── 敵は攻めあぐねて退いた。",timeout:"時間切れ。攻め切れずに引き返す。"}[result]||"旗艦を失った……敗北。");
@@ -1377,11 +1454,12 @@ function renderBattle(){
     bar.append(h("span",{class:"bb-info",style:`color:${B.result==="win"||B.result==="hold"?"var(--good)":"var(--foe)"}`},RESULT_LABEL[B.result]||"敗北"),
       h("button",{class:"primary",onclick:closeBattle},"作戦卓へ戻る",h("span",{class:"kbd"},"Enter")));
   }else{
-    bar.append(h("span",{class:"bb-info"},sel?`${sel.flag?"★":""}${sel.name} 耐久${sel.hp}/${sel.maxHp}`:insp?`敵：${insp.name}`:B.phase==="P"?(B.busy?"……":B.note||`自軍の艦を${TAP}`):`敵が行動中……（${TAP}で早送り）`));
+    bar.append(h("span",{class:"bb-info"},B.autoRun?`オート戦闘中……（${TAP}で早送り）`:sel?`${sel.flag?"★":""}${sel.name} 耐久${sel.hp}/${sel.maxHp}`:insp?`敵：${insp.name}`:B.phase==="P"?(B.busy?"……":B.note||`自軍の艦を${TAP}`):`敵が行動中……（${TAP}で早送り）`));
+    bar.append(h("button",{id:"bAuto",class:B.auto?"auto-on":"","aria-pressed":String(!!B.auto),title:"自軍の艦を自動で動かす（もう一度押すと手動に戻る）",onclick:toggleAuto},B.auto?"オート中":"オート",h("span",{class:"kbd"},"A")));
     bar.append(h("button",{class:B.danger?"on":"","aria-pressed":String(!!B.danger),onclick:()=>{B.danger=!B.danger;if(!B.busy)renderBattle()}},"敵の射程",h("span",{class:"kbd"},"R")));
     if(B.phase==="P")bar.append(
       h("button",{disabled:!sel||sel.acted||B.busy,onclick:()=>battleWaitSel()},"待機",h("span",{class:"kbd"},"W")),
-      h("button",{class:"primary",disabled:B.busy,title:"まだ動いていない艦は待機して、敵のフェイズへ",onclick:()=>battleEndPhase()},"フェイズ終了",h("span",{class:"kbd"},"E")),
+      h("button",{class:"primary",disabled:B.busy||B.auto,title:"まだ動いていない艦は待機して、敵のフェイズへ",onclick:()=>battleEndPhase()},"フェイズ終了",h("span",{class:"kbd"},"E")),
       h("button",{class:"danger",disabled:B.busy,onclick:()=>askRetreat()},"撤退"));
   }
   // サイドパネル
@@ -1391,7 +1469,8 @@ function renderBattle(){
     side.append(h("h2",{style:u.side==="E"?`color:${u.xeno?"var(--xeno)":"var(--foe)"}`:null},(u.flag?"★":"")+u.name),h("dl",{class:"kv"},h("dt",null,"耐久"),h("dd",null,`${Math.ceil(u.hp)}/${u.maxHp}`),h("dt",null,"装甲"),h("dd",null,u.armor),h("dt",null,"移動"),h("dd",null,u.move),h("dt",null,"武装"),h("dd",null,ws)),
       h("p",{class:"hint"},hint));
   };
-  if(sel)info(sel,"青いマスへ移動するか、赤枠の敵を攻撃。赤いマスは今の位置からの射程、赤い点線は移動してから届く範囲。1隻につき移動か攻撃のどちらか1回。");
+  if(B.auto&&!B.ended)side.append(h("p",{class:"hint"},"オート戦闘中：自軍の艦は自動で動く。「オート」をもう一度押すと（A キー）手動に戻る。クリックで早送り。"));
+  else if(sel)info(sel,"青いマスへ移動するか、赤枠の敵を攻撃。赤いマスは今の位置からの射程、赤い点線は移動してから届く範囲。1隻につき移動か攻撃のどちらか1回。");
   else if(insp)info(insp,insp.core||insp.sat?"斜線のマスがこの目標の射程。":`紫のマスが移動範囲。濃い斜線は次の敵フェイズに撃たれるマス、薄い斜線は動いてから届くマス（敵も移動と攻撃は同じ手番にできない）。${insp.xeno?(insp.neo?"正面が弱点。":"側面が弱点。"):"背面と側面から撃つと大きな損害を与えられる。"}`);
   else if(!B.ended)side.append(h("p",{class:"hint"},B.phase==="P"?`自軍の艦を${TAP}して選択。攻撃できない敵を${TAP}するとその射程が見える。`:"敵が行動中……"));
   side.append(h("div",{class:"legend"},
@@ -1401,7 +1480,7 @@ function renderBattle(){
     h("span",null,h("i",{style:"background:repeating-linear-gradient(45deg,#ea5a4f88 0 2px,transparent 2px 5px);border-color:#ea5a4f"}),"敵の射程（次に撃たれる）"),
     h("span",null,h("i",{style:"background:repeating-linear-gradient(45deg,#ea5a4f44 0 1px,transparent 1px 6px);border-color:#ea5a4f66"}),"敵が動けば届く"),
     h("span",null,"数字末尾 側/背＝向きによる割増")));
-  side.append(h("p",{class:"hint kbd-help"},"マウス：左クリックで選択・移動・攻撃、右クリックで選択解除。キー：1〜4 艦の選択／W 待機／E フェイズ終了／R 敵の射程"));
+  side.append(h("p",{class:"hint kbd-help"},"マウス：左クリックで選択・移動・攻撃、右クリックで選択解除。キー：1〜4 艦の選択／W 待機／E フェイズ終了／R 敵の射程／A オート"));
   if(B.msg.length)side.append(h("div",{class:"log",style:"max-height:240px"},...B.msg.map(t=>h("p",null,t))));
 }
 /* 撤退は取り消せないので一度確かめる（防衛戦ならその星が包囲される）。AIプレイは finishBattle("retreat") を直接呼ぶ */
@@ -1763,7 +1842,7 @@ $("ffwd").textContent=`${TAP}で早送り`;
 // ウィンドウが開いている間は、後ろの画面に Tab で移って押せないようにする（hidden の付け外しを見張る）
 new MutationObserver(()=>{const open=!$("modal").hidden;for(const el of[document.querySelector(".app"),$("mbar"),$("battle")])el.inert=open})
   .observe($("modal"),{attributes:true,attributeFilter:["hidden"]});
-document.addEventListener("pointerdown",e=>{if(e.target.closest&&e.target.closest("#modal"))return;if((B&&B.phase==="E"&&!B.ended)||(!B&&ANIM.enemyTurn))ANIM.fast=true},{capture:true});
+document.addEventListener("pointerdown",e=>{if(e.target.closest&&e.target.closest("#modal"))return;if(e.target.closest&&e.target.closest("#bAuto"))return;if((B&&(B.phase==="E"||B.autoRun)&&!B.ended)||(!B&&ANIM.enemyTurn))ANIM.fast=true},{capture:true});
 $("bsvg").addEventListener("pointerleave",()=>{onHover(null);hideTip()});
 $("bsvg").addEventListener("pointermove",e=>{if(e.pointerType==="mouse")moveTip(e)});
 $("bsvg").addEventListener("contextmenu",e=>{e.preventDefault();if(B&&!B.busy){B.sel=null;B.inspect=null;B.hover=null;renderBattle()}});
@@ -1777,6 +1856,7 @@ document.addEventListener("keydown",e=>{
   if(B){
     if(B.ended){if(k==="enter"){e.preventDefault();closeBattle()}return}
     if(k==="r"){B.danger=!B.danger;if(!B.busy)renderBattle();return}
+    if(k==="a"){toggleAuto();return}
     if(B.phase!=="P"||B.busy)return;
     if(k==="w")battleWaitSel();
     else if(k==="e")battleEndPhase();

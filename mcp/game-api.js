@@ -9,6 +9,8 @@
  *  - 行動は画面のボタンと同じ条件で検証し、同じ関数を呼ぶ（ルールを二重実装しない）。
  *  - 配信向けに、行動の前に対象を選択表示して少し間を置く（pace）。
  *  - 戦闘アニメと敵フェイズが終わるまで待ってから結果を返す（settle）。
+ *  - オート戦闘（setAutoBattle(true)、MCPサーバーの既定）では、戦闘は本体のオートで決着させ、
+ *    結果を見せてから作戦卓へ戻したうえで返す。戦闘の結果は events と battles に入る。
  */
 (function(){
 "use strict";
@@ -19,7 +21,7 @@ const events=[];let seq=0;
 function push(kind,text){events.push({seq:++seq,kind,text});if(events.length>400)events.shift()}
 const origLog=window.log,origBmsg=window.bmsg;
 window.log=function(m){push("log",m);return origLog(m)};
-window.bmsg=function(m){push("battle",m);return origBmsg(m)};
+window.bmsg=function(m){if(!(autoBattle&&B&&B.auto))push("battle",m);return origBmsg(m)}; // オート戦闘の1発ごとの記録は省き、結果だけ残す
 function since(n){return events.filter(e=>e.seq>n).map(e=>e.kind==="battle"?`［戦闘］${e.text}`:e.text)}
 
 /* ---------- 共通 ---------- */
@@ -29,6 +31,8 @@ const STAT_KEYS=STATS.map(s=>s[0]);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let pace=700;          // 配信用の「間」(ms)。0で即時
 let turnTask=null;     // 実行中の endTurn() の Promise
+let autoBattle=false;  // 戦術戦闘をオートで片付ける（MCPサーバーの既定。--manual-battle で手動）
+const autoResults=[];  // オートで片付けた戦闘の結果
 
 class GameError extends Error{}
 const fail=m=>{throw new GameError(m)};
@@ -55,20 +59,41 @@ function ensureBattle(needTurn=true){
 }
 function focusPlanet(id,fleetId){S.sel=id;if(fleetId!=null)S.selFleet=fleetId;S.mode=null;render()}
 
-/* 待機：アニメ・敵フェイズ・ターン処理が一段落するまで */
+/* 待機：アニメ・敵フェイズ・ターン処理が一段落するまで。オート戦闘は決着して作戦卓に戻るまで待つ */
 async function settle(timeout=120000){
-  const t0=Date.now();
+  let t0=Date.now();
   await sleep(60);
-  while(Date.now()-t0<timeout){
-    if(B){if(B.ended||(B.phase==="P"&&!B.busy))return}
-    else if(!turnTask)return;
+  for(;;){
+    if(B&&autoBattle&&B.auto){
+      if(B.ended){await closeAutoBattle();t0=Date.now();continue}
+      if(Date.now()-t0>900000)return; // オート戦闘が15分で終わらないときは、いったん返す
+    }else{
+      if(B){if(B.ended||(B.phase==="P"&&!B.busy))return}
+      else if(!turnTask)return;
+      if(Date.now()-t0>timeout)return;
+    }
     await sleep(50);
   }
+}
+/* オート戦闘の決着：結果を記録し、結果の画面を少し見せてから作戦卓へ戻る */
+async function closeAutoBattle(){
+  const{title,result,units,round}=B;
+  const mine=units.filter(u=>u.side==="P"),foes=units.filter(u=>u.side==="E");
+  const lost=mine.filter(u=>u.hp<=0).length,downed=foes.filter(u=>u.hp<=0).length;
+  const res=resultLabel(result);
+  const text=`戦闘「${title}」：${res}（${round}ラウンド・自軍の損失${lost}/${mine.length}隻・敵の撃破${downed}/${foes.length}）`;
+  push("log",text);autoResults.push({seq,title,result:res,rounds:round,lost,ships:mine.length,downed,foes:foes.length});
+  if(autoResults.length>50)autoResults.shift();
+  showAction(`${title}：${res}`);
+  await sleep(Math.max(pace,window.FAST?0:600));
+  if(B&&B.ended)closeBattle();
+  await sleep(80);
 }
 /* 行動の実行ラッパー：成否・新しいログ・状況の要約を返す */
 async function act(name,fn){
   const n=seq;
   try{
+    if(B&&autoBattle)await settle(); // 前の呼び出しで終わりきらなかったオート戦闘を片付けてから
     const message=await fn();
     await settle();await sleep(80);
     return result(true,message,n);
@@ -79,6 +104,7 @@ async function act(name,fn){
 }
 function result(ok,message,n){
   const r={ok,message:message||(ok?"完了":""),events:since(n),funds:S?S.funds:null,turn:S?S.turn:null,mode:B?(B.ended?"battle_ended":"battle"):(S&&S.over?"over":"map")};
+  const bs=autoResults.filter(b=>b.seq>n).map(({seq,...b})=>b);if(bs.length)r.battles=bs;
   if(dialogOpen())r.dialog=dialogText();
   if(B)r.battle=battleState();
   return r;
@@ -94,6 +120,19 @@ function shipInfo(s,i){
   const c=CLASSES[s.cls],used=STAT_KEYS.reduce((a,k)=>a+s.a[k],0);
   return{index:i,flagship:i===0,class:s.cls,name:c.name,type:c.type,hp:s.hp,maxHp:s.maxHp,
     alloc:{...s.a},points:{used,max:c.pts},stats:shipStats(s)};
+}
+/* 相手ごとの陣形の目安（オート戦闘で相手5種＋異生体×陣形5種を試した勝率から） */
+const FORM_HINT={line:["rear","crane"],assault:["square","rear"],missile:["rear","square"],heavy:["rear","line"],raid:["line","square"],xeno:["line"]};
+function foeKey(ef){return ef.side==="M"?"xeno":(ef.doc&&FORM_HINT[ef.doc]?ef.doc:"line")}
+function formHint(pf,ef){
+  if(typeof FORM==="undefined")return"";
+  const ks=FORM_HINT[foeKey(ef)],cur=formKey(pf);
+  return`陣形の目安：${ks.map(k=>`${k}=${FORM[k].name}`).join("か")}${ks.includes(cur)?"（今の陣形でよい）":`（今は${FORM[cur].name}。set_formation で変えられる）`}`;
+}
+/* 相手の艦隊の短い紹介：ドクトリンか異生体の弱点・戦力の比べ */
+function foeNote(pf,ef){
+  const tag=ef.side==="M"?`異生体${S.evolved?"・進化後は正面が弱点":"・側面が弱点"}`:typeof docOf==="function"?docOf(ef).tag:"";
+  return`${ef.name}〈${tag}〉・${ef.ships.length}隻・戦力${Math.round(fleetPower(ef))} 対 こちら${Math.round(fleetPower(pf))}・${formHint(pf,ef)}`;
 }
 function moveOptions(f){
   if(f.moved)return[];
@@ -111,7 +150,7 @@ function moveOptions(f){
     let kind;
     const foes=S.fleets.filter(x=>x.node===p.id&&(x.side==="E"||x.side==="M"));
     if(S.truce&&(p.owner==="E"||fleetsAt(p.id,"E").length))kind="不可（ヴァルガとは休戦中）";
-    else if(foes.length)kind=`艦隊戦（${foes[0].name}・戦力${Math.round(fleetPower(foes[0]))}）`;
+    else if(foes.length)kind=`艦隊戦（${foeNote(f,foes[0])}）`;
     else if(p.owner==="H")kind="深淵の巣への突入戦";
     else if(p.owner!=="P")kind=`惑星攻略戦（${OWNER_LABEL[p.owner]}・防衛力${p.def}）`;
     else kind=warp?"亜空間移動":"移動";
@@ -129,6 +168,7 @@ function fleetInfo(f){
     const p=planet(f.node),dmg=f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);
     o.moved=!!f.moved;o.moveOptions=moveOptions(f);
     o.canIntercept=!f.moved&&!!intruder(f);
+    if(o.canIntercept)o.interceptNote=foeNote(f,intruder(f));
     o.repairCost=p.owner==="P"&&dmg?Math.ceil(dmg/2):null;
     o.atShipyard=p.owner==="P"&&!!p.yard;
   }
@@ -262,7 +302,7 @@ function getSummary(){
   L.push("■自軍艦隊");
   if(!st.myFleets.length)L.push(" なし（造船所のある星で new_fleet）");
   for(const f of st.myFleets){
-    L.push(` ${f.name} ID${f.id} @${f.at}${f.atName} ${f.moved?"行動済":"未行動"} 戦力${f.power}${f.formation?` 陣形${f.formation}`:""}${f.atShipyard?" 造船所あり":""}${f.repairCost?` 修理${f.repairCost}`:""}${f.canIntercept?" 迎撃可":""}`);
+    L.push(` ${f.name} ID${f.id} @${f.at}${f.atName} ${f.moved?"行動済":"未行動"} 戦力${f.power}${f.formation?` 陣形${f.formation}`:""}${f.atShipyard?" 造船所あり":""}${f.repairCost?` 修理${f.repairCost}`:""}${f.canIntercept?` 迎撃可（intercept：${f.interceptNote}）`:""}`);
     L.push(`   艦：${f.ships.map(x=>`${x.index}:${shipShort(x)}`).join(" ")}`);
     if(f.moveOptions.length)L.push(`   移動先：${f.moveOptions.map(o=>`${o.to}${o.name}=${o.kind}`).join("、")}`);
   }
@@ -315,6 +355,13 @@ const api={
   getEvents:(after=0)=>events.filter(e=>e.seq>after),
   setPace(ms){pace=Math.max(0,Number(ms)||0);window.FAST=pace===0;return{ok:true,pace}}, // 0なら戦闘・移動の演出も省く
   setSpeaker(n){speaker=String(n||"のあ");return{ok:true,speaker}},
+  // オート戦闘：true なら戦術戦闘は本体のオートで決着させ、作戦卓に戻ってから結果を返す（battle_* の操作は要らない）
+  setAutoBattle(on){
+    if(on&&typeof autoPhase!=="function")return{ok:false,message:"このゲームHTMLはオート戦闘に対応していません"};
+    autoBattle=!!on;window.AUTO_BATTLE=autoBattle;
+    if(B&&!B.ended){B.auto=autoBattle;if(autoBattle)autoPhase()}
+    return{ok:true,autoBattle};
+  },
   say,
 
   dismissDialog:()=>act("dismiss",async()=>{
@@ -499,8 +546,11 @@ const api={
     return`作戦卓へ戻りました（結果：${resultLabel(r)}）`;
   }),
 
-  rules:()=>RULES
+  rules:()=>autoBattle?RULES.replace(/。目安：突撃や強襲には方陣.*$/m,"。").replace(/^- 撤退すると.*\n/m,"").replace(/^- 戦闘が終わったら battle_close.*$/m,AUTO_RULE).replace(/戦闘ユニットのIDは.*$/m,""):RULES
 };
+const AUTO_RULE=`- 戦術戦闘はオート（自動）で進む。艦隊を攻め込ませる（move_fleet・intercept）か、end_turn で敵に襲われると、戦闘は自動で決着し、結果は出来事（events）と battles に出る。戦闘中の操作はない。勝敗を分けるのは準備：艦隊の戦力（修理・造船）、改装の配分、陣形、旗艦の選び方、そして勝てる相手を選ぶこと。負けると艦隊は主星へ戻る（防衛戦で負けるとその星は敵に攻められる）。
+- オートの戦い方：撃てる艦から、とどめと旗艦を優先していちばん効く攻撃をする。撃てない艦は敵旗艦（攻略戦では爆装艦は中枢、ほかは防衛衛星）へ寄り、側面・背面を取りに行く。ミサイルが主砲以上の艦は射程2〜4を保って撃つ。旗艦と傷ついた艦は敵の射程を避けて控える。方陣では護衛が旗艦の隣に残り、鶴翼では回り込みを重く見る。爆装艦がいない攻略戦は時間切れで切り上げる。つまり改装の配分がそのまま戦い方になる（主砲寄り＝前に出る、ミサイル寄り＝距離を保つ、装甲＝打たれ強い）。旗艦には打たれ強い艦（装甲・耐久が高い）を選ぶ。
+- 陣形の目安（オートでの勝率から）：戦列には後衛陣か鶴翼／突撃には方陣か後衛陣／砲撃には後衛陣か方陣（横陣・楔形だと大きく負け越す）／重装には後衛陣か横陣／強襲には横陣か方陣／異生体には横陣。楔形は旗艦が前に出て狙われやすいので、オートでは勧めない。移動先の「艦隊戦（…）」と迎撃可の欄にも、相手に合わせた目安が出る。`;
 
 const RULES=`# 辺境星系戦記 ルール要約（AIプレイヤー向け）
 目的：北東の「深淵の巣」の中枢を破壊すれば勝利。主星アステリア（ID 0）を奪われたら敗北。

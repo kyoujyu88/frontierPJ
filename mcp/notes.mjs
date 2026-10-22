@@ -111,6 +111,11 @@ export class Journal {
       this.turnFails = (this.turnFails ?? 0) + 1;
     }
     if (j.ok && DEV_TOOLS[name]) this.dev.push(`${DEV_TOOLS[name]}${j.message ? `(${j.message.replace(/。.*$/, "").slice(0, 30)})` : ""}`);
+    // オート戦闘（既定）：行動の返り値に、その間に決着した戦闘の結果が入る
+    for (const b of Array.isArray(j.battles) ? j.battles : []) {
+      this.pending.push(`戦闘「${b.title}」${b.result}`);
+      this.battles.push(`${b.title}：${b.result}`);
+    }
     if (j.ok && name === "battle_close") {
       const res = /勝利/.test(j.message) ? "勝利" : /敗北/.test(j.message) ? "敗北" : "撤退";
       this.pending.push(`戦闘「${this.battleTitle ?? "?"}」${res}`);

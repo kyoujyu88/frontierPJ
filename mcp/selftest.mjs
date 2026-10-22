@@ -1,6 +1,7 @@
 /* 自動テスト：簡単なボットでMCPツールを通してゲームを数十ターン遊ばせ、操作が詰まらないか確かめる。
  *   node selftest.mjs            … ウィンドウなし・演出なし
  *   node selftest.mjs --show     … ウィンドウを出して演出つきで見る
+ *   MANUAL=1 node selftest.mjs   … 戦闘を battle_* で1隻ずつ操作する（サーバーの --manual-battle）。既定はオート戦闘
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -8,20 +9,22 @@ import { fileURLToPath } from "node:url";
 
 const show = process.argv.includes("--show");
 const MAX_TURNS = Number(process.env.TURNS ?? 30);
+const MANUAL = process.env.MANUAL === "1";
 const transport = new StdioClientTransport({
   command: process.execPath,
-  args: [fileURLToPath(new URL("./server.mjs", import.meta.url)), ...(show ? [] : ["--headless", "--pace", "0"])],
+  args: [fileURLToPath(new URL("./server.mjs", import.meta.url)), ...(show ? [] : ["--headless", "--pace", "0"]), ...(MANUAL ? ["--manual-battle"] : [])],
   env: process.env, stderr: "inherit",
 });
 const client = new Client({ name: "selftest", version: "1" });
 await client.connect(transport);
-let calls = 0, errors = 0;
+let calls = 0, errors = 0, autoBattles = 0;
 async function call(name, args = {}) {
   calls++;
-  const r = await client.callTool({ name, arguments: args });
+  const r = await client.callTool({ name, arguments: args }, undefined, { timeout: 20 * 60 * 1000 }); // オート戦闘は長いことがある
   const t = r.content[0].text;
   let v; try { v = JSON.parse(t); } catch { return t; }
   if (v.ok === false) { errors++; console.log(`  ✗ ${name}: ${v.message}`); }
+  for (const b of v.battles ?? []) { autoBattles++; console.log(`  戦闘（オート）：${b.title} ${b.result}（${b.rounds}ラウンド・損失${b.lost}/${b.ships}・撃破${b.downed}/${b.foes}）`); }
   return v;
 }
 const dist = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
@@ -30,6 +33,7 @@ async function clearDialogs() {
   for (let i = 0; i < 5; i++) { const s = await call("get_state"); if (!s.dialog) return s; console.log("  [通信] " + s.dialog.text.split("\n").slice(1, 3).join(" / ")); await call("dismiss_dialog"); }
 }
 async function fight() {
+  if (!MANUAL) return clearDialogs(); // オート戦闘では戦闘は返ってくる前に決着している
   for (let round = 0; round < 40; round++) {
     await clearDialogs();
     const b = await call("battle_state");
@@ -47,7 +51,9 @@ async function fight() {
   }
 }
 
-console.log((await client.listTools()).tools.length + " tools");
+const toolNames = (await client.listTools()).tools.map(t => t.name);
+console.log(`${toolNames.length} tools（戦闘：${MANUAL ? "手動" : "オート"}）`);
+if (!MANUAL && toolNames.some(n => n.startsWith("battle_"))) { errors++; console.log("  ✗ オート戦闘なのに battle_* ツールが出ている"); }
 const rules = await call("get_rules"); console.log("rules:", rules.length, "chars");
 await call("say", { text: "テストを始めるよ！" });
 for (let t = 0; t < MAX_TURNS; t++) {
@@ -71,12 +77,13 @@ for (let t = 0; t < MAX_TURNS; t++) {
   }
   void home;
   const r = await call("end_turn");
-  for (const e of r.events ?? []) if (!e.startsWith("［戦闘］")) console.log("  · " + e);
+  for (const e of r.events ?? []) if (!e.startsWith("［戦闘］") && !e.startsWith("戦闘「")) console.log("  · " + e);
   if (r.battle || r.dialog) { await fight(); }
   let st = await call("get_state");
   while (st.battle) { await fight(); st = await call("get_state"); }
 }
 const final = await call("get_state");
 console.log(`\n最終：ターン${final.turn} 資金${final.funds} over=${final.over} 自国惑星${final.planets.filter(p => p.owner === "P").length} 異生体=${final.situation.xenoAppeared}`);
-console.log(`ツール呼び出し ${calls} 回、拒否 ${errors} 回`);
+console.log(`ツール呼び出し ${calls} 回、拒否 ${errors} 回${MANUAL ? "" : `、オートで決着した戦闘 ${autoBattles} 回`}`);
+if (!MANUAL && final.battle) { console.log("✗ オート戦闘なのに戦闘が残っている"); process.exitCode = 1; }
 await client.close();
