@@ -260,10 +260,10 @@ aside.sideL{display:none}
 /* ============ データ ============ */
 const CLASSES=[
   {name:"ラーク級",type:"コルベット",hp:12,pts:6,cost:40,research:0,code:"LK-1"},
-  {name:"ファルコ級",type:"駆逐艦",hp:20,pts:9,cost:70,research:120,code:"FC-3"},
-  {name:"グレイヴ級",type:"巡洋艦",hp:30,pts:12,cost:110,research:220,code:"GV-7"},
-  {name:"アークライト級",type:"戦艦",hp:44,pts:16,cost:160,research:330,code:"AL-12"},
-  {name:"セラフ級",type:"対異生体戦艦",hp:56,pts:20,cost:200,research:380,code:"SR-0",anti:true}
+  {name:"ファルコ級",type:"駆逐艦",hp:20,pts:9,cost:70,research:160,code:"FC-3"},
+  {name:"グレイヴ級",type:"巡洋艦",hp:30,pts:12,cost:110,research:300,code:"GV-7"},
+  {name:"アークライト級",type:"戦艦",hp:44,pts:16,cost:160,research:450,code:"AL-12"},
+  {name:"セラフ級",type:"対異生体戦艦",hp:56,pts:20,cost:200,research:600,code:"SR-0",anti:true}
 ];
 const STATS=[["sh","装甲"],["ca","主砲"],["mi","ミサイル"],["bo","爆装"],["sp","機関"]];
 const PLANETS=[
@@ -284,7 +284,7 @@ const TRAITS={
   なし:{desc:"特別な性質はない",col:"#6f7aa8"}
 };
 const FAC={
-  mine:{name:"採掘所",mark:"採",cost:60,desc:p=>`収入 +${p.trait==="鉱物"?30:15}`},
+  mine:{name:"採掘所",mark:"採",cost:60,desc:p=>`収入 +${p.trait==="鉱物"?20:10}`},
   yard:{name:"造船所",mark:"造",cost:80,desc:p=>p.trait==="工業"?"造船・新艦隊の編成（建造費20%引き）":"造船・新艦隊の編成"},
   sats:{name:"防衛衛星群",mark:"衛",cost:50,desc:p=>`防衛力上限 +${p.trait==="要塞"?35:20}（建設時に防衛力 +15）${p.owner!=="P"?`・攻略戦の衛星 +${p.trait==="要塞"?2:1}`:""}`},
   lab:{name:"研究所",mark:"研",cost:70,desc:p=>`毎ターン研究 +${p.trait==="遺跡"?25:10}`},
@@ -378,7 +378,7 @@ function linksVisible(){return LINKS.filter(([a,b])=>S.monster||(a!==HIVE&&b!==H
 function neighbors(n){const r=[];for(const[a,b]of linksVisible()){if(a===n)r.push(b);if(b===n)r.push(a)}return r}
 function hasF(p,k){return p.fac.includes(k)}
 function syncFac(p){p.yard=p.fac.includes("yard");const base=PLANETS[p.id][6];p.maxDef=base+(hasF(p,"sats")?(p.trait==="要塞"?35:20):0);if(p.def>p.maxDef)p.def=p.maxDef}
-function planetIncome(p){return p.income+(hasF(p,"mine")?(p.trait==="鉱物"?30:15):0)}
+function planetIncome(p){return p.income+(hasF(p,"mine")?(p.trait==="鉱物"?20:10):0)}
 function labRate(){return S.planets.filter(p=>p.owner==="P"&&hasF(p,"lab")).reduce((s,p)=>s+(p.trait==="遺跡"?25:10),0)}
 function bcost(ci,p){return Math.round(CLASSES[ci].cost*(p&&p.trait==="工業"?.8:1))}
 function income(){return S.planets.filter(p=>p.owner==="P").reduce((s,p)=>s+planetIncome(p),0)}
@@ -503,7 +503,8 @@ function renderSide(){
     const c=CLASSES[next];
     rp.append(h("div",{class:"row",style:"justify-content:space-between"},h("span",null,`開発中：${c.name}（${c.type}）`),h("span",{class:"stat"},`${S.research}/${c.research}`)),
       h("div",{class:"progress"},h("i",{style:`width:${Math.min(100,S.research/c.research*100)}%`})),
-      h("div",{class:"row"},...[30,60,120].map(v=>h("button",{disabled:S.funds<v||!!S.over,onclick:()=>invest(v)},`投資 ${v}`))));
+      h("div",{class:"row"},...[30,60,120].map(v=>h("button",{disabled:S.funds<v||!!S.over||v>investLeft(),title:v>investLeft()?`研究への投資は1ターンに${INVEST_CAP}まで`:null,onclick:()=>invest(v)},`投資 ${v}`))),
+      h("p",{class:"hint"},`このターンの投資：あと ${investLeft()}（1ターン ${INVEST_CAP} まで）`));
   }else if(next===4&&!S.monster){rp.append(h("p",{class:"hint"},"現行技術の上限に到達。これ以上の艦級は未知の脅威への対抗研究が必要です。"))}
   else rp.append(h("p",{class:"hint"},"全艦級の開発が完了しました。"));
   rp.append(h("p",{class:"hint"},`改装上限：各項目 ${capOf("P")} まで・`+(researchOpen()?`研究所から毎ターン +${labRate()}`:labRate()?"いまは開発できる艦級がないため、研究所の研究は貯まりません":"研究所なし")));
@@ -511,7 +512,7 @@ function renderSide(){
 
   // 惑星
   const pp=h("div",{class:"panel p-planet"},h("h2",null,h("img",{class:"pthumb",src:planetArt(p),alt:""}),p.name,h("span",{class:`tag own-${p.owner}`},OWNER_LABEL[p.owner])));
-  const kv=p.id===HIVE?h("p",{class:"hint"},"異生体ゾアの巣。中枢★（耐久150）は爆装でしか壊せず、護衛の群れもいる。中枢を破壊すれば勝利。"):
+  const kv=p.id===HIVE?h("p",{class:"hint"},`異生体ゾアの巣。中枢★（耐久${hiveHp()}/${HIVE_HP}）はセラフ級の爆装でしか壊せず、護衛の群れもいる。中枢を破壊すれば勝利。突入で与えた損害は次の突入まで残る（1回ごとに20回復）。`):
     h("dl",{class:"kv"},h("dt",null,"特性"),h("dd",null,h("span",{style:`color:${TRAITS[p.trait].col}`},p.trait)," ",h("span",{class:"hint"},TRAITS[p.trait].desc)),
     h("dt",null,"収入"),h("dd",null,planetIncome(p)),h("dt",null,"防衛力"),h("dd",null,`${p.def}/${p.maxDef}`));
   if(p.owner==="P")kv.append(h("dt",null,"探査余地"),h("dd",null,p.survey>0?`あと${p.survey}回`:"なし"));
@@ -574,8 +575,12 @@ function fleetCard(f,p){
 }
 
 /* ============ 戦略コマンド ============ */
+const INVEST_CAP=120; // 1ターンに研究へ回せる上限（貯めた資金で一気に開発しきれないように）
+function investLeft(){return INVEST_CAP-(S.invTurn===S.turn?S.invT:0)}
 function invest(v){
-  S.funds-=v;S.research+=v;checkResearch();render();
+  if(v>investLeft()){toast(`研究への投資は1ターンに${INVEST_CAP}まで（このターンはあと${investLeft()}）。`);return}
+  if(S.invTurn!==S.turn){S.invTurn=S.turn;S.invT=0}
+  S.invT+=v;S.funds-=v;S.research+=v;checkResearch();render();
 }
 function researchOpen(){const n=S.tier+1;return n<CLASSES.length&&(n<4||S.monster)}
 function checkResearch(){
@@ -589,7 +594,7 @@ function checkResearch(){
   render();
 }
 function survey(p){S.funds-=40;p.survey--;
-  if(Math.random()<.45){p.income+=20;log(`${p.name}で鉱物資源帯を発見。収入+20。`)}else log(`${p.name}の小惑星探査は空振りに終わった。`);render()}
+  if(Math.random()<.45){p.income+=15;log(`${p.name}で鉱物資源帯を発見。収入+15。`)}else log(`${p.name}の小惑星探査は空振りに終わった。`);render()}
 function fortify(p){S.funds-=30;p.def=Math.min(p.maxDef,p.def+15);log(`${p.name}の防衛設備を修復（防衛力 ${p.def}）。`);render()}
 function buildFac(p,k){S.funds-=FAC[k].cost;p.fac.push(k);syncFac(p);if(k==="sats")p.def=Math.min(p.maxDef,p.def+15);log(`${p.name}に${FAC[k].name}を建設。`);render()}
 function demolish(p,k){p.fac=p.fac.filter(x=>x!==k);syncFac(p);log(`${p.name}の${FAC[k].name}を撤去。`);render()}
@@ -615,7 +620,9 @@ function newFleet(p){S.funds-=bcost(0,p);const used=new Set(S.fleets.filter(f=>f
   const f={id:uid(),name:`第${n}艦隊`,side:"P",node:p.id,ships:[makeShip(0,"P")],moved:true};S.fleets.push(f);S.selFleet=f.id;log(`${f.name}を${p.name}で編成。`);render()}
 
 function intruder(f){return S.fleets.find(x=>x.node===f.node&&(x.side==="M"||(x.side==="E"&&!S.truce)))}
-const hasBomb=f=>f.ships.some(s=>s.a&&s.a.bo>0); // 惑星・巣の中枢を壊せるか
+const hasBomb=f=>f.ships.some(s=>s.a&&s.a.bo>0); // 惑星の中枢を壊せるか
+const hasSeraphBomb=f=>f.ships.some(s=>s.a&&s.a.bo>0&&CLASSES[s.cls].anti); // 巣の中枢を壊せるか（セラフ級の爆装だけが通る）
+function bombNote(f,p){return p.owner==="H"?(hasSeraphBomb(f)?"":"（セラフ級の爆装なし：巣の中枢を壊せない）"):hasBomb(f)?"":"（爆装なし：中枢を壊せない）"}
 /* 自軍艦隊がいま乗っている自国以外の星（艦隊戦に勝って残った星など）を、その場から攻められるか。攻められるなら戦闘の種類 */
 function assaultHere(f){
   if(!f||f.side!=="P")return null;const p=planet(f.node);
@@ -661,8 +668,8 @@ function planetTip(p){
     if(adj||warp){const foes=S.fleets.filter(x=>x.node===p.id&&(x.side==="E"||x.side==="M"));
       const blocked=S.truce&&(p.owner==="E"||fleetsAt(p.id,"E").length);
       const what=foes.length?`艦隊戦（${foes[0].name}）`:p.owner==="H"?"巣への突入戦":p.owner!=="P"?"惑星攻略戦":warp?"亜空間移動":"移動";
-      out.push(h("hr"),h("span",{class:"act"},blocked?"休戦中のため進めない":`右クリック：${sf.name}が${what}${!foes.length&&p.owner!=="P"&&!hasBomb(sf)?"（爆装なし：中枢を壊せない）":""}`))}
-  }else if(sf&&!sf.moved&&sf.node===p.id&&!S.over&&assaultHere(sf))out.push(h("hr"),h("span",{class:"act"},`右クリック：${sf.name}がこの星で${assaultHere(sf)}${hasBomb(sf)?"":"（爆装なし：中枢を壊せない）"}`));
+      out.push(h("hr"),h("span",{class:"act"},blocked?"休戦中のため進めない":`右クリック：${sf.name}が${what}${!foes.length&&p.owner!=="P"?bombNote(sf,p):""}`))}
+  }else if(sf&&!sf.moved&&sf.node===p.id&&!S.over&&assaultHere(sf))out.push(h("hr"),h("span",{class:"act"},`右クリック：${sf.name}がこの星で${assaultHere(sf)}${bombNote(sf,p)}`));
   return out;
 }
 function unitTip(u){
@@ -793,7 +800,7 @@ function showIntro(){
     {who:"作戦参謀",text:`戦闘は旗艦（★）を沈めた側の勝ちです。艦を選ぶと青いマスが移動先、赤いマスが射程になり、赤枠の敵を${TAP}すると攻撃します。攻撃できない敵を${TAP}するとその敵の移動範囲と射程、「敵の射程」ボタンで敵全体の射程が見えます。敵艦の背面や側面から撃つと大きな損害を与えられます。ヴァルガの艦隊は突撃・砲撃・重装・強襲など戦い方がそれぞれ違うので、戦闘前のヒントを確かめてください。戦闘中に「オート」を押すと自軍の艦が自動で戦い、もう一度押すと手動に戻ります。主星アステリアを奪われたら敗北です。進行はこのブラウザに自動で保存され、次に開くと続きから遊べます。`}
   ];
   if(TAP==="クリック")lines.push({who:"作戦参謀",text:"マウスとキーでも操作できます。星図：右クリックで選択中の艦隊をその星へ移動、M 移動、F 陣形、1〜3 艦隊の切替、E ターン終了。戦闘：右クリックで選択解除、1〜4 艦の選択、W 待機、E フェイズ終了、R 敵の射程、A オート。"});
-  if(S&&S.monster)lines.push({who:"作戦参謀",text:"勝利条件：深淵の巣の中枢★（耐久150）を爆装で破壊すること。巣が残る限り、異生体の群れは何度でも湧いてきます。"});
+  if(S&&S.monster)lines.push({who:"作戦参謀",text:"勝利条件：深淵の巣の中枢★（耐久150）をセラフ級の爆装で破壊すること。巣が残る限り、異生体の群れは何度でも湧いてきます。"});
   showComm(lines,null,null,"key_title");
 }
 
@@ -944,7 +951,7 @@ function checkMonsterTrigger(){
     const lines=[
       {who:"観測所",text:"緊急通信！辺境の暗黒宙域（星図の巣の位置）に巨大な生命反応。艦船サイズの生物が群れを成し、星系へ向かっています！",cls:"xeno"},
       {who:"技術局",text:`既存の艦砲では外殻を抜くのが困難です。ただし解析の結果、外殻は側面が薄いことが分かりました。${S.tier>=3?"対異生体戦艦「セラフ級」の開発に着手できます。":"アークライト級までの開発が済めば、対異生体戦艦「セラフ級」に進めます。"}`},
-      {who:"作戦参謀",text:"群れは深淵の巣から何度でも湧いてきます。巣の中枢を爆装で破壊しない限り終わりません。議会が緊急予算150を承認しました。"}];
+      {who:"作戦参謀",text:"群れは深淵の巣から何度でも湧いてきます。巣の中枢はセラフ級の爆装でしか破壊できず、壊さない限り終わりません。議会が緊急予算150を承認しました。"}];
     if(S.truce)lines.splice(1,0,{who:"ヴァルガ皇帝",text:"……アステリアの元首よ。あれは人類全体の敵だ。今は矛を収めよう。",cls:"foe"},
       {who:"作戦参謀",text:"休戦が成立しました。以後、ヴァルガの星やヴァルガ艦隊のいる星へは進めませんが、ヴァルガも攻めてきません。全力で異生体に当たってください。"});
     showComm(lines,null,null,"key_xeno");
@@ -994,9 +1001,9 @@ function startBattle(cfg){
     }else{
       const p=cfg.planet,isHive=cfg.kind==="hive",isNest=p.owner==="M";
       if(isHive||isNest)foeSide="M";
-      const core={uid:uid(),side:"E",core:true,name:isHive?"巣の中枢":isNest?"浸食核":`${p.name}中枢`,hp:isHive?150:isNest?36:16+p.def,armor:0,move:0,
+      const core={uid:uid(),side:"E",core:true,hive:isHive,name:isHive?"巣の中枢":isNest?"浸食核":`${p.name}中枢`,hp:isHive?hiveHp():isNest?36:16+p.def,armor:0,move:0,
         w:[{n:"迎撃砲",d:isHive?7:5,min:1,max:3,unit:true}],flag:true,x:9,y:3,dir:2,xeno:isHive||isNest};
-      core.maxHp=core.hp;units.push(core);
+      core.maxHp=isHive?HIVE_HP:core.hp;units.push(core);
       if(isHive||isNest){
         const xs=isHive?[makeXeno("brood"),makeXeno("drone"),makeXeno("drone")]:[makeXeno("drone"),makeXeno("drone")];
         xs.forEach((s,i)=>{const u=unitFromXeno(s,1);u.flag=false;[u.x,u.y]=[[8,2],[8,4],[7,3]][i];units.push(u)});
@@ -1005,8 +1012,9 @@ function startBattle(cfg){
         [[8,2],[8,4],[9,1],[9,5],[10,2],[10,4]].slice(0,n).forEach(([x,y])=>units.push({uid:uid(),side:"E",sat:true,name:"防衛衛星",hp:9,maxHp:9,armor:1,move:0,w:[{n:"衛星砲",d:4,min:1,max:2,unit:true}],x,y,dir:2}));
       }
       title=isHive?"深淵の巣 突入戦":`${p.name} 攻略戦`;
-      tip=isHive?"巣の中枢★（耐久150）は爆装でしか破壊できない。破壊すれば勝利。":isNest?"浸食核★は爆装でしか破壊できない。落とせば奪還。":"中枢★は爆装でしか破壊できない。中枢を落とせば占領。";
-      if(!cfg.pf.ships.some(s=>s.a&&s.a.bo>0))tip+="この艦隊は爆装がないので中枢を壊せない。撤退して改装を。";
+      tip=isHive?`巣の中枢★（耐久${core.hp}/${HIVE_HP}）はセラフ級の爆装でしか破壊できない。破壊すれば勝利。損害は次の突入まで残る。`:isNest?"浸食核★は爆装でしか破壊できない。落とせば奪還。":"中枢★は爆装でしか破壊できない。中枢を落とせば占領。";
+      if(isHive&&!hasSeraphBomb(cfg.pf))tip+="この艦隊にはセラフ級の爆撃艦がいないので、巣の中枢を壊せない。";
+      else if(!hasBomb(cfg.pf))tip+="この艦隊は爆装がないので中枢を壊せない。撤退して改装を。";
     }
     // 艦隊戦の宙域には、ときどき小惑星（通れないマス）がある
     const rocks=new Set();
@@ -1077,6 +1085,7 @@ function bestAttack(att,t){
   for(const w of att.w){
     if(d<w.min||d>w.max)continue;
     if(t.core&&!w.core&&att.side==="P")continue;
+    if(t.hive&&att.side==="P"&&!att.anti)continue; // 巣の中枢はセラフ級の爆装でしか割れない
     if(!t.core&&!w.unit)continue;
     const z=(t.core||t.sat)?"":zone(att,t),fm=B&&B.form;
     let dmg=w.d*mult(att,t)*(att.anti&&t.xeno?1.5:1)*(10/(10+2*t.armor));
@@ -1219,11 +1228,14 @@ async function enemyPhase(){
   renderBattle();
   if(B.auto)autoPhase();
 }
+const HIVE_HP=150;
+function hiveHp(){return Math.min(HIVE_HP,S.hiveHp||HIVE_HP)}
 const RESULT_LABEL={win:"勝利",retreat:"撤退",lose:"敗北",hold:"防衛成功",timeout:"時間切れ"};
 /* オート戦闘：自軍の艦を1隻ずつ自動で動かす。人のプレイは戦闘ごとに「オート」で切り替え、AIプレイ（MCP）は常にオート */
+const canHitCore=(u,core)=>u.w.some(w=>w.core)&&(!core.hive||u.anti);
 function autoGoal(u,foes){
   const core=foes.find(t=>t.core);
-  if(core&&u.w.some(w=>w.core))return core;              // 爆装艦は中枢へ
+  if(core&&canHitCore(u,core))return core;               // 爆装艦は中枢へ（巣はセラフ級だけ）
   if(core){const g=foes.filter(t=>!t.core);return g.length?nearestOf(u,g)[0]:core} // ほかは防衛衛星・護衛を払う
   return foes.find(t=>t.flag)||nearestOf(u,foes)[0];     // 艦隊戦は敵旗艦へ
 }
@@ -1271,7 +1283,7 @@ function autoPick(){
 /* オートでは勝ち目のない攻略戦を続けない（中枢を壊せる爆装艦がいない）。ラウンド上限まで待ったのと同じ「時間切れ」で切り上げる */
 function autoHopeless(){
   const core=B.units.find(t=>t.side==="E"&&t.core&&t.hp>0);
-  return core&&!B.units.some(u=>u.side==="P"&&u.hp>0&&u.w.some(w=>w.core))?"中枢を壊せる爆装艦がいないので":null;
+  return core&&!B.units.some(u=>u.side==="P"&&u.hp>0&&canHitCore(u,core))?(core.hive?"巣の中枢を壊せるセラフ級の爆装艦がいないので":"中枢を壊せる爆装艦がいないので"):null;
 }
 async function autoPhase(){
   if(!B||B.ended||!B.auto||B.phase!=="P"||B.busy||B.autoRun)return;
@@ -1294,7 +1306,9 @@ async function autoPhase(){
 }
 function toggleAuto(){if(!B||B.ended)return;B.auto=!B.auto;renderBattle();if(B.auto)autoPhase()}
 function finishBattle(result){
-  if(B.ended)return;B.ended=true;B.result=result;B.sel=null;B.inspect=null;B.hover=null;const good=result==="win"||result==="hold";sfx(good?"win":"sad");
+  if(B.ended)return;B.ended=true;B.result=result;
+  if(B.cfg.kind==="hive"){const c=B.units.find(u=>u.core);if(c)S.hiveHp=Math.max(1,Math.min(HIVE_HP,Math.ceil(c.hp)+20))} // 次の突入まで損害が残る（少し回復）
+  B.sel=null;B.inspect=null;B.hover=null;const good=result==="win"||result==="hold";sfx(good?"win":"sad");
   bmsg({win:"勝利！",retreat:"撤退した。",hold:"時間切れ。持ちこたえた ── 敵は攻めあぐねて退いた。",timeout:"時間切れ。攻め切れずに引き返す。"}[result]||"旗艦を失った……敗北。");
   banner(RESULT_LABEL[result]||"敗北",{win:"敵旗艦を撃破",retreat:"主星へ帰還する",hold:"時間切れ ── 敵は退いた",timeout:"攻め切れず、出撃元へ"}[result]||"旗艦喪失 ── 残った艦は主星へ",good?"P":"E",1500);
   renderBattle();

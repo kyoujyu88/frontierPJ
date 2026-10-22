@@ -156,7 +156,8 @@ function moveOptions(f){
     else kind=warp?"亜空間移動":"移動";
     out.push({to:p.id,name:p.name,kind});
   }
-  if(typeof hasBomb==="function"&&!hasBomb(f))out.forEach(o=>{if(/攻略|突入/.test(o.kind))o.kind+="（爆装なし：中枢を壊せない）"});
+  if(typeof bombNote==="function")out.forEach(o=>{if(/攻略|突入/.test(o.kind))o.kind+=bombNote(f,planet(o.to))});
+  else if(typeof hasBomb==="function"&&!hasBomb(f))out.forEach(o=>{if(/攻略|突入/.test(o.kind))o.kind+="（爆装なし：中枢を壊せない）"});
   return out;
 }
 function fleetInfo(f){
@@ -214,7 +215,7 @@ function battleState(){
   const units=B.units.filter(u=>u.hp>0).map(u=>{
     const o={id:u.uid,label:unitLabel(u),side:u.side==="P"?"自軍":"敵",name:u.name,flagship:!!u.flag,hp:Math.ceil(u.hp),maxHp:u.maxHp,x:u.x,y:u.y,facing:DIR_NAME[u.dir],
       armor:u.armor,move:u.move,weapons:u.w.map(w=>({name:w.n,damage:w.d,range:w.min===w.max?`${w.min}`:`${w.min}-${w.max}`,coreOnly:!!w.core}))};
-    if(u.core)o.kind="中枢（爆装でのみ破壊可）";else if(u.sat)o.kind="防衛衛星";else if(u.xeno)o.kind=u.neo?"異生体（改：正面が弱点）":"異生体（側面が弱点）";
+    if(u.core)o.kind=u.hive?"中枢（セラフ級の爆装でのみ破壊可）":"中枢（爆装でのみ破壊可）";else if(u.sat)o.kind="防衛衛星";else if(u.xeno)o.kind=u.neo?"異生体（改：正面が弱点）":"異生体（側面が弱点）";
     if(u.side==="P"){
       o.acted=!!u.acted;
       if(!u.acted&&B.phase==="P"&&!B.ended){
@@ -258,7 +259,8 @@ function battleSummary(){
 function devSummary(st){
   const L=[],funds=S.funds,mark=c=>c>funds?" ※資金不足":"";
   const r=st.research;
-  if(r.next)L.push(` 研究：invest_research(amount=30/60/120) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1）`);
+  const left=typeof investLeft==="function"?investLeft():120;
+  if(r.next&&left>=30)L.push(` 研究：invest_research(amount=${[30,60,120].filter(v=>v<=left).join("/")}) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1。投資は1ターン${120}まで、このターンはあと${left}）`);
   const BEST={鉱物:"mine",遺跡:"lab",要塞:"sats",工業:"yard"};
   for(const p of S.planets.filter(p=>p.owner==="P")){
     const free=p.slots-p.fac.length;
@@ -266,7 +268,7 @@ function devSummary(st){
       const opts=FAC_KEYS.filter(k=>!hasF(p,k)).map(k=>`${BEST[p.trait]===k?"◎":""}${k}=${FAC[k].name}${FAC[k].cost}（${FAC[k].desc(p)}）${mark(FAC[k].cost)}`);
       L.push(` 施設：${p.name}（${p.trait}・空き${free}）build_facility(planet_id=${p.id}, facility=…) ${opts.join("／")}`);
     }
-    if(p.survey>0)L.push(` 探査：${p.name} survey(planet_id=${p.id}) 40 → 45%で収入+20（残り${p.survey}回）${mark(40)}`);
+    if(p.survey>0)L.push(` 探査：${p.name} survey(planet_id=${p.id}) 40 → 45%で収入+15（残り${p.survey}回）${mark(40)}`);
     if(p.def<p.maxDef)L.push(` 防衛修復：${p.name} 防衛${p.def}/${p.maxDef} fortify(planet_id=${p.id}) 30で+15${mark(30)}`);
   }
   for(const f of st.myFleets){
@@ -397,6 +399,7 @@ const api={
     ensureMap();const v=Number(amount);
     if(![30,60,120].includes(v))fail("投資額は 30・60・120 のいずれかです");
     if(!researchOpen())fail(researchInfo().note);
+    if(typeof investLeft==="function"&&v>investLeft())fail(`研究への投資は1ターンに${INVEST_CAP}まで。このターンはあと ${investLeft()}`);
     needFunds(v,"研究投資");showAction(`研究に ${v} 投資`);invest(v);
     const r=researchInfo();return r.next?`研究進捗 ${r.next.progress}/${r.next.need}（${r.next.name}）`:"研究完了";
   }),
@@ -549,7 +552,7 @@ const api={
   rules:()=>autoBattle?RULES.replace(/。目安：突撃や強襲には方陣.*$/m,"。").replace(/^- 撤退すると.*\n/m,"").replace(/^- 戦闘が終わったら battle_close.*$/m,AUTO_RULE).replace(/戦闘ユニットのIDは.*$/m,""):RULES
 };
 const AUTO_RULE=`- 戦術戦闘はオート（自動）で進む。艦隊を攻め込ませる（move_fleet・intercept）か、end_turn で敵に襲われると、戦闘は自動で決着し、結果は出来事（events）と battles に出る。戦闘中の操作はない。勝敗を分けるのは準備：艦隊の戦力（修理・造船）、改装の配分、陣形、旗艦の選び方、そして勝てる相手を選ぶこと。負けると艦隊は主星へ戻る（防衛戦で負けるとその星は敵に攻められる）。
-- オートの戦い方：撃てる艦から、とどめと旗艦を優先していちばん効く攻撃をする。撃てない艦は敵旗艦（攻略戦では爆装艦は中枢、ほかは防衛衛星）へ寄り、側面・背面を取りに行く。ミサイルが主砲以上の艦は射程2〜4を保って撃つ。旗艦と傷ついた艦は敵の射程を避けて控える。方陣では護衛が旗艦の隣に残り、鶴翼では回り込みを重く見る。爆装艦がいない攻略戦は時間切れで切り上げる。つまり改装の配分がそのまま戦い方になる（主砲寄り＝前に出る、ミサイル寄り＝距離を保つ、装甲＝打たれ強い）。旗艦には打たれ強い艦（装甲・耐久が高い）を選ぶ。
+- オートの戦い方：撃てる艦から、とどめと旗艦を優先していちばん効く攻撃をする。撃てない艦は敵旗艦（攻略戦では爆装艦は中枢〈巣ではセラフ級の爆装艦だけ〉、ほかは防衛衛星）へ寄り、側面・背面を取りに行く。ミサイルが主砲以上の艦は射程2〜4を保って撃つ。旗艦と傷ついた艦は敵の射程を避けて控える。方陣では護衛が旗艦の隣に残り、鶴翼では回り込みを重く見る。中枢を壊せる爆装艦（巣ではセラフ級）がいない攻略戦は時間切れで切り上げる。つまり改装の配分がそのまま戦い方になる（主砲寄り＝前に出る、ミサイル寄り＝距離を保つ、装甲＝打たれ強い）。旗艦には打たれ強い艦（装甲・耐久が高い）を選ぶ。
 - 陣形の目安（オートでの勝率から）：戦列には後衛陣か鶴翼／突撃には方陣か後衛陣／砲撃には後衛陣か方陣（横陣・楔形だと大きく負け越す）／重装には後衛陣か横陣／強襲には横陣か方陣／異生体には横陣。楔形は旗艦が前に出て狙われやすいので、オートでは勧めない。移動先の「艦隊戦（…）」と迎撃可の欄にも、相手に合わせた目安が出る。`;
 
 const RULES=`# 辺境星系戦記 ルール要約（AIプレイヤー向け）
@@ -563,16 +566,16 @@ const RULES=`# 辺境星系戦記 ルール要約（AIプレイヤー向け）
 - 敵の艦級は6ターンごとに上がる（ターン7・13・19）。ヴァルガは本星から3ターンごとに増援を出す。
 - ターン18か、ヴァルガ本星（ID 6）占領で異生体ゾアが出現。そのときヴァルガ本星がヴァルガ領なら休戦になり、最後まで解けない（ヴァルガ艦隊は自領へ引き上げて動かなくなる。休戦中はヴァルガの星・ヴァルガ艦隊のいる星へ入れず、迎撃もできない）。巣からは群れが何度も湧く。群れに艦隊戦で3回勝つと進化し、以後に湧く群れは改になる（すでにいる群れは改にならない）。異生体に浸食された星は施設がなくなる。
 ## 内政
-- 研究投資（30/60/120）で次の艦級を開発。完成で改装上限（各項目）+1。セラフ級（対異生体。異生体と浸食核・巣の中枢への攻撃が1.5倍）はゾア出現後、アークライト級の次に開発できる。
-- 艦級：0 ラーク級(耐久12,P6,40) 1 ファルコ級(20,P9,70,研究120) 2 グレイヴ級(30,P12,110,研究220) 3 アークライト級(44,P16,160,研究330) 4 セラフ級(56,P20,200,研究380)
+- 研究投資（30/60/120、1ターンに合計120まで）で次の艦級を開発。完成で改装上限（各項目）+1。セラフ級（対異生体。異生体と浸食核・巣の中枢への攻撃が1.5倍）はゾア出現後、アークライト級の次に開発できる。
+- 艦級：0 ラーク級(耐久12,P6,40) 1 ファルコ級(20,P9,70,研究160) 2 グレイヴ級(30,P12,110,研究300) 3 アークライト級(44,P16,160,研究450) 4 セラフ級(56,P20,200,研究600)
 - 造船：造船所のある自国の星で、艦隊に追加建造（工業惑星は20%引き）か、旧艦と置換（旧艦の半額下取り）。
-- 施設（スロット数まで）：mine 採掘所60（収入+15、鉱物惑星+30）／yard 造船所80／sats 防衛衛星群50（防衛上限+20、要塞+35）／lab 研究所70（毎ターン研究+10、遺跡+25。開発できる艦級がないあいだは貯まらない）／flak 対空砲台60（この星での艦隊戦〈防衛戦・迎撃〉の開始時に敵全艦5ダメージ）。
+- 施設（スロット数まで）：mine 採掘所60（収入+10、鉱物惑星+20）／yard 造船所80／sats 防衛衛星群50（防衛上限+20、要塞+35）／lab 研究所70（毎ターン研究+10、遺跡+25。開発できる艦級がないあいだは貯まらない）／flak 対空砲台60（この星での艦隊戦〈防衛戦・迎撃〉の開始時に敵全艦5ダメージ）。
 - 遺跡惑星に研究所があると、ゾア出現時に研究 +150×その数（そのとき開発中の艦級に入り、完成時の余りは次へ持ち越し）。
-- 小惑星探査40（45%で収入+20）、防衛修復30（防衛+15）、修理（損傷の半分の資金）。
+- 小惑星探査40（45%で収入+15）、防衛修復30（防衛+15）、修理（損傷の半分の資金）。
 ## 改装（艦ごと）
 - ポイント配分：sh装甲・ca主砲・mi ミサイル・bo爆装・sp機関。合計は艦級のP以下、各項目は改装上限以下。refit_ship は変える項目だけ書けばよい（書かない項目は今の値のまま）。
 - 主砲＝3+主砲×2（射程1〜2）。ミサイル＝2+ミサイル×1.5を四捨五入（射程2〜4、1以上で搭載）。爆装＝4+爆装×3（射程1、中枢〈惑星中枢・浸食核・巣の中枢〉にだけ当たり、それらを壊せる唯一の武器）。移動＝1+機関。装甲は被ダメージ軽減（×10/(10+2×装甲)）。
-- 惑星攻略・巣の攻略には爆装を持つ艦が必須。
+- 惑星攻略には爆装を持つ艦が必須。巣の中枢（耐久150）はセラフ級の爆装でしか壊せない（ほかの艦の爆装は当たらない）。巣で与えた損害は次の突入まで残る（1回ごとに20回復）。
 ## 戦術戦闘（11×7マス）
 - 1隻につき1回、移動か攻撃のどちらか。行動後は向きが変わる（移動方向・攻撃方向を向く）。
 - 旗艦★を沈めた側の勝ち（敵が全滅しても勝ち）。惑星攻略戦は中枢★を爆装で落とせば勝ち。
