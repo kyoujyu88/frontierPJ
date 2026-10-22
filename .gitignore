@@ -1,0 +1,6 @@
+# 依存パッケージ（npm install / launch.mjs で入る）
+node_modules/
+# プレイすると mcp/ の中にできるもの：反省メモ・操作盤の設定と戦績・録画
+mcp/notes/
+mcp/recordings/
+*.webm
