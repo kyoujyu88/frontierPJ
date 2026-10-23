@@ -1,3 +1,7 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>辺境星系戦記</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -93,6 +97,7 @@ aside.side{display:flex;flex-direction:column;gap:10px;min-width:0}
 .battle{position:fixed;inset:0;background:var(--void);z-index:15;overflow:auto;
   padding:max(10px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(10px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
 .battle-in{max-width:1100px;margin:0 auto;display:flex;flex-direction:column;gap:10px}
+.battle-in:focus{outline:none} /* 戦闘が始まったときにフォーカスを置くだけ（枠は出さない） */
 .bhead{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;border-bottom:1px solid var(--line);padding-bottom:6px}
 .bhead h2{font-family:var(--f-display);font-weight:400;margin:0;font-size:20px;letter-spacing:.06em}
 .bgrid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:10px;align-items:start}
@@ -240,7 +245,7 @@ aside.sideL{display:none}
 </div>
 
 <div class="battle" id="battle" hidden>
-  <div class="battle-in">
+  <div class="battle-in" id="battleIn" tabindex="-1">
     <div class="bhead"><h2 id="bTitle"></h2><span class="phase" id="bPhase"></span><span class="hint" id="bTip"></span></div>
     <div class="bgrid">
       <div class="bfield"><svg id="bsvg" role="img" aria-label="戦術マップ"></svg></div>
@@ -875,6 +880,9 @@ async function endTurn(){
       if(S.respawn>0&&S.fleets.filter(f=>f.side==="M").length<(S.evolved?3:2)&&planet(HIVE).owner==="H"){S.respawn--;spawnXeno();log("深淵の巣から異生体の群れが再び湧き出した。");render();await mapBurst(HIVE,"#b974ff");if(!alive())return}
       for(const f of S.fleets.filter(x=>x.side==="M")){
         if(!S.fleets.includes(f))continue;
+        // 同じ星に自軍艦隊が残っていれば（主星の防衛戦で敗れて戻った艦など）、まずそれを攻める
+        const here=defenders(f.node);
+        if(here.length){if(!queue.some(q=>q.ef===f)){await mapBurst(f.node,"#b974ff");if(!alive())return;queue.push({kind:"fleet",pf:here[0],ef:f,node:f.node,attack:false})}continue}
         for(let step=0;step<2;step++){
           const path=bfsPath(f.node,n=>n!==HIVE&&planet(n).owner!=="M");if(!path)break;const to=path[0];
           const pfs=defenders(to);
@@ -1100,7 +1108,7 @@ function bestAttack(att,t){
 function face(u,tx,ty){const dx=tx-u.x,dy=ty-u.y;if(!dx&&!dy)return;u.dir=Math.abs(dx)>=Math.abs(dy)?(dx>0?0:2):(dy>0?1:3)}
 function bmsg(t){B.msg.unshift(t);if(B.msg.length>8)B.msg.pop()}
 async function doAttack(att,t,a){
-  face(att,t.x,t.y);att.acted=true;renderBattle();
+  face(att,t.x,t.y);att.acted=true;B.moves=(B.moves||0)+1;renderBattle();
   await animateShot(att,t,a);
   t.hp=Math.max(0,t.hp-a.dmg);
   bmsg(`${att.name}の${a.w.n}${a.zone?`（${a.zone}）`:""} → ${t.name}に${a.dmg}ダメージ${t.hp<=0?"、撃沈！":""}`);
@@ -1108,7 +1116,7 @@ async function doAttack(att,t,a){
   await animateImpact(t,killed,a,att);if(killed)t.hp=0;
   renderBattle();
 }
-async function doMove(u,x,y){const fx=u.x,fy=u.y,path=bpath(u,x,y);face(u,x,y);u.x=x;u.y=y;u.acted=true;await animateMove(u,fx,fy,path)}
+async function doMove(u,x,y){const fx=u.x,fy=u.y,path=bpath(u,x,y);face(u,x,y);u.x=x;u.y=y;u.acted=true;B.moves=(B.moves||0)+1;await animateMove(u,fx,fy,path)}
 function battleOver(){
   const pf=B.units.find(u=>u.side==="P"&&u.flag);
   const ef=B.units.find(u=>u.side==="E"&&u.flag);
@@ -1216,6 +1224,7 @@ async function enemyPhase(){
     await wait(280);
   }
   setFfwd(false);ANIM.fast=false;
+  B.stalled=B.auto&&B.autoRound===B.round&&!B.moves;B.moves=0; // オートで1ラウンド丸ごと、どちらも撃たず動かなかった
   B.units.forEach(u=>{u.acted=false;if(u.rush){u.move--;u.rush=false}});B.round++;B.phase="P";
   if(B.round>roundCap()){B.busy=false;return finishBattle(B.cfg.attack?"timeout":"hold")}
   const last=B.round===roundCap();
@@ -1249,18 +1258,21 @@ function autoDecide(u,threats){
   if(best)return{attack:best};
   const tiles=reach(u);if(!tiles.length)return null;
   // 撃てないなら、目標を次のラウンドに撃てる距離へ動く。艦の武装・耐久と陣形で好みを変える
-  const goal=autoGoal(u,foes),fm=B.form;
+  let goal=autoGoal(u,foes);const fm=B.form;
+  // 旗艦が中枢へ向かうのは、落とし切るまで持ちこたえられるときだけ。それまでは防衛衛星・護衛を射程の外から撃って待つ
+  const run=u.flag&&goal.core?autoFlagRun(u,goal):null;
+  if(run===false){const g=foes.filter(t=>!t.core);if(g.length)goal=nearestOf(u,g)[0]}
   const mi=u.w.find(w=>w.n==="ミサイル"),ca=u.w.find(w=>w.n==="主砲");
   const longRange=!goal.core&&mi&&(!ca||mi.d+(fm==="rear"?1:0)>=ca.d); // ミサイルが主力の艦は射程2〜4を保つ
   const ws=goal.core?u.w.filter(w=>w.core):longRange?[mi]:u.w.filter(w=>w.unit);if(!ws.length)return null;
   const hpr=u.hp/u.maxHp;
-  const risk=u.flag?(hpr<.5?4:2.5):hpr<.35?1:.3;          // 旗艦と傷ついた艦は敵の射程を避ける
+  const risk=run===true?.5:run===false?10:u.flag?(hpr<.5?4:2.5):hpr<.35?1:.3; // 旗艦と傷ついた艦は敵の射程を避ける
   const flag=B.units.find(v=>v.side==="P"&&v.flag&&v.hp>0);
   const score=c=>{
     const d=dist(c,goal);
     const gap=Math.min(...ws.map(w=>d<w.min?w.min-d:d>w.max?d-w.max:0));
     const hits=threats.reduce((n,s)=>n+(s.has(`${c.x},${c.y}`)?1:0),0);
-    let sc=gap*(u.flag?1:2)-(mult(c,goal)-1)*(fm==="crane"?3:2)+hits*risk;
+    let sc=gap*(u.flag&&!run?1:2)-(mult(c,goal)-1)*(fm==="crane"?3:2)+hits*risk;
     // 方陣：護衛は旗艦の隣に残り、旗艦は味方の隣にいる（旗艦の被ダメージ-25%を保つ）
     if(fm==="square"&&flag){
       if(u===flag)sc-=B.units.filter(v=>v!==u&&v.side==="P"&&v.hp>0&&dist(v,c)===1).length*.8;
@@ -1272,6 +1284,22 @@ function autoDecide(u,threats){
   for(const[x,y]of tiles){const sc=score({x,y});if(!pick||sc<pick.sc)pick={x,y,sc}}
   return pick&&pick.sc<cur-.05?{move:pick}:null;
 }
+/* 爆装艦が旗艦しか残っていないとき、旗艦が中枢に取りついて落とし切るまで沈まないか（中枢の隣で受ける砲火 × 敵フェイズの回数で見積もる） */
+function autoFlagRun(u,core){
+  const others=B.units.filter(v=>v!==u&&v.side==="P"&&v.hp>0),foes=B.units.filter(e=>e.side==="E"&&e.hp>0);
+  if(others.some(v=>canHitCore(v,core)))return false;                       // ほかの爆装艦に任せる（巣はセラフ級だけ）
+  if(others.length&&foes.some(e=>!e.core))return false;                      // 護衛が防衛衛星を払うのを待つ
+  const bomb=Math.max(...u.w.filter(w=>w.core).map(w=>w.d)),hits=Math.ceil(core.hp/bomb);
+  const fireAt=c=>foes.reduce((n,e)=>{
+    const t={...u,x:c.x,y:c.y},d=dist(e,t);
+    const ws=e.w.filter(w=>w.unit&&(e.move>0||(d>=w.min&&d<=w.max))); // 動ける敵は寄ってくるものとして数える
+    return n+(ws.length?Math.max(...ws.map(w=>Math.max(1,Math.round(w.d*(10/(10+2*u.armor)))))):0)},0);
+  const near=DIRS.map(([dx,dy])=>({x:core.x+dx,y:core.y+dy})).filter(c=>c.x>=0&&c.y>=0&&c.x<BW&&c.y<BH&&!isRock(c.x,c.y));
+  if(!near.length)return false;
+  const fire=foes.some(e=>!e.core)?Math.max(...near.map(fireAt)):Math.min(...near.map(fireAt)); // 防衛衛星が残っていれば、寄る途中でも撃たれる
+  const steps=Math.ceil(Math.max(0,dist(u,core)-1)/Math.max(1,u.move));
+  return u.hp>fire*(steps+hits-1);
+}
 function autoPick(){
   const mine=B.units.filter(u=>u.side==="P"&&u.hp>0&&!u.acted);if(!mine.length)return null;
   const threats=B.units.filter(e=>e.side==="E"&&e.hp>0).map(threatOf);
@@ -1280,15 +1308,22 @@ function autoPick(){
   const atk=ds.filter(x=>x.d&&x.d.attack).sort((a,b)=>b.d.attack.sc-a.d.attack.sc)[0];
   return atk||ds.find(x=>!x.u.flag)||ds[0];
 }
-/* オートでは勝ち目のない攻略戦を続けない（中枢を壊せる爆装艦がいない）。ラウンド上限まで待ったのと同じ「時間切れ」で切り上げる */
+/* オートでは決着のつかない戦闘を続けない。ラウンド上限まで待ったのと同じ結果（攻めた側は時間切れ、守った側は防衛成功）で切り上げる
+   ・攻略戦で中枢を壊せる爆装艦がいない（巣はセラフ級の爆装艦だけ）
+   ・自軍のどの艦もすることがなく、敵は動けず誰も撃てない（防衛衛星と中枢だけの攻略戦。このあと何ラウンド待っても同じ）
+   ・1ラウンド丸ごと、どちらも撃たず動かなかった */
 function autoHopeless(){
   const core=B.units.find(t=>t.side==="E"&&t.core&&t.hp>0);
-  return core&&!B.units.some(u=>u.side==="P"&&u.hp>0&&canHitCore(u,core))?(core.hive?"巣の中枢を壊せるセラフ級の爆装艦がいないので":"中枢を壊せる爆装艦がいないので"):null;
+  if(core&&!B.units.some(u=>u.side==="P"&&u.hp>0&&canHitCore(u,core)))return core.hive?"巣の中枢を壊せるセラフ級の爆装艦がいないので攻略を切り上げる。":"中枢を壊せる爆装艦がいないので攻略を切り上げる。";
+  const mine=B.units.filter(u=>u.side==="P"&&u.hp>0),foes=B.units.filter(e=>e.side==="E"&&e.hp>0),threats=foes.map(threatOf);
+  const frozen=foes.every(e=>e.move===0&&!mine.some(u=>bestAttack(e,u)))&&mine.every(u=>!autoDecide(u,threats));
+  if(frozen||B.stalled)return core?"攻め手がなく膠着したので攻略を切り上げる。":"膠着したので戦闘を切り上げる。";
+  return null;
 }
 async function autoPhase(){
   if(!B||B.ended||!B.auto||B.phase!=="P"||B.busy||B.autoRun)return;
-  const why=autoHopeless();if(why){bmsg(`オート：${why}攻略を切り上げる。`);return finishBattle(B.cfg.attack?"timeout":"retreat")}
-  B.autoRun=true;B.busy=true;B.sel=null;B.inspect=null;B.hover=null;setFfwd(true);renderBattle();
+  const why=autoHopeless();if(why){bmsg(`オート：${why}`);return finishBattle(B.cfg.attack?"timeout":"hold")}
+  B.autoRun=true;B.autoRound=B.round;B.busy=true;B.sel=null;B.inspect=null;B.hover=null;setFfwd(true);renderBattle();
   try{
     while(B&&!B.ended&&B.auto&&B.phase==="P"){
       const p=autoPick();if(!p)break;
@@ -1848,14 +1883,27 @@ $("btnEnd").addEventListener("click",()=>askEndTurn());
 $("btnHelp").addEventListener("click",showIntro);
 $("btnSound").addEventListener("click",()=>{if(!SND.ctx&&SND.on){audioInit();return}soundToggle()});
 if(!SND.on){$("btnSound").textContent="音 OFF";$("btnSound").setAttribute("aria-pressed","false")}
-$("btnNew").addEventListener("click",()=>openModal(card=>card.append(h("h2",null,"最初からやり直しますか？"),h("p",null,"現在の戦況は失われます。"),
-  h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:closeModal},"続ける"),h("button",{class:"danger",onclick:()=>{$("modal").hidden=true;newGame();render()}},"やり直す")))));
+// 戦闘中はやり直さない（古い戦闘 B が新しいゲームに残らないように）
+$("btnNew").addEventListener("click",()=>{if(B)return;openModal(card=>card.append(h("h2",null,"最初からやり直しますか？"),h("p",null,"現在の戦況は失われます。"),
+  h("div",{class:"row",style:"justify-content:flex-end"},h("button",{onclick:closeModal},"続ける"),h("button",{class:"danger",onclick:()=>{$("modal").hidden=true;if(B)return render();newGame();render()}},"やり直す"))))});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!$("modal").hidden&&!S.over)closeModal()});
 // 敵の行動中はクリック（タップ）で早送り
 $("ffwd").textContent=`${TAP}で早送り`;
-// ウィンドウが開いている間は、後ろの画面に Tab で移って押せないようにする（hidden の付け外しを見張る）
-new MutationObserver(()=>{const open=!$("modal").hidden;for(const el of[document.querySelector(".app"),$("mbar"),$("battle")])el.inert=open})
-  .observe($("modal"),{attributes:true,attributeFilter:["hidden"]});
+// ウィンドウや戦闘が開いている間は、後ろの画面に Tab で移って押せないようにする（hidden の付け外しを見張る）
+// 戦闘が始まったらフォーカスを戦闘の中へ移し、終わったら作戦卓（戦闘前にフォーカスしていた所）へ戻す
+let focusBack=null,battleShown=false;
+function syncInert(){
+  const modal=!$("modal").hidden,battle=!$("battle").hidden,ae=document.activeElement;
+  for(const el of[document.querySelector(".app"),$("mbar")])el.inert=modal||battle;
+  $("battle").inert=modal;
+  if(battle&&!battleShown&&ae&&ae!==document.body&&!$("battle").contains(ae)&&!$("modal").contains(ae))focusBack=ae;
+  if(battle&&!modal&&!$("battle").contains(document.activeElement))$("battleIn").focus({preventScroll:true});
+  if(!battle&&battleShown){const el=focusBack,a=document.activeElement;focusBack=null;
+    if(!modal&&(!a||a===document.body||$("battle").contains(a)))
+      [el,$("btnEnd"),$("mbEnd"),...document.querySelectorAll("#side button,#mbar button")].find(x=>x&&x.isConnected&&!x.disabled&&x.getClientRects().length)?.focus({preventScroll:true})}
+  battleShown=battle;
+}
+{const mo=new MutationObserver(syncInert);for(const id of["modal","battle"])mo.observe($(id),{attributes:true,attributeFilter:["hidden"]})}
 document.addEventListener("pointerdown",e=>{if(e.target.closest&&e.target.closest("#modal"))return;if(e.target.closest&&e.target.closest("#bAuto"))return;if((B&&(B.phase==="E"||B.autoRun)&&!B.ended)||(!B&&ANIM.enemyTurn))ANIM.fast=true},{capture:true});
 $("bsvg").addEventListener("pointerleave",()=>{onHover(null);hideTip()});
 $("bsvg").addEventListener("pointermove",e=>{if(e.pointerType==="mouse")moveTip(e)});

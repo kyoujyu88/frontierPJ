@@ -15,6 +15,7 @@ npm install
 npx playwright install chromium
 npm test              # LLM なしでゲームを30ターン通しプレイ
 npm run test:notes    # にせの LLM で AI プレイヤーと反省メモを確認
+npm run test:regress  # ゲーム本体の回帰テスト（スマホ表示・戦闘中の操作など）
 ```
 
 Windows では `mcp\操作盤を開く.cmd` をダブルクリックすると、初回の準備をしてから操作盤がブラウザで開きます。

@@ -25,7 +25,8 @@ server.mjs（MCPサーバー）──Playwright──▶ Chromium の窓（ゲ�
 | `noa-player.mjs` | 旧名。互換のため残してあり、中身は `ai-player.mjs` を読み込むだけ |
 | `notes.mjs` | 反省メモ（プレイを振り返って書き、次のプレイで読む）の仕組み |
 | `notes/<名前>.md` | 反省メモ本体。プレイすると自動でできる |
-| `selftest.mjs` | 簡単なボットで数十ターン通しプレイする動作確認 |
+| `selftest.mjs` | 簡単なボットで数十ターン通しプレイする動作確認。想定外の拒否や、建設・移動が状態に反映されないと失敗（終了コード1） |
+| `regress.mjs` | ゲーム本体の回帰テスト：スマホ幅の表示、主星に居座った異生体、戦闘中のキーボード操作（`npm run test:regress`） |
 | `操作盤を開く.cmd` `launch.mjs` | ダブルクリックで操作盤を開く（初回は部品も入れる） |
 | `control.mjs` `control.html` | 操作盤。ブラウザの画面から、試行回数を決めた連続プレイ・録画・停止・戦績の確認ができる（`npm run ui`） |
 | `recordings/*.webm` | 録画した動画。録画をオンにするとできる |
@@ -41,6 +42,7 @@ cd mcp
 npm install
 npx playwright install chromium
 npm test            # 動作確認（ウィンドウなしで30ターン）
+npm run test:regress   # ゲーム本体の回帰テスト（数秒）
 node selftest.mjs --show   # 窓を出して演出つきで眺める
 MANUAL=1 npm test   # 戦闘を battle_* で1隻ずつ操作する版（--manual-battle）の動作確認
 ```
