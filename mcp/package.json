@@ -10,6 +10,7 @@
     "http": "node server.mjs --http 3939",
     "test": "node selftest.mjs",
     "test:notes": "node notes-test.mjs",
+    "test:regress": "node regress.mjs",
     "play": "node ai-player.mjs",
     "noa": "node ai-player.mjs",
     "ui": "node control.mjs"
