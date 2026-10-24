@@ -130,30 +130,23 @@ const AUDIO_TAP = `(() => {
   });
 })();`;
 async function tapAudio(ctx) {
-  const a = { start: null, file: null, out: null, t0: null };
+  const a = { start: null, file: path.join(RECORD_DIR, `.audio-${process.pid}-${Date.now()}.webm`), out: null, bytes: 0, t0: null, onStart: null };
   await ctx.exposeBinding("__fwAudio", async (_src, kind, data) => {
-    if (kind === "start") { a.start = Number(data); return; }
-    if (!a.out) { a.file = path.join(RECORD_DIR, `.audio-${process.pid}-${Date.now()}.webm`); a.out = await fs.open(a.file, "w"); }
-    await a.out.write(Buffer.from(data, "base64"));
+    if (kind === "start") { a.start = Number(data); a.onStart?.(a.start); return; }
+    if (!a.out) a.out = await fs.open(a.file, "w");
+    const b = Buffer.from(data, "base64");
+    a.bytes += b.length;
+    await a.out.write(b);
   });
   await ctx.addInitScript(AUDIO_TAP);
   a.t0 = Date.now(); // 動画はページを作ったときから始まる
   return a;
 }
-async function ffmpegPath() {
-  try { return (await import("playwright-core/lib/server/registry/index")).registry.findExecutable("ffmpeg").executablePath(); } catch { return null; }
-}
-/* 音を重ねるのは mux-audio.mjs に切り離して任せる（MCPクライアントは終了時に2秒でサーバーを止めるので、ここでは待たない） */
-async function muxAudio(dst, a) {
-  if (!a?.out) return false; // 音が一度も鳴らなかった
-  await a.out.close();
-  const ff = await ffmpegPath();
-  if (!ff) { err("録画の音を重ねる ffmpeg が見つかりません（npx playwright install chromium）。音なしで保存します"); await fs.rm(a.file, { force: true }); return false; }
-  // 動画のコマは実際の画面より約0.2秒遅れて記録されるので、音もその分遅らせる（実測）
-  const offset = Math.max(0, ((a.start ?? a.t0) - a.t0 + 200) / 1000).toFixed(3);
-  spawn(process.execPath, [path.join(HERE, "mux-audio.mjs"), dst, a.file, offset, ff], { stdio: "ignore", detached: true, windowsHide: true }).on("error", () => {}).unref();
-  return true;
-}
+/* 仕上げ（名前の付け直しと音の重ね合わせ）は mux-audio.mjs に切り離して任せる。録画フォルダの覚え書き .rec-*.json に
+ * 必要なことを書いておくので、途中でサーバーが強制終了されても（Windows では MCP クライアントの終了から2秒で止められる）
+ * 操作盤か次に起動したサーバーが仕上げる */
+const MUX = path.join(HERE, "mux-audio.mjs");
+const runMux = (...args) => spawn(process.execPath, [MUX, ...args], { stdio: "ignore", detached: true, windowsHide: true }).on("error", () => {}).unref();
 const recordings = [];
 let recCount = 0;
 function track(pg, audio) {
@@ -162,6 +155,13 @@ function track(pg, audio) {
   const stamp = new Date().toLocaleString("sv-SE").replace(/[-: ]/g, "").replace(/^(\d{8})(\d{4}).*/, "$1-$2");
   const base = (RECORD_NAME || stamp).replace(/[\\/:*?"<>|]+/g, "_") + (recCount++ ? `-${recCount}` : "");
   err(`recording: ${path.join(RECORD_DIR, base + ".webm")}`);
+  const job = path.join(RECORD_DIR, `.rec-${process.pid}-${recCount}.json`);
+  const info = { pid: process.pid, base, src: null, dst: null, audio: audio?.file ?? null, t0: audio?.t0 ?? Date.now(), start: null };
+  let saving = Promise.resolve();
+  const save = () => (saving = saving.then(() => fs.writeFile(job, JSON.stringify(info))).catch(e => err("録画の覚え書き：", e.message)));
+  save();
+  v.path().then(p => { info.src = p; save(); }, () => {});
+  if (audio) audio.onStart = (t) => { info.start = t; save(); };
   const ctx = pg.context(), ctxClosed = new Promise(r => ctx.once("close", r));
   recordings.push(new Promise(r => pg.once("close", r)).then(async () => {
     // コンテキストが閉じ終わると動画が書き終わる（閉じる途中で close() をもう一度呼んでもすぐ返るので、close イベントを待つ）
@@ -171,9 +171,12 @@ function track(pg, audio) {
     let dst = path.join(RECORD_DIR, base + ".webm");
     for (let i = 2; await fs.stat(dst).then(() => true, () => false); i++) dst = path.join(RECORD_DIR, `${base}-${i}.webm`);
     await fs.rename(src, dst);
-    const withAudio = await muxAudio(dst, audio).catch(e => { err("録画の音：", e.message); return false; });
+    info.src = src; info.dst = dst;
+    await audio?.out?.close().catch(() => {});
+    await save();
+    runMux(job);
     err(`recorded: ${dst}`);
-    if (withAudio) err("録画に音を重ねています（数秒〜数十秒で終わります）");
+    if (audio) err(audio.bytes ? `録画に音を重ねています（音 ${Math.round(audio.bytes / 1024)}KB、数秒〜数十秒で終わります）` : "録画の音：ゲームの音が一度も鳴らなかったので、音なしで保存します");
   }).catch(e => err("recording failed:", e.message)));
 }
 async function finishRecording() {
@@ -184,7 +187,7 @@ async function finishRecording() {
   await Promise.all(recordings);
 }
 if (RECORD_DIR && CDP) err("--record は --cdp と一緒には使えません（録画しません）");
-if (RECORD_DIR) await fs.mkdir(RECORD_DIR, { recursive: true });
+if (RECORD_DIR) { await fs.mkdir(RECORD_DIR, { recursive: true }); runMux("--sweep", RECORD_DIR); } // 前回仕上がらなかった録画があれば仕上げる
 
 async function getPage() {
   if (page && !page.isClosed()) return page;
@@ -226,6 +229,7 @@ function buildServer() {
     text: z.string().describe("表示するセリフ"),
     seconds: z.number().optional().describe("表示秒数（省略時は文字数から自動）"),
   }, ({ text, seconds }) => call("say", text, undefined, seconds ? seconds * 1000 : undefined));
+  tool("finish_recording", "録画を仕上げる（ai-player が終わる前に呼ぶもの。プレイには使わない）。", {}, async () => { await finishRecording(); return { ok: true }; });
   tool("dismiss_dialog", "開いている通信ウィンドウを閉じる（「了解」を押す）。", {}, () => call("dismissDialog"));
 
   // 作戦卓
