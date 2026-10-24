@@ -1,0 +1,89 @@
+{
+ "name": "recV",
+ "params": {
+  "tierEvery": 5,
+  "spawnEvery": 3,
+  "spawnMax": 3,
+  "ship4After": 8,
+  "rFalco": 160,
+  "rGrave": 300,
+  "rArc": 450,
+  "rSeraph": 600,
+  "investCap": 120,
+  "brood": 42,
+  "drone": 22,
+  "neo": 8,
+  "brArmor": 3,
+  "drArmor": 2,
+  "acid": 7,
+  "fang": 6,
+  "hive": 150,
+  "hiveGun": 7,
+  "nest": 36,
+  "initSpawn": 2,
+  "xcap": 2,
+  "xcapEvo": 3,
+  "gate": 0.5,
+  "mine": 10,
+  "mineRich": 20,
+  "survey": 15
+ },
+ "edits": [
+  {
+   "find": "S.turn++;S.enemyTier=Math.min(3,Math.floor((S.turn-1)/6));",
+   "replace": "S.turn++;S.enemyTier=Math.min(3,Math.floor((S.turn-1)/5));"
+  },
+  {
+   "find": "if(S.turn%3===0&&S.fleets.filter(f=>f.side===\"E\").length<3){\n        const nf=vargaFleet(null,CAPITAL,3+(S.turn>10?1:0));",
+   "replace": "if(S.turn%3===0&&S.fleets.filter(f=>f.side===\"E\").length<3){\n        const nf=vargaFleet(null,CAPITAL,3+(S.turn>8?1:0));"
+  },
+  {
+   "find": "{name:\"ファルコ級\",type:\"駆逐艦\",hp:20,pts:9,cost:70,research:120,code:\"FC-3\"}",
+   "replace": "{name:\"ファルコ級\",type:\"駆逐艦\",hp:20,pts:9,cost:70,research:160,code:\"FC-3\"}"
+  },
+  {
+   "find": "{name:\"グレイヴ級\",type:\"巡洋艦\",hp:30,pts:12,cost:110,research:220,code:\"GV-7\"}",
+   "replace": "{name:\"グレイヴ級\",type:\"巡洋艦\",hp:30,pts:12,cost:110,research:300,code:\"GV-7\"}"
+  },
+  {
+   "find": "{name:\"アークライト級\",type:\"戦艦\",hp:44,pts:16,cost:160,research:330,code:\"AL-12\"}",
+   "replace": "{name:\"アークライト級\",type:\"戦艦\",hp:44,pts:16,cost:160,research:450,code:\"AL-12\"}"
+  },
+  {
+   "find": "{name:\"セラフ級\",type:\"対異生体戦艦\",hp:56,pts:20,cost:200,research:380,code:\"SR-0\",anti:true}",
+   "replace": "{name:\"セラフ級\",type:\"対異生体戦艦\",hp:56,pts:20,cost:200,research:600,code:\"SR-0\",anti:true}"
+  },
+  {
+   "find": "function invest(v){\n  S.funds-=v;S.research+=v;checkResearch();render();\n}",
+   "replace": "function invest(v){\n  if(S.invTurn!==S.turn){S.invTurn=S.turn;S.invT=0}\n  if(S.invT+v>120){toast(\"研究への投資は1ターンに120までです。\");return}\n  S.invT+=v;S.funds-=v;S.research+=v;checkResearch();render();\n}"
+  },
+  {
+   "find": "const HOME=0, CAPITAL=6, HIVE=12;",
+   "replace": "const HOME=0, CAPITAL=6, HIVE=12;\nconst HIVE_NONANTI=0.5; // 巣の中枢へのセラフ級以外の爆装の倍率（0=通らない）"
+  },
+  {
+   "find": "core={uid:uid(),side:\"E\",core:true,name:isHive?\"巣の中枢\"",
+   "replace": "core={uid:uid(),side:\"E\",core:true,hive:isHive,name:isHive?\"巣の中枢\""
+  },
+  {
+   "find": "if(t.core&&!w.core&&att.side===\"P\")continue;",
+   "replace": "if(t.core&&!w.core&&att.side===\"P\")continue;\n    if(t.hive&&att.side===\"P\"&&!att.anti&&HIVE_NONANTI<=0)continue;"
+  },
+  {
+   "find": "*(att.anti&&t.xeno?1.5:1)*(10/(10+2*t.armor));",
+   "replace": "*(att.anti&&t.xeno?1.5:1)*(t.hive&&att.side===\"P\"&&!att.anti?HIVE_NONANTI:1)*(10/(10+2*t.armor));"
+  },
+  {
+   "find": "function planetIncome(p){return p.income+(hasF(p,\"mine\")?(p.trait===\"鉱物\"?30:15):0)}",
+   "replace": "function planetIncome(p){return p.income+(hasF(p,\"mine\")?(p.trait===\"鉱物\"?20:10):0)}"
+  },
+  {
+   "find": "desc:p=>`収入 +${p.trait===\"鉱物\"?30:15}`",
+   "replace": "desc:p=>`収入 +${p.trait===\"鉱物\"?20:10}`"
+  },
+  {
+   "find": "if(Math.random()<.45){p.income+=20;log(`${p.name}で鉱物資源帯を発見。収入+20。`)}",
+   "replace": "if(Math.random()<.45){p.income+=15;log(`${p.name}で鉱物資源帯を発見。収入+15。`)}"
+  }
+ ]
+}
