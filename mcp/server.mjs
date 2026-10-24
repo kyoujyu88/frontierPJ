@@ -11,10 +11,11 @@
  *   --game <path>     ゲームHTML（既定 ../game/frontier-war.html）           GAME_PATH
  *   --cdp <url>       起動済み Chrome に接続（例 http://127.0.0.1:9222）     GAME_CDP
  *   --headless        ウィンドウを出さない（テスト用）                        GAME_HEADLESS=1
- *   --pace <ms>       行動ごとの演出の間（既定 700、0で即時）                GAME_PACE
+ *   --pace <ms>       行動ごとの演出の間（既定 300、0で即時）                GAME_PACE
  *   --speaker <名前>  字幕・行動表示の名前（既定 のあ）                       GAME_SPEAKER
  *   --size 1280x720   ウィンドウの中身の大きさ                                GAME_SIZE
- *   --record <dir>    ゲーム画面を動画（.webm、音なし）で dir に録画する      GAME_RECORD
+ *   --record <dir>    ゲーム画面を動画（.webm、BGM・効果音つき）で dir に録画する  GAME_RECORD
+ *   --no-record-audio 録画に音を入れない
  *   --record-name <名前>  録画ファイルの名前（既定 日時。.webm は自動で付く）  GAME_RECORD_NAME
  *   --manual-battle   戦術戦闘を battle_* ツールで1隻ずつ操作する（既定はオート戦闘で、  GAME_MANUAL_BATTLE=1
  *                     戦闘は自動で決着して結果だけが返る。battle_* ツールは出さない）
@@ -23,6 +24,7 @@ import http from "node:http";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -37,12 +39,13 @@ const flag = (name, env) => argv.includes(`--${name}`) || process.env[env] === "
 const GAME_PATH = path.resolve(HERE, opt("game", "GAME_PATH", "../game/frontier-war.html"));
 const CDP = opt("cdp", "GAME_CDP", null);
 const HEADLESS = flag("headless", "GAME_HEADLESS");
-const PACE = Number(opt("pace", "GAME_PACE", 700));
+const PACE = Number(opt("pace", "GAME_PACE", 300));
 const SPEAKER = opt("speaker", "GAME_SPEAKER", "のあ");
 const [W, H] = opt("size", "GAME_SIZE", "1280x720").split("x").map(Number);
 const HTTP_PORT = opt("http", "GAME_HTTP", null);
 const RECORD_DIR = opt("record", "GAME_RECORD", null) && path.resolve(opt("record", "GAME_RECORD", null));
 const RECORD_NAME = opt("record-name", "GAME_RECORD_NAME", null);
+const RECORD_AUDIO = !!RECORD_DIR && !argv.includes("--no-record-audio");
 const MANUAL_BATTLE = flag("manual-battle", "GAME_MANUAL_BATTLE");
 const API_JS = await fs.readFile(path.join(HERE, "game-api.js"), "utf8");
 const err = (...a) => console.error("[frontier-war-mcp]", ...a); // stdout はMCP専用
@@ -83,8 +86,9 @@ async function openGame() {
       args: ["--autoplay-policy=no-user-gesture-required", `--window-size=${W},${H + 90}`],
     });
     const ctx = await browser.newContext({ viewport: { width: W, height: H }, ...(RECORD_DIR ? { recordVideo: { dir: RECORD_DIR, size: { width: W, height: H } } } : {}) });
+    const audio = RECORD_AUDIO ? await tapAudio(ctx) : null;
     page = await ctx.newPage();
-    if (RECORD_DIR) track(page);
+    if (RECORD_DIR) track(page, audio);
   }
   page.on("load", () => inject(page).catch(e => err("inject failed", e.message)));
   page.on("close", () => { page = null; });
@@ -93,26 +97,89 @@ async function openGame() {
   await inject(page);
   err(`game opened: ${GAME_URL}`);
 }
-/* ---------- 録画（Playwright の recordVideo。ページを閉じると確定するので、閉じたあとで名前を付け直す） ---------- */
+/* ---------- 録画（Playwright の recordVideo。ページを閉じると確定するので、閉じたあとで名前を付け直す） ----------
+ * 動画の機能は音を録らないので、ゲームの音は別に録って最後に重ねる。ゲームの音はすべて1つの AudioContext から
+ * 出力（destination）へつながるので、そこへの connect を横取りして MediaStreamDestination にも流し、
+ * ページ内の MediaRecorder（Opus）で録る。重ねるのは Playwright 付属の ffmpeg（ストリームのコピーだけ）。 */
+const AUDIO_TAP = `(() => {
+  if (!window.AudioContext || !window.MediaRecorder || window.__fwTapped) return;
+  window.__fwTapped = true;
+  const orig = AudioNode.prototype.connect;
+  let rec = null, queue = Promise.resolve(), stopped = false;
+  const send = (b) => { const u = new Uint8Array(b); let s = ""; for (let i = 0; i < u.length; i += 32768) s += String.fromCharCode.apply(null, u.subarray(i, i + 32768)); return window.__fwAudio("data", btoa(s)); };
+  function tap(ctx) {
+    if (ctx.__fwTap) return ctx.__fwTap;
+    const d = ctx.__fwTap = ctx.createMediaStreamDestination();
+    if (rec) return d;
+    rec = new MediaRecorder(d.stream, { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 128000 });
+    rec.onstart = () => { window.__fwAudio("start", String(Date.now())); };
+    rec.ondataavailable = (e) => { if (e.data.size) queue = queue.then(() => e.data.arrayBuffer()).then(send).catch(() => {}); };
+    rec.start(1000);
+    return d;
+  }
+  AudioNode.prototype.connect = function (dest, ...rest) {
+    const r = orig.call(this, dest, ...rest);
+    if (!stopped && dest instanceof AudioDestinationNode) { try { orig.call(this, tap(dest.context)); } catch (e) {} }
+    return r;
+  };
+  window.__fwRecStop = () => new Promise((res) => {
+    stopped = true;
+    if (!rec || rec.state === "inactive") return queue.then(res);
+    rec.onstop = () => setTimeout(() => queue.then(res), 50);
+    rec.stop();
+  });
+})();`;
+async function tapAudio(ctx) {
+  const a = { start: null, file: null, out: null, t0: null };
+  await ctx.exposeBinding("__fwAudio", async (_src, kind, data) => {
+    if (kind === "start") { a.start = Number(data); return; }
+    if (!a.out) { a.file = path.join(RECORD_DIR, `.audio-${process.pid}-${Date.now()}.webm`); a.out = await fs.open(a.file, "w"); }
+    await a.out.write(Buffer.from(data, "base64"));
+  });
+  await ctx.addInitScript(AUDIO_TAP);
+  a.t0 = Date.now(); // 動画はページを作ったときから始まる
+  return a;
+}
+async function ffmpegPath() {
+  try { return (await import("playwright-core/lib/server/registry/index")).registry.findExecutable("ffmpeg").executablePath(); } catch { return null; }
+}
+/* 音を重ねるのは mux-audio.mjs に切り離して任せる（MCPクライアントは終了時に2秒でサーバーを止めるので、ここでは待たない） */
+async function muxAudio(dst, a) {
+  if (!a?.out) return false; // 音が一度も鳴らなかった
+  await a.out.close();
+  const ff = await ffmpegPath();
+  if (!ff) { err("録画の音を重ねる ffmpeg が見つかりません（npx playwright install chromium）。音なしで保存します"); await fs.rm(a.file, { force: true }); return false; }
+  // 動画のコマは実際の画面より約0.2秒遅れて記録されるので、音もその分遅らせる（実測）
+  const offset = Math.max(0, ((a.start ?? a.t0) - a.t0 + 200) / 1000).toFixed(3);
+  spawn(process.execPath, [path.join(HERE, "mux-audio.mjs"), dst, a.file, offset, ff], { stdio: "ignore", detached: true, windowsHide: true }).on("error", () => {}).unref();
+  return true;
+}
 const recordings = [];
 let recCount = 0;
-function track(pg) {
+function track(pg, audio) {
   const v = pg.video();
   if (!v) return;
   const stamp = new Date().toLocaleString("sv-SE").replace(/[-: ]/g, "").replace(/^(\d{8})(\d{4}).*/, "$1-$2");
   const base = (RECORD_NAME || stamp).replace(/[\\/:*?"<>|]+/g, "_") + (recCount++ ? `-${recCount}` : "");
   err(`recording: ${path.join(RECORD_DIR, base + ".webm")}`);
+  const ctx = pg.context(), ctxClosed = new Promise(r => ctx.once("close", r));
   recordings.push(new Promise(r => pg.once("close", r)).then(async () => {
-    await pg.context().close().catch(() => {}); // コンテキストを閉じると動画が書き終わる
+    // コンテキストが閉じ終わると動画が書き終わる（閉じる途中で close() をもう一度呼んでもすぐ返るので、close イベントを待つ）
+    ctx.close().catch(() => {});
+    await ctxClosed;
     const src = await v.path();
     let dst = path.join(RECORD_DIR, base + ".webm");
     for (let i = 2; await fs.stat(dst).then(() => true, () => false); i++) dst = path.join(RECORD_DIR, `${base}-${i}.webm`);
     await fs.rename(src, dst);
+    const withAudio = await muxAudio(dst, audio).catch(e => { err("録画の音：", e.message); return false; });
     err(`recorded: ${dst}`);
+    if (withAudio) err("録画に音を重ねています（数秒〜数十秒で終わります）");
   }).catch(e => err("recording failed:", e.message)));
 }
 async function finishRecording() {
   if (!recordings.length) return;
+  // 録音を止めて、最後の音のかけらを受け取ってから閉じる
+  try { await Promise.race([page?.evaluate(() => window.__fwRecStop?.()), new Promise(r => setTimeout(r, 800))]); } catch {}
   try { await page?.context().close(); } catch {}
   await Promise.all(recordings);
 }

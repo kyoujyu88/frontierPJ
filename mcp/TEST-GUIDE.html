@@ -333,7 +333,7 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
             <tr><td><code>-- --manual-battle</code></td><td>戦闘をオートにせず、のあに1隻ずつ操作させる（時間がかかる。既定はオート）</td></tr>
             <tr><td><code>--persona noa.txt</code></td><td>のあの人格・口調を書いたテキスト（UTF-8で保存）をプロンプトの先頭に入れる</td></tr>
             <tr><td><code>--temperature 0.6</code></td><td>発言のばらつき（既定 0.6）</td></tr>
-            <tr><td><code>-- --pace 900</code></td><td><code>--</code> の後ろはゲーム側の設定。行動ごとの間を 900ms にする（既定 700）</td></tr>
+            <tr><td><code>-- --pace 900</code></td><td><code>--</code> の後ろはゲーム側の設定。行動ごとの間を 900ms にする（既定 300）</td></tr>
             <tr><td><code>-- --size 1920x1080</code></td><td>ゲーム画面の大きさ（OBS の解像度に合わせる。既定 1280x720）</td></tr>
           </tbody>
         </table></div>
@@ -374,7 +374,7 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
 
     <section class="step" id="series" data-title="連続プレイと録画">
       <div class="step-head"><span class="num">09</span><h2>操作盤で連続プレイと録画をする</h2><span class="time">15分〜</span></div>
-      <p>ブラウザで開く操作盤から、試行回数を決めて続けて遊ばせ、試行ごとに自動で録画します。1試行＝1ゲームで、前の試行で書いた反省メモが次の試行の最初から効きます。録画に OBS は要りません（音は入りません）。</p>
+      <p>ブラウザで開く操作盤から、試行回数を決めて続けて遊ばせ、試行ごとに自動で録画します。1試行＝1ゲームで、前の試行で書いた反省メモが次の試行の最初から効きます。録画に OBS は要りません（BGM と効果音も入ります）。</p>
       <ul class="checks">
         <li><input type="checkbox" id="c-sr-1"><div class="body"><label for="c-sr-1">新しい一式に入れ替えた</label>
           <p class="why">新しい <code>frontier-mcp-kit.zip</code> を展開し、中の <code>frontier</code> フォルダを <code>D:\dev</code> にドラッグして「ファイルを置き換える」を選びます。<code>notes</code>（反省メモ）と <code>node_modules</code> は zip に入っていないので、そのまま残ります。</p>
@@ -401,7 +401,7 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
         <li><input type="checkbox" id="c-sr-4"><div class="body"><label for="c-sr-4">ゲームの窓が開いて遊び始め、1試行目が終わると窓が閉じて、2試行目の窓が開いた</label>
           <p class="why">操作盤の「ログ」にこれまで PowerShell に出ていた行が流れ、「進行」に試行・ターン・資金・経過時間が出ます。試行の終わりには <code>── 試行 1/2 終了：ターン上限（ターン3） 録画 のあ_…_1of2.webm</code> と出ます。</p></div></li>
         <li><input type="checkbox" id="c-sr-5"><div class="body"><label for="c-sr-5">「戦績」に2行並び、「録画」タブの「再生」で動画が見られた</label>
-          <p class="why">動画は <code>D:\dev\frontier\mcp\recordings</code> にも保存されています（WebM、1時間で約450MB）。字幕と行動表示は映りますが、音は入りません。「反省メモ」タブでは、試行のたびに書き直されたメモが見られます。</p></div></li>
+          <p class="why">動画は <code>D:\dev\frontier\mcp\recordings</code> にも保存されています（WebM、1時間で約500MB）。字幕・行動表示と、BGM・効果音も入っています（試行が終わってから数秒で音が重なります）。「反省メモ」タブでは、試行のたびに書き直されたメモが見られます。</p></div></li>
         <li><input type="checkbox" id="c-sr-6"><div class="body"><label for="c-sr-6">止め方を試した</label>
           <p class="why">「この試行で終わる」は今のゲームを最後まで遊んでから止めます。「いま止める」は反省メモを書いてから止めます（返事待ちの途中なら1分ほどかかります）。「強制終了」はメモを書かずにすぐ止めます。操作盤ごと終えるときは右上の「終了」です。</p></div></li>
         <li><input type="checkbox" id="c-sr-7"><div class="body"><label for="c-sr-7">（長時間）試行回数を 5 くらい、上限ターンを空欄にして放置した</label>

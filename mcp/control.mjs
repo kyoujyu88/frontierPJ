@@ -34,11 +34,12 @@ const HISTORY_FILE = path.join(NOTES_DIR, ".control-history.json");
 const DEFAULTS = {
   baseUrl: "http://127.0.0.1:11434/v1", model: "", name: "のあ", think: "none",
   trials: 3, turns: "", record: true, recordDir: "recordings", headless: false,
-  notesMode: "grow", maxSteps: 40, reflectEvery: 10, temperature: 0.6, pace: 700, size: "1280x720", persona: "",
+  notesMode: "grow", maxSteps: 40, reflectEvery: 10, temperature: 0.6, pace: 300, size: "1280x720", persona: "",
 };
 async function readJson(file, def) { try { return JSON.parse(await fs.readFile(file, "utf8")); } catch { return def; } }
 async function writeJson(file, v) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(v, null, 1) + "\n"); }
 let settings = { ...DEFAULTS, ...(await readJson(SETTINGS_FILE, {})) };
+if (!settings.v) { if (settings.pace === 700) settings.pace = 300; settings.v = 2; } // 演出の間の既定を 700→300 に変えたので、前の既定のままなら合わせる
 let history = await readJson(HISTORY_FILE, []); // 試行の記録（新しい順、最大300件）
 
 function clean(input) {
@@ -56,7 +57,7 @@ function clean(input) {
   s.maxSteps = int(s.maxSteps, 5, 200, 40);
   s.reflectEvery = int(s.reflectEvery, 0, 999, 10);
   s.temperature = Number.isFinite(Number(s.temperature)) ? Math.min(2, Math.max(0, Number(s.temperature))) : 0.6;
-  s.pace = int(s.pace, 0, 5000, 700);
+  s.pace = int(s.pace, 0, 5000, 300);
   s.size = /^\d{3,4}x\d{3,4}$/.test(s.size) ? s.size : "1280x720";
   s.persona = String(s.persona || "").trim();
   return s;
@@ -147,7 +148,7 @@ async function latestVideo(since) {
   try {
     const files = await fs.readdir(recordDir());
     let best = null;
-    for (const f of files.filter(f => f.endsWith(".webm"))) {
+    for (const f of files.filter(f => f.endsWith(".webm") && !f.startsWith(".") && !f.endsWith(".mux.webm"))) {
       const st = await fs.stat(path.join(recordDir(), f));
       if (st.mtimeMs >= since && (!best || st.mtimeMs > best.t)) best = { f, t: st.mtimeMs };
     }
@@ -255,7 +256,7 @@ async function listPlayers() {
 async function listVideos() {
   try {
     const dir = recordDir(), out = [];
-    for (const f of (await fs.readdir(dir)).filter(f => f.endsWith(".webm"))) {
+    for (const f of (await fs.readdir(dir)).filter(f => f.endsWith(".webm") && !f.startsWith(".") && !f.endsWith(".mux.webm"))) {
       const st = await fs.stat(path.join(dir, f)); out.push({ file: f, size: st.size, mtime: st.mtimeMs });
     }
     return out.sort((a, b) => b.mtime - a.mtime);
