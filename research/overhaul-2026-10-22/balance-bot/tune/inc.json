@@ -1,0 +1,45 @@
+{
+ "name": "inc",
+ "params": {
+  "tierEvery": 6,
+  "spawnEvery": 3,
+  "spawnMax": 3,
+  "ship4After": 10,
+  "rFalco": 120,
+  "rGrave": 220,
+  "rArc": 330,
+  "rSeraph": 380,
+  "investCap": 0,
+  "brood": 42,
+  "drone": 22,
+  "neo": 8,
+  "brArmor": 3,
+  "drArmor": 2,
+  "acid": 7,
+  "fang": 6,
+  "hive": 150,
+  "hiveGun": 7,
+  "nest": 36,
+  "initSpawn": 2,
+  "xcap": 2,
+  "xcapEvo": 3,
+  "gate": -1,
+  "mine": 10,
+  "mineRich": 20,
+  "survey": 15
+ },
+ "edits": [
+  {
+   "find": "function planetIncome(p){return p.income+(hasF(p,\"mine\")?(p.trait===\"鉱物\"?30:15):0)}",
+   "replace": "function planetIncome(p){return p.income+(hasF(p,\"mine\")?(p.trait===\"鉱物\"?20:10):0)}"
+  },
+  {
+   "find": "desc:p=>`収入 +${p.trait===\"鉱物\"?30:15}`",
+   "replace": "desc:p=>`収入 +${p.trait===\"鉱物\"?20:10}`"
+  },
+  {
+   "find": "if(Math.random()<.45){p.income+=20;log(`${p.name}で鉱物資源帯を発見。収入+20。`)}",
+   "replace": "if(Math.random()<.45){p.income+=15;log(`${p.name}で鉱物資源帯を発見。収入+15。`)}"
+  }
+ ]
+}
