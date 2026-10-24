@@ -29,6 +29,7 @@ server.mjs（MCPサーバー）──Playwright──▶ Chromium の窓（ゲ�
 | `regress.mjs` | ゲーム本体の回帰テスト：スマホ幅の表示、主星に居座った異生体、戦闘中のキーボード操作（`npm run test:regress`） |
 | `操作盤を開く.cmd` `launch.mjs` | ダブルクリックで操作盤を開く（初回は部品も入れる） |
 | `control.mjs` `control.html` | 操作盤。ブラウザの画面から、試行回数を決めた連続プレイ・録画・停止・戦績の確認ができる（`npm run ui`） |
+| `mux-audio.mjs` | 録画の映像に、別に録ったゲームの音を重ねる（server.mjs が試行の終わりに起動する） |
 | `recordings/*.webm` | 録画した動画。録画をオンにするとできる |
 | `notes-test.mjs` | にせのLLMで反省メモの保存と読み込み、負けたときにそこで止まるか、LLM のエラーで止めるか続けるかを確かめる（`npm run test:notes`） |
 | `package.json` | 依存パッケージ（MCP SDK・Playwright・zod） |
@@ -140,11 +141,12 @@ LM Studio は自身もMCPクライアントになれるので、`server.mjs` を
 - 操作盤はこのPCからだけ開けます（127.0.0.1 で待ち受け、Host ヘッダーを確かめる）。`npm run ui` で起動したときは、その窓を閉じるとプレイも止まります。ポートを変えるなら `node control.mjs --port 3941`、ブラウザを自動で開かないなら `--no-open`。
 - 戦績の一覧は `notes/.control-history.json`、操作盤の設定は `notes/.control-settings.json` に残ります。
 
-**録画について**：Playwright の動画録画（`server.mjs --record`）を使います。`npx playwright install chromium` で入る ffmpeg で書くので、追加のソフトは要りません。
+**録画について**：映像は Playwright の動画録画（`server.mjs --record`）、音はページの中で録ります（ゲームの音はすべて1つの AudioContext から出るので、出力へのつなぎ込みを横取りして MediaRecorder で Opus に録る）。試行が終わると `mux-audio.mjs` が、`npx playwright install chromium` で入る ffmpeg で両方を1本に重ねます（ストリームのコピーだけなので数秒）。追加のソフトは要りません。
 
-- 形式は WebM（VP8・25fps・約1Mbps）で、**音は入りません**。1時間で約450MBです。字幕と行動表示は画面の中に描いているので映ります。
+- 形式は WebM（VP8・25fps・約1Mbps＋Opus 128kbps）で、**BGM と効果音が入ります**。1時間で約500MBです。字幕と行動表示は画面の中に描いているので映ります。映像のコマは実際の画面より約0.2秒遅れて記録されるので、音も同じだけ遅らせて合わせています。
+- 音を重ねるのは試行が終わった直後です。数秒のあいだは音なしのファイルが見えます。重ねるのに失敗したときは音なしの動画が残ります。音を入れたくないときは `--no-record-audio`。
 - ファイル名は `recordings/<名前>_<日時>_<n>of<回数>.webm`。YouTube にはそのまま上げられます。MP4 が要るときは変換してください。
-- 音入り・高画質で残したいときは、これまでどおり OBS で録画します（下の「配信のしかた」）。
+- もっと高画質で残したいときは、これまでどおり OBS で録画します（下の「配信のしかた」）。
 
 `ai-player.mjs` を直接動かすときも、`--` の後ろに付ければ録画できます。
 
@@ -178,13 +180,14 @@ node server.mjs --http 3939      # → http://127.0.0.1:3939/mcp （Streamable H
 | オプション | 環境変数 | 既定 | 内容 |
 |---|---|---|---|
 | `--game <path>` | `GAME_PATH` | `../game/frontier-war.html` | ゲームのHTML |
-| `--pace <ms>` | `GAME_PACE` | `700` | 行動ごとの演出の間（視聴者が追える速さ）。0で即時（移動・攻撃アニメーションも省く） |
+| `--pace <ms>` | `GAME_PACE` | `300` | 行動ごとの演出の間（視聴者が追える速さ）。0で即時（移動・攻撃アニメーションも省く） |
 | `--speaker <名前>` | `GAME_SPEAKER` | `のあ` | 字幕と行動表示の名前 |
 | `--size 1280x720` | `GAME_SIZE` | `1280x720` | 画面の大きさ（OBSの解像度に合わせる） |
 | `--cdp <url>` | `GAME_CDP` | なし | 起動済みのChromeに接続する（`chrome --remote-debugging-port=9222`） |
 | `--headless` | `GAME_HEADLESS=1` | なし | 窓を出さない（テスト用） |
 | `--http <port>` | `GAME_HTTP` | なし | stdio の代わりに HTTP で待ち受け |
-| `--record <dir>` | `GAME_RECORD` | なし | ゲーム画面を dir に動画（.webm、音なし）で録画する。ゲームを閉じたときに書き終わる |
+| `--record <dir>` | `GAME_RECORD` | なし | ゲーム画面を dir に動画（.webm、BGM・効果音つき）で録画する。ゲームを閉じたときに書き終わる |
+| `--no-record-audio` | | | 録画に音を入れない |
 | `--record-name <名前>` | `GAME_RECORD_NAME` | 日時 | 録画ファイルの名前（.webm は自動で付く） |
 | `--manual-battle` | `GAME_MANUAL_BATTLE=1` | なし（オート） | 戦術戦闘を `battle_*` ツールで1隻ずつ操作する。付けなければ戦闘はオートで決着し、`battle_*` ツールは出さない |
 
