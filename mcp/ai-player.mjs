@@ -101,7 +101,7 @@ const say = (text) => tool("say", { text: cleanTalk(text) }).catch(() => {});
 
 // AIに渡すツール。重い get_state、画像の get_screenshot、やり直しの new_game は外す（say は地の文で代用）。
 // ルールはシステムプロンプトに入れてあるので get_rules も外す（小さなモデルが読み直しを繰り返すため）
-const HIDDEN = new Set(["get_state", "get_screenshot", "new_game", "battle_state", "get_rules"]);
+const HIDDEN = new Set(["get_state", "get_screenshot", "new_game", "battle_state", "get_rules", "finish_recording"]);
 const tools = (await mcp.listTools()).tools.filter(t => !HIDDEN.has(t.name)).map(t => ({
   type: "function",
   function: { name: t.name, description: t.description, parameters: { type: "object", properties: {}, ...t.inputSchema } },
@@ -453,5 +453,7 @@ else if (!st.over && llmDown && WRITE_NOTES && journal.turns.length) {
   notes.records.unshift(recordLine({ date: new Date().toLocaleDateString("sv-SE"), model: MODEL, outcome: "途中終了", journal }));
   await saveNotes(NOTES_FILE, NAME, notes);
 }
+// 録画を仕上げてから閉じる（MCP の close はサーバーを2秒で止め、Windows ではその場で強制終了になるため）
+await tool("finish_recording").catch(() => {});
 await mcp.close();
 process.exit(0);

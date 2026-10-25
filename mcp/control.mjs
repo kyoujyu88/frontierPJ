@@ -20,6 +20,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadNotes, safeName } from "./notes.mjs";
+import { sweep } from "./mux-audio.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -128,7 +129,12 @@ function runTrial(s, n) {
       done = true;
       rec.endedAt = new Date().toISOString();
       rec.outcome = over === "win" ? "勝利" : over === "lose" ? "敗北" : llmDown ? llmWhy : stopped || run.killed ? "停止" : code ? `エラー終了(${code})` : s.turns && rec.turn >= s.turns ? "ターン上限" : "途中終了";
-      if (s.record && !rec.video) rec.video = await latestVideo(Date.parse(rec.startedAt));
+      if (s.record) {
+        // サーバーが仕上げる前に止められた録画（Windows で起きる）は、ここで名前を付け直して音を重ねる
+        const fixed = await sweep(recordDir()).catch(() => []);
+        if (fixed.length) sys(`録画を仕上げました：${fixed.map(f => path.basename(f)).join("、")}`);
+        if (!rec.video) rec.video = fixed.length ? path.basename(fixed.at(-1)) : await latestVideo(Date.parse(rec.startedAt));
+      }
       history.unshift(rec); history = history.slice(0, 300);
       await writeJson(HISTORY_FILE, history).catch(() => {});
       run.current = null;
