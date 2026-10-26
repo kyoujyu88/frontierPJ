@@ -1,6 +1,6 @@
 # frontierPJ
 
-PCエンジンの「シュヴァルツシルト」のゲーム性を受け継いだ新作 SF 戦略シミュレーション「辺境星系戦記」と、
+ターン制の SF 戦略シミュレーション「辺境星系戦記」と、
 それを AI（ローカル LLM など）に遊ばせて配信・録画するための MCP サーバー一式です。
 
 | フォルダ | 中身 |
@@ -19,3 +19,10 @@ npm run test:regress  # ゲーム本体の回帰テスト（スマホ表示・�
 ```
 
 Windows では `mcp\操作盤を開く.cmd` をダブルクリックすると、初回の準備をしてから操作盤がブラウザで開きます。
+
+## 素材とクレジット
+
+- 画像（`game/art/`）は Google Gemini、音楽（`game/audio/`）は Google Lyria で生成したものです。音楽には Google の電子透かし SynthID が入っています。
+- 効果音はブラウザ内（Web Audio）で合成しています。
+- フォントは DotGothic16・BIZ UDPGothic（SIL Open Font License 1.1）。`game/` は Google Fonts から読み込み、ローカル版は使う文字だけに絞った改変版を同梱します。
+- 詳しくは [local/_src/CREDITS.txt](local/_src/CREDITS.txt)。
