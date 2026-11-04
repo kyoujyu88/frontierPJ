@@ -12,9 +12,12 @@ WORK=os.environ.get('PROMO_WORK') or os.path.join(PROMO,'work')
 OUT=os.path.join(WORK,'gfx')
 AMBER=(242,184,75); INK=(236,238,248); DIM=(206,212,236)
 def art(name):
-    """キービジュアルの上下の黒帯を除き、16:9 に切り出す"""
-    im=Image.open(ART+name).convert('RGB')
-    return im.crop((21,12,1003,564))
+    """キービジュアルの上下の黒帯（1024×576 の絵で上下12px）を除き、16:9 に切り出す。
+    帯の幅は高さに対する比率で決めるので、同じ構図のまま解像度を変えた絵でも合う"""
+    im=Image.open(ART+name).convert('RGB'); w,h=im.size
+    assert abs(w/h-16/9)<0.02, f'{name} が 16:9 ではありません（{w}×{h}）。切り出し方を見直してください'
+    bar=round(h*12/576); ch=h-2*bar; cw=round(ch*16/9); x0=(w-cw)//2
+    return im.crop((x0,bar,x0+cw,bar+ch))
 def font(name,size): return ImageFont.truetype(FD+name,size)
 DOT=lambda s:font('DotGothic16-Regular.ttf',s)
 BOLD=lambda s:font('BIZUDPGothic-Bold.ttf',s)

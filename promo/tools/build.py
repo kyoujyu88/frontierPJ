@@ -9,6 +9,8 @@ T=os.path.join(WORK,'gfx'); R=os.path.join(WORK,'rec'); AU=os.path.join(REPO,'ga
 os.makedirs(TMP,exist_ok=True)
 FPS=30
 def run(a): subprocess.run(['ffmpeg','-y','-loglevel','error',*a],check=True)
+def q(p): return "'"+str(p).replace("'","'\\''")+"'"  # concat のリスト用に ' をエスケープ
+def duration(p): return float(subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','csv=p=0',p],check=True,capture_output=True,text=True).stdout)
 
 BATTLE_CROP=None
 # (種類, 素材, 開始, 終了/長さ, 速さ, 切り出し, テロップ[(画像,出,消)], フェード)
@@ -50,12 +52,16 @@ for i,s in enumerate(SHOTS):
     segs.append(out); starts.append(t); t+=dur
     print(f'{i:2d} {kind:5s} {s[1]:12s} {starts[-1]:5.2f}–{t:5.2f}',flush=True)
 total=t
-open(f'{TMP}/segs.txt','w').write(''.join(f"file '{x}'\n" for x in segs))
+open(f'{TMP}/segs.txt','w').write(''.join(f"file {q(x)}\n" for x in segs))
 run(['-f','concat','-safe','0','-i',f'{TMP}/segs.txt','-c','copy',f'{TMP}/video.mp4'])
 # 音：前半は bgm-title、異生体の場面から bgm-crisis、勝利の画で se-win
 tx=starts[5]; tv=starts[9]
+CRISIS_FROM=34  # bgm-crisis はここ（秒）から使う
+for f,need in [('bgm-title.mp3',tx+0.6),('bgm-crisis.mp3',CRISIS_FROM+total-tx+0.7)]:
+    have=duration(f'{AU}/{f}')
+    if have<need: sys.exit(f'{f} が {have:.1f}秒しかありません（{need:.1f}秒必要）。build.py の場面の長さか CRISIS_FROM を見直してください')
 af=(f"[0:a]atrim=0:{tx+0.6},afade=t=in:d=0.4,afade=t=out:st={tx-0.6}:d=1.2,asetpts=PTS-STARTPTS[a0];"
-    f"[1:a]atrim=34:{34+total-tx+0.7},asetpts=PTS-STARTPTS,afade=t=in:d=0.8,adelay={int((tx-0.7)*1000)}|{int((tx-0.7)*1000)}[a1];"
+    f"[1:a]atrim={CRISIS_FROM}:{CRISIS_FROM+total-tx+0.7},asetpts=PTS-STARTPTS,afade=t=in:d=0.8,adelay={int((tx-0.7)*1000)}|{int((tx-0.7)*1000)}[a1];"
     f"[2:a]volume=0.9,adelay={int((tv+0.2)*1000)}|{int((tv+0.2)*1000)}[a2];"
     f"[a0][a1][a2]amix=inputs=3:normalize=0:duration=longest,atrim=0:{total},afade=t=out:st={total-2.8}:d=2.8,loudnorm=I=-15:TP=-1.5:LRA=11[a]")
 run(['-i',f'{AU}/bgm-title.mp3','-i',f'{AU}/bgm-crisis.mp3','-i',f'{AU}/se-win.mp3','-filter_complex',af,'-map','[a]','-ar','48000','-c:a','pcm_s16le',f'{TMP}/audio.wav'])

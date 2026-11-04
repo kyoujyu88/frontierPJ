@@ -1,6 +1,6 @@
 /* 撮影用の途中経過を作る：検証ボット（上手）に1ゲーム通して遊ばせ、毎ターンの終了直前の状態 S を保存する。
  *   node snaps.mjs [--seed 1] [--bot <bot.js>]
- * bot.js は research/overhaul-2026-10-22/balance-bot/bot.js（共有フォルダの research/ にある）。
+ * bot.js は research/overhaul-2026-10-22/balance-bot/bot.js。リポジトリに無いときは --bot か環境変数 BOT_JS で場所を指定する。
  * 出力：promo/work/snaps.json（場面のターン番号は shoot.mjs が seed 1 の展開を前提にしている）
  */
 import fs from "node:fs";
@@ -10,9 +10,8 @@ import { REPO, WORK, prepareGame, playwright } from "./lib.mjs";
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : d; };
 const seed = Number(opt("seed", 1));
-const BOT = [opt("bot", null), process.env.BOT_JS, path.join(REPO, "research/overhaul-2026-10-22/balance-bot/bot.js"),
-  "/mnt/project-files/research/overhaul-2026-10-22/balance-bot/bot.js"].find(p => p && fs.existsSync(p));
-if (!BOT) { console.error("bot.js が見つかりません（--bot で指定）"); process.exit(1); }
+const BOT = [opt("bot", null), process.env.BOT_JS, path.join(REPO, "research/overhaul-2026-10-22/balance-bot/bot.js")].find(p => p && fs.existsSync(p));
+if (!BOT) { console.error("bot.js が見つかりません（--bot か環境変数 BOT_JS で指定）"); process.exit(1); }
 const { chromium } = playwright();
 let api = fs.readFileSync(path.join(REPO, "mcp/game-api.js"), "utf8");
 api = api.replace("const sleep=ms=>new Promise(r=>setTimeout(r,ms));", "const sleep=ms=>new Promise(r=>setTimeout(r,window.__BOTFAST?0:ms));");

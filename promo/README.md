@@ -45,14 +45,17 @@ BGM は前半が bgm-title、異生体の場面から bgm-crisis です。テロ
 python3 local/build_local.py
 
 cd promo/tools
-# 2. 検証ボットに1ゲーム遊ばせて、毎ターンの途中経過を保存（research/…/balance-bot/bot.js を使う。--bot で場所を指定できる）
+# 2. 検証ボットに1ゲーム遊ばせて、毎ターンの途中経過を保存する
+#    bot.js は research/overhaul-2026-10-22/balance-bot/bot.js。リポジトリに無いときは場所を指定する
+#    例: node snaps.mjs --bot <どこか>/research/overhaul-2026-10-22/balance-bot/bot.js（環境変数 BOT_JS でもよい）
 node snaps.mjs
-# 3. 場面ごとに録画（約6分）。node shoot.mjs battle のように場面だけでも撮れる
+# 3. 場面ごとに録画して mp4 にする（約6分）。node shoot.mjs battle のように場面だけでも撮れる
 node shoot.mjs
 python3 assemble.py
-# 4. サムネイル・テロップを作り、動画を組み立てる（スクリーンショットもここで書き出す）
+# 4. サムネイル・テロップ・タイトル画面の画像を作る
 python3 gfx.py
-python3 build.py      # → promo/work/trailer.mp4
+# 5. 動画を組み立て、スクリーンショットを書き出す
+python3 build.py      # → promo/work/trailer.mp4、promo/screenshots/*.jpg
 ```
 
 テロップの文言は `gfx.py` の末尾、場面の切り出し位置・速さ・長さは `build.py` の `SHOTS`、撮影の操作は `shoot.mjs` にあります。作業ファイルは `promo/work/`（git には入れない）に出ます。
