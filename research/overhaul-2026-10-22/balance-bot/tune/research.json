@@ -1,0 +1,26 @@
+{
+ "name": "research",
+ "desc": "研究費の引き上げ（ファルコ120→160・グレイヴ220→300・アーク330→450・セラフ380→480）と、1ターンの研究投資を120までに",
+ "edits": [
+  {
+   "find": "{name:\"ファルコ級\",type:\"駆逐艦\",hp:20,pts:9,cost:70,research:120,code:\"FC-3\"}",
+   "replace": "{name:\"ファルコ級\",type:\"駆逐艦\",hp:20,pts:9,cost:70,research:160,code:\"FC-3\"}"
+  },
+  {
+   "find": "{name:\"グレイヴ級\",type:\"巡洋艦\",hp:30,pts:12,cost:110,research:220,code:\"GV-7\"}",
+   "replace": "{name:\"グレイヴ級\",type:\"巡洋艦\",hp:30,pts:12,cost:110,research:300,code:\"GV-7\"}"
+  },
+  {
+   "find": "{name:\"アークライト級\",type:\"戦艦\",hp:44,pts:16,cost:160,research:330,code:\"AL-12\"}",
+   "replace": "{name:\"アークライト級\",type:\"戦艦\",hp:44,pts:16,cost:160,research:450,code:\"AL-12\"}"
+  },
+  {
+   "find": "{name:\"セラフ級\",type:\"対異生体戦艦\",hp:56,pts:20,cost:200,research:380,code:\"SR-0\",anti:true}",
+   "replace": "{name:\"セラフ級\",type:\"対異生体戦艦\",hp:56,pts:20,cost:200,research:480,code:\"SR-0\",anti:true}"
+  },
+  {
+   "find": "function invest(v){\n  S.funds-=v;S.research+=v;checkResearch();render();\n}",
+   "replace": "function invest(v){\n  if(S.invTurn!==S.turn){S.invTurn=S.turn;S.invT=0}\n  if(S.invT+v>120){toast(\"研究への投資は1ターンに120までです。\");return}\n  S.invT+=v;S.funds-=v;S.research+=v;checkResearch();render();\n}"
+  }
+ ]
+}

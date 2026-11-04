@@ -1,0 +1,30 @@
+{
+ "name": "xeno",
+ "desc": "異生体の強化：耐久（ブルード42→64・ドローン22→34・改+8→+12）、装甲（3→5・2→4）、攻撃（酸弾7→9・牙6→8）、巣の中枢150→240・迎撃砲7→9、浸食核36→48、出現時の群れ2→3、同時に動く群れの上限2→3（進化後3→4）",
+ "edits": [
+  {
+   "find": "const T={brood:{hp:42,name:\"ゾア・ブルード\"},drone:{hp:22,name:\"ゾア・ドローン\"}};",
+   "replace": "const T={brood:{hp:64,name:\"ゾア・ブルード\"},drone:{hp:34,name:\"ゾア・ドローン\"}};"
+  },
+  {
+   "find": "return{id:uid(),xeno:kind,neo,hp:T[kind].hp+(neo?8:0),maxHp:T[kind].hp+(neo?8:0)};",
+   "replace": "return{id:uid(),xeno:kind,neo,hp:T[kind].hp+(neo?12:0),maxHp:T[kind].hp+(neo?12:0)};"
+  },
+  {
+   "find": "hp:s.hp,maxHp:s.maxHp,armor:brood?3:2,move:brood?3:4,\n    w:[{n:brood?\"酸弾\":\"牙\",d:brood?7:6,",
+   "replace": "hp:s.hp,maxHp:s.maxHp,armor:brood?5:4,move:brood?3:4,\n    w:[{n:brood?\"酸弾\":\"牙\",d:brood?9:8,"
+  },
+  {
+   "find": "hp:isHive?150:isNest?36:16+p.def,armor:0,move:0,\n        w:[{n:\"迎撃砲\",d:isHive?7:5,",
+   "replace": "hp:isHive?240:isNest?48:16+p.def,armor:0,move:0,\n        w:[{n:\"迎撃砲\",d:isHive?9:5,"
+  },
+  {
+   "find": "spawnXeno();spawnXeno();S.funds+=150;",
+   "replace": "spawnXeno();spawnXeno();spawnXeno();S.funds+=150;"
+  },
+  {
+   "find": "S.fleets.filter(f=>f.side===\"M\").length<(S.evolved?3:2)&&planet(HIVE).owner===\"H\"",
+   "replace": "S.fleets.filter(f=>f.side===\"M\").length<(S.evolved?4:3)&&planet(HIVE).owner===\"H\""
+  }
+ ]
+}
