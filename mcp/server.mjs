@@ -148,7 +148,7 @@ async function tapAudio(ctx) {
 const MUX = path.join(HERE, "mux-audio.mjs");
 const runMux = (...args) => spawn(process.execPath, [MUX, ...args], { stdio: "ignore", detached: true, windowsHide: true }).on("error", () => {}).unref();
 const recordings = [];
-let recCount = 0;
+let recCount = 0, recStart = null; // recStart：録画の開始時刻（プレイログの時刻を動画に合わせるため。recording_info で返す）
 function track(pg, audio) {
   const v = pg.video();
   if (!v) return;
@@ -157,6 +157,7 @@ function track(pg, audio) {
   err(`recording: ${path.join(RECORD_DIR, base + ".webm")}`);
   const job = path.join(RECORD_DIR, `.rec-${process.pid}-${recCount}.json`);
   const info = { pid: process.pid, base, src: null, dst: null, audio: audio?.file ?? null, t0: audio?.t0 ?? Date.now(), start: null };
+  recStart ??= { t0: info.t0, name: base };
   let saving = Promise.resolve();
   const save = () => (saving = saving.then(() => fs.writeFile(job, JSON.stringify(info))).catch(e => err("録画の覚え書き：", e.message)));
   save();
@@ -177,14 +178,15 @@ function track(pg, audio) {
     runMux(job);
     err(`recorded: ${dst}`);
     if (audio) err(audio.bytes ? `録画に音を重ねています（音 ${Math.round(audio.bytes / 1024)}KB、数秒〜数十秒で終わります）` : "録画の音：ゲームの音が一度も鳴らなかったので、音なしで保存します");
-  }).catch(e => err("recording failed:", e.message)));
+    return dst;
+  }).catch(e => { err("recording failed:", e.message); return null; }));
 }
 async function finishRecording() {
   if (!recordings.length) return;
   // 録音を止めて、最後の音のかけらを受け取ってから閉じる
   try { await Promise.race([page?.evaluate(() => window.__fwRecStop?.()), new Promise(r => setTimeout(r, 800))]); } catch {}
   try { await page?.context().close(); } catch {}
-  await Promise.all(recordings);
+  return (await Promise.all(recordings)).filter(Boolean);
 }
 if (RECORD_DIR && CDP) err("--record は --cdp と一緒には使えません（録画しません）");
 if (RECORD_DIR) { await fs.mkdir(RECORD_DIR, { recursive: true }); runMux("--sweep", RECORD_DIR); } // 前回仕上がらなかった録画があれば仕上げる
@@ -229,7 +231,11 @@ function buildServer() {
     text: z.string().describe("表示するセリフ"),
     seconds: z.number().optional().describe("表示秒数（省略時は文字数から自動）"),
   }, ({ text, seconds }) => call("say", text, undefined, seconds ? seconds * 1000 : undefined));
-  tool("finish_recording", "録画を仕上げる（ai-player が終わる前に呼ぶもの。プレイには使わない）。", {}, async () => { await finishRecording(); return { ok: true }; });
+  tool("finish_recording", "録画を仕上げる（ai-player が終わる前に呼ぶもの。プレイには使わない）。", {}, async () => ({ ok: true, videos: (await finishRecording()) ?? [] }));
+  tool("recording_info", "録画の開始時刻（ミリ秒）と名前を返す（ai-player がプレイログの時刻を動画に合わせるためのもの。プレイには使わない）。", {}, async () => {
+    if (RECORD_DIR && !CDP) await getPage();
+    return recStart ? { ok: true, recording: true, ...recStart } : { ok: true, recording: false };
+  });
   tool("dismiss_dialog", "開いている通信ウィンドウを閉じる（「了解」を押す）。", {}, () => call("dismissDialog"));
 
   // 作戦卓

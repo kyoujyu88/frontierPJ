@@ -4,6 +4,8 @@
  * ai-player.mjs を1試行（1ゲーム）ずつ子プロセスで起動し、指定した回数だけ続けて遊ばせる。
  * 試行ごとに新しいゲームになり、反省メモ（notes/<名前>.md）は毎回読み直すので、前の試行の反省が次に効く。
  * 録画をオンにすると、server.mjs の --record で試行ごとに1本の動画（recordings/*.webm）を残す。
+ * 試行ごとのプレイログ（logs/*.jsonl：セリフ・LLMの返事・操作・戦闘を時刻つきで）は、画面の「プレイログ」で見たり、
+ * 字幕（SRT/VTT）・台本・チャプターとして取り出したりできる（playlog.mjs）。
  *
  *   「操作盤を開く.cmd」をダブルクリック … 初回の準備（launch.mjs）をしてから、窓なしでこれを起動する
  *   node control.mjs              … http://127.0.0.1:3940 を開く（既定のブラウザが自動で開く）
@@ -21,6 +23,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadNotes, safeName } from "./notes.mjs";
 import { sweep } from "./mux-audio.mjs";
+import { LOG_DIR, listLogs, logPath, readLog, exportLog, extOf, describe, ensureEnd, subtitlesBeside, FORMATS } from "./playlog.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -89,21 +92,27 @@ function playerArgs(s, n) {
   if (s.persona) a.push("--persona", path.resolve(HERE, s.persona));
   if (s.notesMode === "readonly") a.push("--notes-readonly");
   if (s.notesMode === "off") a.push("--no-notes");
+  // プレイログと録画は同じ名前にそろえる（ログ：logs/<名前>.jsonl、録画：recordings/<名前>.webm）
+  const base = trialName(s, n);
+  a.push("--log-name", base);
   a.push("--", "--pace", String(s.pace), "--size", s.size);
   if (s.headless) a.push("--headless");
-  if (s.record) {
-    const stamp = new Date().toLocaleString("sv-SE").replace(/[-:]/g, "").replace(" ", "-").slice(0, 13);
-    a.push("--record", recordDir(), "--record-name", `${safeName(s.name)}_${stamp}_${n}of${run.total}`);
-  }
+  if (s.record) a.push("--record", recordDir(), "--record-name", base);
   return a;
+}
+function trialName(s, n) {
+  const stamp = new Date().toLocaleString("sv-SE").replace(/[-:]/g, "").replace(" ", "-").slice(0, 13);
+  return `${safeName(s.name)}_${stamp}_${n}of${run.total}`;
 }
 
 function runTrial(s, n) {
   return new Promise((resolve) => {
     const rec = { id: `${Date.now()}`, n, of: run.total, name: s.name, model: s.model, startedAt: new Date().toISOString(), endedAt: null,
-      outcome: "プレイ中", turn: 0, funds: null, autoTurns: 0, failures: 0, video: null, note: "" };
+      outcome: "プレイ中", turn: 0, funds: null, autoTurns: 0, failures: 0, video: null, log: null, note: "" };
     run.current = rec; pushState();
-    const child = spawn(process.execPath, playerArgs(s, n), { cwd: HERE, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true, env: { ...process.env, FORCE_COLOR: "0" } });
+    const args = playerArgs(s, n);
+    rec.log = args[args.indexOf("--log-name") + 1];
+    const child = spawn(process.execPath, args, { cwd: HERE, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true, env: { ...process.env, FORCE_COLOR: "0" } });
     run.child = child; run.childStopping = false;
     let llmDown = false, llmWhy = "", over = null, stopped = false;
     const onLine = (line, err) => {
@@ -135,6 +144,14 @@ function runTrial(s, n) {
         if (fixed.length) sys(`録画を仕上げました：${fixed.map(f => path.basename(f)).join("、")}`);
         if (!rec.video) rec.video = fixed.length ? path.basename(fixed.at(-1)) : await latestVideo(Date.parse(rec.startedAt));
       }
+      // プレイログ：強制終了などで終わりが書かれていなければ書き足し、録画の隣に字幕（.srt）がなければ置く
+      const logFile = rec.log && logPath(rec.log);
+      if (logFile && await fs.stat(logFile).then(() => true, () => false)) {
+        await ensureEnd(logFile, { outcome: rec.outcome, turn: rec.turn || null, ...(rec.video ? { video: rec.video } : {}) });
+        const srt = rec.video && path.join(recordDir(), rec.video.replace(/\.webm$/i, "") + ".srt");
+        if (srt && !(await fs.stat(srt).then(() => true, () => false))) await subtitlesBeside(logFile, path.join(recordDir(), rec.video)).catch(() => {});
+        push({ type: "logs" });
+      } else rec.log = null;
       history.unshift(rec); history = history.slice(0, 300);
       await writeJson(HISTORY_FILE, history).catch(() => {});
       run.current = null;
@@ -233,6 +250,7 @@ async function openThing(what) {
     }
     await fs.mkdir(NOTES_DIR, { recursive: true }); return openPath(NOTES_DIR);
   }
+  if (what === "logs") { await fs.mkdir(LOG_DIR, { recursive: true }); return openPath(LOG_DIR); }
   if (what === "folder") return openPath(HERE);
   throw new Error("開けません");
 }
@@ -309,6 +327,26 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/history") return json(res, 200, history);
     if (p === "/api/videos") return json(res, 200, { dir: recordDir(), videos: await listVideos() });
     if (p.startsWith("/videos/")) return sendVideo(req, res, decodeURIComponent(p.slice(8)));
+    if (p === "/api/logs") return json(res, 200, { dir: LOG_DIR, logs: await listLogs(), formats: [...Object.keys(FORMATS), "jsonl"] });
+    if (p === "/api/log" || p === "/api/log/download") {
+      const file = logPath(url.searchParams.get("name") || "");
+      if (!file || !(await fs.stat(file).then(() => true, () => false))) return json(res, 404, { error: "ログが見つかりません" });
+      const name = path.basename(file, ".jsonl"), events = await readLog(file);
+      if (p === "/api/log") {
+        // 画面で読む形にしてから送る（LLM とのやり取りは all=1 のときだけ。量が多いので）
+        const all = url.searchParams.get("all") === "1";
+        const lines = events.map(e => { const d = describe(e, { all }); return d && { ms: e.ms, vms: e.vms ?? null, ...d }; }).filter(Boolean);
+        const video = events.findLast(e => e.type === "end")?.video ?? null;
+        return json(res, 200, { name, video, hasVideoTime: events.some(e => e.vms != null), lines });
+      }
+      const format = url.searchParams.get("format") || "srt";
+      const text = exportLog(events, format, { all: url.searchParams.get("all") === "1", name });
+      const type = format === "jsonl" ? "application/x-ndjson" : FORMATS[format][1];
+      const fname = name + extOf(format);
+      res.writeHead(200, { "content-type": `${type}; charset=utf-8`, "cache-control": "no-store",
+        "content-disposition": `attachment; filename="${fname.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "")}"; filename*=UTF-8''${encodeURIComponent(fname)}` });
+      return res.end((format === "srt" ? "\uFEFF" : "") + text);
+    }
     if (p === "/api/notes") {
       const name = url.searchParams.get("name") || settings.name;
       const file = path.join(NOTES_DIR, `${safeName(name)}.md`);

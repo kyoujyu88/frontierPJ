@@ -27,6 +27,9 @@
  *   --reflect-every <n> 何ターンごとにゲームの途中でも振り返るか（既定 10、0で終了時だけ） NOA_REFLECT_EVERY
  *   --notes-readonly   反省メモを読むだけで書き換えない（腕前を固定して見せたいとき）
  *   --no-notes         反省メモを使わない（毎回はじめて遊ぶ状態）
+ *   --log-name <名前>  プレイログ（logs/<名前>.jsonl）の名前（既定 <名前>_<日時>）。セリフ・LLMの返事・操作・戦闘を時刻つきで残す（playlog.mjs）  NOA_LOG_NAME
+ *   --log-dir <dir>    プレイログの置き場所（既定 logs）                             NOA_LOG_DIR
+ *   --no-log           プレイログを残さない
  *   -- <server.mjs のオプション>   例: -- --pace 900 --size 1920x1080
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -36,6 +39,7 @@ import readline from "node:readline/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName } from "./notes.mjs";
+import { PlayLog, LOG_DIR, subtitlesBeside } from "./playlog.mjs";
 
 const sep = process.argv.indexOf("--");
 const argv = sep >= 0 ? process.argv.slice(2, sep) : process.argv.slice(2);
@@ -79,6 +83,15 @@ if (!MODEL) { console.error("--model を指定してください（例: --model 
 
 const log = (...a) => console.log(new Date().toLocaleTimeString("ja-JP"), ...a);
 
+/* ---------- プレイログ（セリフ・LLMとのやり取り・操作・戦闘を時刻つきで残す。playlog.mjs） ---------- */
+const LOG_FILE = argv.includes("--no-log") ? null : path.resolve(HERE, opt("log-dir", "NOA_LOG_DIR", LOG_DIR),
+  safeName(opt("log-name", "NOA_LOG_NAME", null) || `${NAME}_${new Date().toLocaleString("sv-SE").replace(/[-:]/g, "").replace(" ", "-").slice(0, 13)}`) + ".jsonl");
+const plog = new PlayLog(LOG_FILE);
+let lastTurn = null;
+plog.write("start", { name: NAME, model: MODEL, baseUrl: BASE, think: THINK, temperature: TEMP, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
+  notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
+if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
+
 /* ---------- MCPサーバーにつなぐ ---------- */
 const mcp = new Client({ name: "ai-player", version: "1.0.0" });
 await mcp.connect(new StdioClientTransport({
@@ -87,6 +100,9 @@ await mcp.connect(new StdioClientTransport({
   env: process.env, stderr: "inherit",
 }));
 let journal = new Journal();
+// プレイログに操作として残さない、読むだけ・配信用のツール
+const QUIET = new Set(["get_state", "get_summary", "get_rules", "say", "finish_recording", "recording_info"]);
+let autoBy = false; // 自動進行中の操作は by:"auto" で残す
 async function tool(name, args = {}) {
   // オート戦闘は演出つきで数分かかることがあるので、MCP の既定（60秒）より長く待つ
   const r = await mcp.callTool({ name, arguments: args }, undefined, { timeout: 20 * 60 * 1000 });
@@ -94,20 +110,33 @@ async function tool(name, args = {}) {
   let out;
   try { out = { text, json: JSON.parse(text) }; } catch { out = { text, json: null }; }
   journal.onTool(name, out);
+  const j = out.json;
+  if (!QUIET.has(name)) plog.write("tool", { by: autoBy ? "auto" : "ai", name, args, ok: j?.ok ?? null, message: j?.message ?? (j ? undefined : text.slice(0, 300)),
+    ...(j?.events?.length ? { events: j.events } : {}), ...(j?.funds != null ? { funds: j.funds } : {}), ...(j?.mode ? { mode: j.mode } : {}) });
+  for (const b of Array.isArray(j?.battles) ? j.battles : []) plog.write("battle", { title: b.title, result: b.result });
+  if (j?.ok && name === "battle_close") plog.write("battle", { title: journal.battleTitle ?? "", result: /勝利/.test(j.message) ? "勝利" : /敗北/.test(j.message) ? "敗北" : "撤退" });
   return out;
 }
 const summary = async () => (await tool("get_summary")).text;
-const say = (text) => tool("say", { text: cleanTalk(text) }).catch(() => {});
+async function say(text) {
+  const t = cleanTalk(text);
+  if (!t) return;
+  const at = Date.now();
+  const r = await tool("say", { text: t }).catch(() => null);
+  plog.write("talk", { who: NAME, text: t, durMs: r?.json?.durationMs ?? null }, at); // 時刻は字幕を出し始めたとき
+}
 
 // AIに渡すツール。重い get_state、画像の get_screenshot、やり直しの new_game は外す（say は地の文で代用）。
 // ルールはシステムプロンプトに入れてあるので get_rules も外す（小さなモデルが読み直しを繰り返すため）
-const HIDDEN = new Set(["get_state", "get_screenshot", "new_game", "battle_state", "get_rules", "finish_recording"]);
+const HIDDEN = new Set(["get_state", "get_screenshot", "new_game", "battle_state", "get_rules", "finish_recording", "recording_info"]);
 const tools = (await mcp.listTools()).tools.filter(t => !HIDDEN.has(t.name)).map(t => ({
   type: "function",
   function: { name: t.name, description: t.description, parameters: { type: "object", properties: {}, ...t.inputSchema } },
 }));
 
 const TOOL_NAMES = new Set(tools.map(t => t.function.name));
+// 録画しているなら、その開始時刻をプレイログに入れる（以降の行に「録画の開始からの時間」が付き、字幕を動画に合わせられる）
+{ const ri = (await tool("recording_info").catch(() => null))?.json; if (ri?.recording) plog.setVideo(ri.t0, { name: ri.name }); }
 // 既定のオート戦闘では battle_* ツールが無い（サーバーを -- --manual-battle で起動したときだけ1隻ずつ操作する）
 const MANUAL_BATTLE = TOOL_NAMES.has("battle_attack");
 const TEXT_CALL = new RegExp(`\\b(${[...TOOL_NAMES].join("|")})\\s*\\(([^()]*)\\)`, "g");
@@ -190,6 +219,11 @@ async function chat(messages, { withTools = true } = {}) {
   if (!msg) throw llmError(`LLM API の返事が読めません：${JSON.stringify(data).slice(0, 200)}`, false);
   // content を配列で返すサーバーもある
   if (Array.isArray(msg.content)) msg.content = msg.content.map(c => c.text ?? "").join("");
+  // 返事は加工する前の全文を残す（考えた部分を別の欄で返すサーバーもある）
+  plog.write("llm", { kind: withTools ? "play" : "reflect", sec: Math.round(sec * 10) / 10, content: msg.content ?? "",
+    ...(msg.reasoning_content || msg.reasoning ? { reasoning: msg.reasoning_content || msg.reasoning } : {}),
+    ...(msg.tool_calls?.length ? { calls: msg.tool_calls.map(c => ({ name: c.function?.name, arguments: c.function?.arguments })) } : {}),
+    ...(data.usage ? { usage: data.usage } : {}), finish: data.choices[0].finish_reason ?? null });
   return msg;
 }
 const llmError = (message, fatal) => Object.assign(new Error(message), { fatal });
@@ -249,8 +283,13 @@ function slim(messages) {
 }
 
 /* ---------- 自動進行（のあが詰まったときの保険） ---------- */
-async function autopilot() {
+async function autopilot(reason = "") {
   log("自動進行に切り替えます");
+  plog.write("auto", { reason });
+  autoBy = true;
+  try { return await autopilotSteps(); } finally { autoBy = false; }
+}
+async function autopilotSteps() {
   for (let i = 0; i < 200; i++) {
     const s = (await tool("get_state")).json;
     if (s.dialog) { await tool("dismiss_dialog"); continue; }
@@ -313,7 +352,7 @@ async function playTurn() {
     if (inBattle && battleSteps >= MAX_STEPS) {
       // この戦闘だけ自動で片付けて、作戦卓の続きは本人に戻す
       log(`この戦闘で ${MAX_STEPS} 回考えたので、残りの戦闘を自動で片付けます`);
-      const s = await autopilot(); auto = true; inBattle = false;
+      const s = await autopilot(`この戦闘で ${MAX_STEPS} 回考えた`); auto = true; inBattle = false;
       if (s.over || ended) return { st: s, auto };
       const back = { role: "user", content: `残りの戦闘は自動で片付けました。作戦卓の操作を続けてください。\n\n${await summary()}` };
       shortOf.set(back, `残りの戦闘は自動で片付けました。\n${OLD_NOTE}`);
@@ -322,6 +361,7 @@ async function playTurn() {
     }
     if (inBattle) battleSteps++; else mapSteps++;
     step++;
+    plog.sentMessages(messages);
     const msg = await chat(slim(messages));
     const talk = cleanTalk(stripThink(msg.content));
     if (talk) { log(`${NAME}：` + talk); memo = turnTalk = talk.slice(0, 200); await say(talk.slice(0, 160)); }
@@ -346,11 +386,11 @@ async function playTurn() {
         ? `失敗：${c.function.name} は使えません。ルールはシステムプロンプトに、今の状況は最初のメッセージに書いてあります。操作のツールを選んでください。`
         : c.function.name === "get_summary" && lastName === "get_summary" ? "状況はさっきと同じです。操作のツールを選んでください。" : null;
       lastName = c.function.name;
-      if (refuse) { wasted++; log("  ✗ " + refuse.split("。")[0]); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: refuse }); continue; }
+      if (refuse) { wasted++; log("  ✗ " + refuse.split("。")[0]); plog.write("refuse", { name: c.function.name, args, reason: refuse.split("。")[0] }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: refuse }); continue; }
       if (c.function.name !== "get_summary") wasted = 0;
       if (c.function.name === "battle_end_phase") {
         const stop = await checkEndPhase();
-        if (stop) { log("  ✗ まだ動ける艦があるので、フェイズ終了を止めました"); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: stop }); continue; }
+        if (stop) { log("  ✗ まだ動ける艦があるので、フェイズ終了を止めました"); plog.write("refuse", { name: c.function.name, args, reason: "まだ動ける艦があるので、フェイズ終了を止めました" }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: stop }); continue; }
       } else if (c.function.name.startsWith("battle_")) endPhaseNagged = false;
       const r = await tool(c.function.name, args ?? {});
       if (c.function.name === "end_turn" && r.json?.ok) ended = true;
@@ -369,8 +409,8 @@ async function playTurn() {
     }
   }
   // 上限まで来た・黙った：残りを自動で片付けてターンを終える
-  let s = await autopilot();
-  if (!ended && !s.over) { await tool("end_turn"); s = await autopilot(); }
+  let s = await autopilot(mapSteps >= MAX_STEPS ? `このターンで ${MAX_STEPS} 回考えた` : wasted >= 6 ? "使えない操作や読み直しが続いた" : "操作をしなくなった");
+  if (!ended && !s.over) { autoBy = true; await tool("end_turn").finally(() => { autoBy = false; }); s = await autopilot("ターン終了のあとの戦闘や通信"); }
   return { st: s, auto: true };
 }
 
@@ -383,13 +423,14 @@ async function writeNotes(outcome, final) {
     log(`${NAME}が反省メモを書いています…`);
     try {
       const r = await reflect({
-        chat: async (m) => (await chat(m, { withTools: false })).content ?? "",
+        chat: async (m) => { plog.sentMessages(m, "reflect"); return (await chat(m, { withTools: false })).content ?? ""; },
         name: NAME, persona, notes, journal, outcome, maxChars: NOTES_CHARS, stripThink,
       });
       if (r.lessons) { notes.lessons = r.lessons; log("反省メモ：\n  - " + r.lessons.join("\n  - ")); }
       else log("反省メモをうまく書けなかったので、前のメモを残します");
+      plog.write("reflect", { outcome, lessons: r.lessons, comment: r.comment || null });
       if (r.comment && !stopping) await say(r.comment);
-    } catch (e) { log("振り返りに失敗：" + e.message); }
+    } catch (e) { log("振り返りに失敗：" + e.message); plog.write("error", { message: "振り返りに失敗：" + e.message }); }
   }
   reflectedAt = journal.turns.length;
   await saveNotes(NOTES_FILE, NAME, notes);
@@ -403,7 +444,9 @@ process.on("SIGINT", async () => {
   if (stopping) process.exit(130);
   stopping = true;
   log("止めます。反省メモを書いてから終了します（もう一度 Ctrl+C ですぐ終了）");
+  plog.write("stop", {});
   await writeNotes("プレイを途中でやめたところ", "途中終了").catch(e => log(e.message));
+  plog.write("end", { outcome: "停止", turn: lastTurn });
   process.exit(0);
 });
 // control.mjs（連続プレイ）から子プロセスとして動かすとき：Windows では SIGINT を送れないので、停止の合図をメッセージで受ける
@@ -419,41 +462,49 @@ let llmDown = false, llmErrors = 0;
 for (let n = 0; n < TURNS; n++) {
   if (st.over) {
     log(`ゲーム終了：${st.over}`);
+    plog.write("over", { result: st.over, turn: st.turn });
     if (reflectedAt !== -1) await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over));
     reflectedAt = -1;
     if (!LOOP) break;
     await tool("new_game", { confirm: true }); memo = "";
     journal = new Journal(); reflectedAt = 0;
     st = (await tool("get_state")).json; journal.begin(st);
+    plog.write("newgame", {});
   }
   if (stopping) await new Promise(() => {});
   const turn = st.turn;
   log(`=== ターン${turn} 資金${st.funds} ===`);
+  plog.write("turn", { turn, funds: st.funds }); lastTurn = turn;
   let auto = false;
   try { ({ st, auto } = await playTurn()); llmErrors = 0; }
   catch (e) {
     if (stopping) await new Promise(() => {});
     log("エラー：" + e.message);
+    plog.write("error", { message: e.message, ...(e.fatal ? { fatal: true } : {}) });
     if (/^LLM API/.test(e.message)) {
       if (/^LLM API に接続できません/.test(e.message)) { log("ローカルLLMに接続できないため止めます（--base-url と --model を確認）"); llmDown = true; break; }
       if (e.fatal) { log("LLMのエラーで止めます：モデル名と、ツール呼び出しに対応したモデルかを確認してください"); llmDown = true; break; }
       if (++llmErrors >= 3) { log("LLMのエラーで止めます：3ターン続けて失敗しました（モデルとコンテキストの長さを確認）"); llmDown = true; break; }
       log("その場かぎりのエラーとみなして、このターンは自動で進めます");
     }
-    st = await autopilot(); if (!st.over) { await tool("end_turn"); st = await autopilot(); }
+    st = await autopilot("エラーのあと"); if (!st.over) { autoBy = true; await tool("end_turn").finally(() => { autoBy = false; }); st = await autopilot("ターン終了のあとの戦闘や通信"); }
     auto = true;
   }
   journal.endTurn(turn, st, { talk: turnTalk, auto });
   if (!st.over && REFLECT_EVERY > 0 && journal.turns.length - reflectedAt >= REFLECT_EVERY)
     await writeNotes(`ゲームの途中（ターン${turn}まで）`, null);
 }
-if (st.over && reflectedAt !== -1) { log(`ゲーム終了：${st.over}`); await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over)); }
+if (st.over && reflectedAt !== -1) { log(`ゲーム終了：${st.over}`); plog.write("over", { result: st.over, turn: st.turn }); await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over)); }
 else if (!st.over && !llmDown) await writeNotes(`プレイを途中でやめたところ（ターン${st.turn - 1}まで）`, "途中終了");
 else if (!st.over && llmDown && WRITE_NOTES && journal.turns.length) {
   notes.records.unshift(recordLine({ date: new Date().toLocaleDateString("sv-SE"), model: MODEL, outcome: "途中終了", journal }));
   await saveNotes(NOTES_FILE, NAME, notes);
 }
 // 録画を仕上げてから閉じる（MCP の close はサーバーを2秒で止め、Windows ではその場で強制終了になるため）
-await tool("finish_recording").catch(() => {});
+const videos = (await tool("finish_recording").catch(() => null))?.json?.videos ?? [];
+plog.write("end", { outcome: st.over === "win" ? "勝利" : st.over === "lose" ? "敗北" : llmDown ? "LLMエラー" : Number.isFinite(TURNS) && journal.turns.length >= TURNS ? "ターン上限" : "途中終了",
+  turn: lastTurn ?? st.turn ?? null, ...(videos.length ? { video: path.basename(videos.at(-1)) } : {}) });
+// 録画の隣に同じ名前の字幕（.srt）を置く
+if (LOG_FILE) for (const v of videos) { const f = await subtitlesBeside(LOG_FILE, v).catch(() => null); if (f) log(`字幕を書き出しました：${f}`); }
 await mcp.close();
 process.exit(0);
