@@ -88,7 +88,9 @@ const LOG_FILE = argv.includes("--no-log") ? null : path.resolve(HERE, opt("log-
   safeName(opt("log-name", "NOA_LOG_NAME", null) || `${NAME}_${new Date().toLocaleString("sv-SE").replace(/[-:]/g, "").replace(" ", "-").slice(0, 13)}`) + ".jsonl");
 const plog = new PlayLog(LOG_FILE);
 let lastTurn = null;
-plog.write("start", { name: NAME, model: MODEL, baseUrl: BASE, think: THINK, temperature: TEMP, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
+// URL は「プロトコル・ホスト・パス」だけ残す（ユーザー名・パスワードやクエリに載せたキーをログと操作盤に出さないように）
+const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathname; } catch { return "(URLを読めません)"; } })();
+plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
   notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
 if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
 

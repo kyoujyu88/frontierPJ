@@ -340,6 +340,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { name, video, hasVideoTime: events.some(e => e.vms != null), lines });
       }
       const format = url.searchParams.get("format") || "srt";
+      if (format !== "jsonl" && !FORMATS[format]) return json(res, 400, { error: `形式は ${[...Object.keys(FORMATS), "jsonl"].join(" / ")} のどれかです` });
       const text = exportLog(events, format, { all: url.searchParams.get("all") === "1", name });
       const type = format === "jsonl" ? "application/x-ndjson" : FORMATS[format][1];
       const fname = name + extOf(format);
