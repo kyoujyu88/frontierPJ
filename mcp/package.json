@@ -13,7 +13,8 @@
     "test:regress": "node regress.mjs",
     "play": "node ai-player.mjs",
     "noa": "node ai-player.mjs",
-    "ui": "node control.mjs"
+    "ui": "node control.mjs",
+    "logs": "node playlog.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

@@ -82,6 +82,18 @@ ol.lessons { margin: 0; padding-left: 1.4em; } ol.lessons li { margin: 4px 0; }
 .video small { color: var(--muted); }
 video { width: 100%; max-height: 60vh; background: #000; border-radius: 8px; margin-bottom: 10px; }
 a { color: var(--blue); }
+.logbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.logbar .check { margin: 0; font-size: 13px; }
+.logbar select { width: auto; max-width: 100%; }
+.dl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 8px 0; font-size: 13px; }
+.dl a { border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; text-decoration: none; background: var(--panel2); }
+.dl a:hover { border-color: var(--blue); }
+#plog { max-height: 480px; overflow: auto; background: #070b17; border-radius: 8px; padding: 8px 10px; font: 12.5px/1.55 ui-monospace, "BIZ UDGothic", Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+#plog .ln { display: grid; grid-template-columns: 5.2em 1fr; gap: 8px; }
+#plog .tm { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+#plog a.tm { color: var(--blue); text-decoration: none; }
+#plog .talk { color: #bfe0ff; } #plog .turn { color: var(--gold); margin-top: 6px; } #plog .battle { color: var(--green); }
+#plog .sys { color: var(--amber); } #plog .op { color: var(--muted); } #plog .err { color: var(--red); } #plog .llm { color: #b9a6e8; }
 .empty { color: var(--muted); padding: 10px 0; }
 </style>
 </head>
@@ -199,6 +211,7 @@ a { color: var(--blue); }
         <button role="tab" aria-selected="false" data-tab="tHist">戦績</button>
         <button role="tab" aria-selected="false" data-tab="tNotes">反省メモ</button>
         <button role="tab" aria-selected="false" data-tab="tVideo">録画</button>
+        <button role="tab" aria-selected="false" data-tab="tPlog">プレイログ</button>
       </div>
       <div class="tab" id="tLog">
         <div id="log"></div>
@@ -208,7 +221,7 @@ a { color: var(--blue); }
         <div class="summary" id="histSummary"></div>
         <div class="trend" id="trend" title="左が古い試行。高さは到達ターン、緑=勝利 赤=敗北 橙=途中"></div>
         <div class="tablewrap"><table>
-          <thead><tr><th>日時</th><th>試行</th><th>名前</th><th>モデル</th><th>結果</th><th>ターン</th><th>自動進行</th><th>操作失敗</th><th>録画</th></tr></thead>
+          <thead><tr><th>日時</th><th>試行</th><th>名前</th><th>モデル</th><th>結果</th><th>ターン</th><th>自動進行</th><th>操作失敗</th><th>録画</th><th>ログ</th></tr></thead>
           <tbody id="histBody"></tbody>
         </table></div>
         <div class="actions"><button type="button" id="clearHist" class="danger">この画面の戦績を消す</button></div>
@@ -223,6 +236,25 @@ a { color: var(--blue); }
         <video id="player" controls hidden></video>
         <div class="summary" id="videoDir"></div>
         <div class="videos" id="videos"></div>
+      </div>
+      <div class="tab" id="tPlog" hidden>
+        <div class="logbar">
+          <select id="plogSel" aria-label="プレイログ"></select>
+          <button type="button" id="plogReload" title="読み直す（プレイ中のログは進んだところまで）">読み直す</button>
+          <button type="button" id="openLogs" title="プレイログの置き場所をエクスプローラーで開く">ログのフォルダ</button>
+        </div>
+        <div class="logbar" id="plogFilter">
+          <label class="check"><input type="checkbox" data-k="talk" checked> セリフ</label>
+          <label class="check"><input type="checkbox" data-k="turn" checked> ターン</label>
+          <label class="check"><input type="checkbox" data-k="battle" checked> 戦闘</label>
+          <label class="check"><input type="checkbox" data-k="op" checked> 操作</label>
+          <label class="check"><input type="checkbox" data-k="sys" checked> 進行・反省メモ</label>
+          <label class="check"><input type="checkbox" data-k="err" checked> エラー</label>
+          <label class="check"><input type="checkbox" id="plogAll"> LLMとのやり取り（全文）</label>
+        </div>
+        <div class="summary" id="plogInfo"></div>
+        <div class="dl" id="plogDl"></div>
+        <div id="plog"></div>
       </div>
     </section>
   </div>
@@ -294,7 +326,8 @@ async function loadHistory() {
     <td class="num">${r.n}/${r.of}</td><td>${esc(r.name)}</td><td>${esc(r.model)}</td>
     <td><span class="tag ${cls(r.outcome)}">${esc(r.outcome)}</span></td>
     <td class="num">${r.turn || "–"}</td><td class="num">${r.autoTurns ?? 0}</td><td class="num">${r.failures ?? 0}</td>
-    <td>${r.video ? `<a href="#" data-video="${esc(r.video)}">再生</a>` : "–"}</td></tr>`).join("") || `<tr><td colspan="9" class="empty">まだありません</td></tr>`;
+    <td>${r.video ? `<a href="#" data-video="${esc(r.video)}">再生</a>` : "–"}</td>
+    <td>${r.log ? `<a href="#" data-plog="${esc(r.log)}">見る</a>` : "–"}</td></tr>`).join("") || `<tr><td colspan="10" class="empty">まだありません</td></tr>`;
   const name = $("name").value || status.name;
   const mine = history.filter(r => r.name === name);
   const c = { win: 0, lose: 0, other: 0 };
@@ -324,18 +357,74 @@ async function loadVideos() {
   $("videos").innerHTML = v.videos.map(x => `<div class="video"><span class="name">${esc(x.file)}</span><small>${mb(x.size)}・${new Date(x.mtime).toLocaleString("ja-JP")}</small>
     <button type="button" data-video="${esc(x.file)}">再生</button><a href="/videos/${encodeURIComponent(x.file)}" download>保存</a></div>`).join("") || `<div class="empty">まだありません</div>`;
 }
-function play(file) {
+function play(file, sec) {
   selectTab("tVideo");
-  const p = $("player"); p.hidden = false; p.src = `/videos/${encodeURIComponent(file)}`; p.play().catch(() => {});
+  const p = $("player"); p.hidden = false;
+  const src = `/videos/${encodeURIComponent(file)}`;
+  if (!p.src.endsWith(src)) p.src = src;
+  if (sec != null) { const seek = () => { p.currentTime = sec; }; if (p.readyState >= 1) seek(); else p.addEventListener("loadedmetadata", seek, { once: true }); }
+  p.play().catch(() => {});
   p.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
-document.addEventListener("click", (e) => { const v = e.target.closest("[data-video]"); if (v) { e.preventDefault(); play(v.dataset.video); } });
+document.addEventListener("click", (e) => {
+  const v = e.target.closest("[data-video]"); if (v) { e.preventDefault(); play(v.dataset.video, v.dataset.sec != null ? Number(v.dataset.sec) : null); return; }
+  const l = e.target.closest("[data-plog]"); if (l) { e.preventDefault(); showPlog(l.dataset.plog); }
+});
+
+/* ---------- プレイログ ---------- */
+let plogs = [], plogData = null;
+const clock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return h ? `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}` : `${m}:${String(s % 60).padStart(2, "0")}`; };
+async function loadPlogs(keep = true) {
+  const r = await api("/api/logs");
+  plogs = r.logs;
+  const cur = keep ? $("plogSel").value : "";
+  $("plogSel").innerHTML = plogs.map(l => `<option value="${esc(l.name)}">${esc(new Date(l.startedAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))}　${esc(l.player)}　${esc(l.outcome)}${l.turn ? ` T${l.turn}` : ""}　${clock(l.lengthMs)}　${esc(l.name)}</option>`).join("")
+    || `<option value="">まだありません（プレイすると試行ごとにできます）</option>`;
+  if (cur && plogs.some(l => l.name === cur)) $("plogSel").value = cur;
+  $("plogSel").title = `保存先：${r.dir}`;
+  if ($("plogSel").value && $("plogSel").value !== plogData?.name) await loadPlog();
+  else if (!plogs.length) { plogData = null; renderPlog(); }
+}
+async function loadPlog() {
+  const name = $("plogSel").value;
+  if (!name) { plogData = null; return renderPlog(); }
+  plogData = await api(`/api/log?name=${encodeURIComponent(name)}${$("plogAll").checked ? "&all=1" : ""}`);
+  renderPlog();
+}
+function renderPlog() {
+  const box = $("plog"), d = plogData;
+  if (!d) { box.innerHTML = `<div class="empty">ログを選んでください</div>`; $("plogDl").innerHTML = ""; $("plogInfo").textContent = ""; return; }
+  const on = new Set([...document.querySelectorAll("#plogFilter [data-k]")].filter(c => c.checked).map(c => c.dataset.k));
+  if ($("plogAll").checked) on.add("llm");
+  const meta = plogs.find(l => l.name === d.name);
+  const talks = d.lines.filter(l => l.kind === "talk").length;
+  $("plogInfo").textContent = `${d.hasVideoTime ? "時刻は録画の開始からの経過時間です" : "時刻はプレイの開始からの経過時間です（録画なし）"}　セリフ ${talks}件${d.video ? `　録画 ${d.video}（時刻を押すとその場面を再生）` : ""}`;
+  const q = (f) => `/api/log/download?name=${encodeURIComponent(d.name)}&format=${f}`;
+  $("plogDl").innerHTML = `取り出す：<a href="${q("srt")}" title="セリフの字幕。動画編集ソフトや再生ソフトで読めます">字幕 SRT</a><a href="${q("vtt")}" title="セリフの字幕（Web 用）">字幕 VTT</a>`
+    + `<a href="${q("txt")}" title="時刻つきの台本：ターン区切り・セリフ・操作・戦闘・反省メモ">台本 TXT</a><a href="${q("txt")}&all=1" title="台本に LLM に送った文と返事の全文も入れたもの">台本（LLM全文つき）</a>`
+    + `<a href="${q("chapters")}" title="YouTube の概要欄に貼れるターンごとのチャプター">チャプター</a><a href="${q("jsonl")}" title="すべての記録（1行1件の JSON）">JSONL</a>`;
+  const rows = d.lines.filter(l => on.has(l.kind));
+  box.innerHTML = rows.map(l => {
+    const t = l.vms ?? l.ms, tm = d.video && l.vms != null ? `<a href="#" class="tm" data-video="${esc(d.video)}" data-sec="${Math.max(0, l.vms / 1000 - 1).toFixed(1)}">${clock(t)}</a>` : `<span class="tm">${clock(t)}</span>`;
+    return `<div class="ln ${esc(l.kind)}">${tm}<span>${esc(l.text)}</span></div>`;
+  }).join("") || `<div class="empty">表示するものがありません${meta?.outcome === "プレイ中" ? "（プレイ中です。「読み直す」で進んだところまで出ます）" : ""}</div>`;
+}
+async function showPlog(name) {
+  selectTab("tPlog");
+  await loadPlogs();
+  $("plogSel").value = name; await loadPlog();
+}
+$("plogSel").onchange = () => loadPlog().catch(x => { $("err").textContent = x.message; });
+$("plogReload").onclick = () => loadPlogs().then(loadPlog).catch(x => { $("err").textContent = x.message; });
+$("plogAll").onchange = () => loadPlog().catch(x => { $("err").textContent = x.message; });
+$("plogFilter").addEventListener("change", (e) => { if (e.target.dataset.k) renderPlog(); });
 
 /* ---------- タブ ---------- */
 function selectTab(id) {
   for (const b of document.querySelectorAll(".tabs button")) b.setAttribute("aria-selected", b.dataset.tab === id);
   for (const t of document.querySelectorAll(".tab")) t.hidden = t.id !== id;
   if (id === "tHist") loadHistory(); if (id === "tNotes") loadNotes(); if (id === "tVideo") loadVideos();
+  if (id === "tPlog" && !plogData) loadPlogs().catch(x => { $("err").textContent = x.message; });
 }
 for (const b of document.querySelectorAll(".tabs button")) b.onclick = () => selectTab(b.dataset.tab);
 
@@ -350,6 +439,7 @@ $("stopAfter").onclick = () => api("/api/stop-after", {});
 const tool = (id, path, body = {}) => { $(id).onclick = async () => { $("err").textContent = ""; try { await api(path, body); } catch (x) { $("err").textContent = x.message; } }; };
 tool("openNotes", "/api/open", { what: "notes" });
 tool("openRec", "/api/open", { what: "recordings" });
+tool("openLogs", "/api/open", { what: "logs" });
 tool("shortcut", "/api/shortcut");
 $("check").onclick = async () => { $("err").textContent = ""; try { await api("/api/check", {}); selectTab("tLog"); } catch (x) { $("err").textContent = x.message; } };
 $("quit").onclick = async () => {
@@ -390,6 +480,7 @@ let saveT; $("form").oninput = () => { clearTimeout(saveT); saveT = setTimeout((
     else if (ev.type === "state") { const wasCur = status.current?.id; status = ev.status; renderStatus(); if (!$("tHist").hidden || wasCur !== status.current?.id) loadHistory(); }
     else if (ev.type === "history") { loadHistory(); loadNotes(); }
     else if (ev.type === "videos" && !$("tVideo").hidden) loadVideos();
+    else if (ev.type === "logs" && !$("tPlog").hidden) loadPlogs().catch(() => {});
   };
   es.onerror = () => { if (quitting) { es.close(); return; } $("stText").textContent = "操作盤が止まっています（「操作盤を開く」をダブルクリック）"; $("dot").classList.remove("on"); };
 })();
