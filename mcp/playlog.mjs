@@ -28,21 +28,21 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const LOG_DIR = path.join(HERE, "logs");
-/* 動画のコマは実際の画面より約0.2秒遅れて記録される（mux-audio.mjs と同じ実測値） */
+/* 時刻の補正（video-clock.mjs）がない録画での、動画のコマ遅れの目安。補正があれば server.mjs の recording_info が lag: 0 を返す */
 export const VIDEO_LAG_MS = 200;
 
 /* ---------- 書く ---------- */
 export class PlayLog {
   /* file を null にすると何も書かない（--no-log） */
   constructor(file) {
-    this.file = file; this.t0 = Date.now(); this.videoT0 = null; this.sentSystem = {}; this.sent = new WeakSet();
+    this.file = file; this.t0 = Date.now(); this.videoT0 = null; this.videoLag = VIDEO_LAG_MS; this.sentSystem = {}; this.sent = new WeakSet();
     if (file) fs.mkdirSync(path.dirname(file), { recursive: true });
   }
   /* 録画の開始時刻（server.mjs の recording_info）。これ以降の行に vms が付く */
-  setVideo(t0, extra = {}) { if (!t0) return; this.videoT0 = t0; this.write("video", { t0, ...extra }); }
+  setVideo(t0, extra = {}) { if (!t0) return; this.videoT0 = t0; if (Number.isFinite(extra.lag)) this.videoLag = extra.lag; this.write("video", { t0, ...extra }); }
   write(type, data = {}, now = Date.now()) {
     if (!this.file) return;
-    const ev = { t: new Date(now).toISOString(), ms: now - this.t0, ...(this.videoT0 ? { vms: Math.max(0, now - this.videoT0 + VIDEO_LAG_MS) } : {}), type, ...data };
+    const ev = { t: new Date(now).toISOString(), ms: now - this.t0, ...(this.videoT0 ? { vms: Math.max(0, now - this.videoT0 + this.videoLag) } : {}), type, ...data };
     // 強制終了されても書いたところまでは残るように、1件ずつ追記する（量は1試行で数MBまで）
     try { fs.appendFileSync(this.file, JSON.stringify(ev) + "\n"); } catch (e) { if (!this.warned) { this.warned = true; console.error(`プレイログを書けません：${e.message}`); } }
   }

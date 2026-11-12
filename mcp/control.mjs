@@ -3,7 +3,8 @@
  *
  * ai-player.mjs を1試行（1ゲーム）ずつ子プロセスで起動し、指定した回数だけ続けて遊ばせる。
  * 試行ごとに新しいゲームになり、反省メモ（notes/<名前>.md）は毎回読み直すので、前の試行の反省が次に効く。
- * 録画をオンにすると、server.mjs の --record で試行ごとに1本の動画（recordings/*.webm）を残す。
+ * 録画をオンにすると、server.mjs の --record で試行ごとに動画を残す（recordings/<名前>.webm＝映像と音を合成したもの、
+ * <名前>.video.webm＝映像だけ、<名前>.audio.webm＝音だけ）。
  * 試行ごとのプレイログ（logs/*.jsonl：セリフ・LLMの返事・操作・戦闘を時刻つきで）は、画面の「プレイログ」で見たり、
  * 字幕（SRT/VTT）・台本・チャプターとして取り出したりできる（playlog.mjs）。
  *
@@ -167,11 +168,14 @@ function runTrial(s, n) {
   });
 }
 
+/* 一覧に出す動画：合成したもの（<名前>.webm）。映像だけ（.video.webm）・音だけ（.audio.webm）・作業中（.mux.webm）は除く */
+const isMainVideo = (f) => f.endsWith(".webm") && !f.startsWith(".") && !/\.(mux|video|audio)\.webm$/.test(f);
+
 async function latestVideo(since) {
   try {
     const files = await fs.readdir(recordDir());
     let best = null;
-    for (const f of files.filter(f => f.endsWith(".webm") && !f.startsWith(".") && !f.endsWith(".mux.webm"))) {
+    for (const f of files.filter(isMainVideo)) {
       const st = await fs.stat(path.join(recordDir(), f));
       if (st.mtimeMs >= since && (!best || st.mtimeMs > best.t)) best = { f, t: st.mtimeMs };
     }
@@ -280,24 +284,29 @@ async function listPlayers() {
 async function listVideos() {
   try {
     const dir = recordDir(), out = [];
-    for (const f of (await fs.readdir(dir)).filter(f => f.endsWith(".webm") && !f.startsWith(".") && !f.endsWith(".mux.webm"))) {
-      const st = await fs.stat(path.join(dir, f)); out.push({ file: f, size: st.size, mtime: st.mtimeMs });
+    const all = await fs.readdir(dir), has = new Set(all);
+    for (const f of all.filter(isMainVideo)) {
+      const st = await fs.stat(path.join(dir, f)), stem = f.slice(0, -5);
+      // 映像だけ・音だけのファイルがあれば一緒に返す（保存のリンクを出す）
+      const video = has.has(stem + ".video.webm") ? stem + ".video.webm" : null, audio = has.has(stem + ".audio.webm") ? stem + ".audio.webm" : null;
+      out.push({ file: f, size: st.size, mtime: st.mtimeMs, video, audio });
     }
     return out.sort((a, b) => b.mtime - a.mtime);
   } catch { return []; }
 }
 async function sendVideo(req, res, file) {
   const p = path.join(recordDir(), path.basename(file));
+  const type = /\.audio\.webm$/i.test(p) ? "audio/webm" : "video/webm";
   let st; try { st = await fs.stat(p); } catch { res.writeHead(404); return res.end(); }
   const range = /bytes=(\d*)-(\d*)/.exec(req.headers.range || "");
   if (range) {
     const start = range[1] ? Number(range[1]) : Math.max(0, st.size - Number(range[2]));
     const end = range[1] && range[2] ? Math.min(Number(range[2]), st.size - 1) : st.size - 1;
     if (start >= st.size || start > end) { res.writeHead(416, { "content-range": `bytes */${st.size}` }); return res.end(); }
-    res.writeHead(206, { "content-type": "video/webm", "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${st.size}`, "content-length": end - start + 1 });
+    res.writeHead(206, { "content-type": type, "accept-ranges": "bytes", "content-range": `bytes ${start}-${end}/${st.size}`, "content-length": end - start + 1 });
     createReadStream(p, { start, end }).on("error", () => res.destroy()).pipe(res);
   } else {
-    res.writeHead(200, { "content-type": "video/webm", "accept-ranges": "bytes", "content-length": st.size });
+    res.writeHead(200, { "content-type": type, "accept-ranges": "bytes", "content-length": st.size });
     createReadStream(p).on("error", () => res.destroy()).pipe(res);
   }
 }

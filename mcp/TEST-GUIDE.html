@@ -401,7 +401,7 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
         <li><input type="checkbox" id="c-sr-4"><div class="body"><label for="c-sr-4">ゲームの窓が開いて遊び始め、1試行目が終わると窓が閉じて、2試行目の窓が開いた</label>
           <p class="why">操作盤の「ログ」にこれまで PowerShell に出ていた行が流れ、「進行」に試行・ターン・資金・経過時間が出ます。試行の終わりには <code>── 試行 1/2 終了：ターン上限（ターン3） 録画 のあ_…_1of2.webm</code> と出ます。</p></div></li>
         <li><input type="checkbox" id="c-sr-5"><div class="body"><label for="c-sr-5">「戦績」に2行並び、「録画」タブの「再生」で動画が見られた</label>
-          <p class="why">動画は <code>D:\dev\frontier\mcp\recordings</code> にも保存されています（WebM、1時間で約500MB）。字幕・行動表示と、BGM・効果音も入っています（試行が終わってから数秒で音が重なります）。「反省メモ」タブでは、試行のたびに書き直されたメモが見られます。</p></div></li>
+          <p class="why">動画は <code>D:\dev\frontier\mcp\recordings</code> にも保存されています（WebM、1時間で約500MB）。字幕・行動表示と、BGM・効果音も入っています（試行が終わってから数秒で音が重なります）。1回の録画で、音つきの <code>&lt;名前&gt;.webm</code> のほかに、映像だけの <code>.video.webm</code> と音だけの <code>.audio.webm</code> もできます（「録画」タブの「映像だけ」「音だけ」で保存。どちらも同じ時刻から始まるので、編集ソフトで頭をそろえれば合います）。長い試行の終わりのほうでも、爆発や効果音と画面が合っているか見てください。「反省メモ」タブでは、試行のたびに書き直されたメモが見られます。</p></div></li>
         <li><input type="checkbox" id="c-sr-6"><div class="body"><label for="c-sr-6">止め方を試した</label>
           <p class="why">「この試行で終わる」は今のゲームを最後まで遊んでから止めます。「いま止める」は反省メモを書いてから止めます（返事待ちの途中なら1分ほどかかります）。「強制終了」はメモを書かずにすぐ止めます。操作盤ごと終えるときは右上の「終了」です。</p></div></li>
         <li><input type="checkbox" id="c-sr-7"><div class="body"><label for="c-sr-7">（長時間）試行回数を 5 くらい、上限ターンを空欄にして放置した</label>

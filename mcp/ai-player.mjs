@@ -138,7 +138,7 @@ const tools = (await mcp.listTools()).tools.filter(t => !HIDDEN.has(t.name)).map
 
 const TOOL_NAMES = new Set(tools.map(t => t.function.name));
 // 録画しているなら、その開始時刻をプレイログに入れる（以降の行に「録画の開始からの時間」が付き、字幕を動画に合わせられる）
-{ const ri = (await tool("recording_info").catch(() => null))?.json; if (ri?.recording) plog.setVideo(ri.t0, { name: ri.name }); }
+{ const ri = (await tool("recording_info").catch(() => null))?.json; if (ri?.recording) plog.setVideo(ri.t0, { name: ri.name, lag: ri.lag ?? 200 }); }
 // 既定のオート戦闘では battle_* ツールが無い（サーバーを -- --manual-battle で起動したときだけ1隻ずつ操作する）
 const MANUAL_BATTLE = TOOL_NAMES.has("battle_attack");
 const TEXT_CALL = new RegExp(`\\b(${[...TOOL_NAMES].join("|")})\\s*\\(([^()]*)\\)`, "g");
