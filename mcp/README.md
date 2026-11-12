@@ -32,7 +32,7 @@ server.mjs（MCPサーバー）──Playwright──▶ Chromium の窓（ゲ�
 | `recorder.mjs` `video-clock.mjs` | 録画のしくみ。映像のコマを実際の時刻どおりに並べ直し、音の録り始めを映像の0秒にそろえる |
 | `mux-audio.mjs` | 録画の映像に、別に録ったゲームの音を重ねる（server.mjs が試行の終わりに起動する。止められて残った録画は、操作盤か次に起動した server.mjs が仕上げる） |
 | `recordings/*.webm` | 録画。録画をオンにするとできる。`<名前>.webm`（映像と音を合成）・`<名前>.video.webm`（映像だけ）・`<名前>.audio.webm`（音だけ）。隣に同じ名前の字幕（`.srt`）も置く |
-| `rec-sync-test.mjs` | 録画の音と映像のずれを測る（`npm run test:recsync`。ふつうの ffmpeg / ffprobe が要る） |
+| `rec-sync-test.mjs` | 録画の音と映像のずれを測る（`npm run test:recsync`。ふつうの ffmpeg / ffprobe が要り、無いと「スキップ」と出して終了コード 2。`--allow-skip` で 0） |
 | `playlog.mjs` | プレイログ（セリフ・LLMとのやり取り・操作・戦闘を時刻つきで残す）の書き出しと取り出し。`npm run logs` で一覧と書き出し |
 | `logs/*.jsonl` | プレイログ本体。試行ごとに1ファイル（1行1件の JSON）。プレイすると自動でできる |
 | `notes-test.mjs` | にせのLLMで反省メモの保存と読み込み、負けたときにそこで止まるか、LLM のエラーで止めるか続けるか、プレイログと録画の隣の字幕ができるかを確かめる（`npm run test:notes`） |

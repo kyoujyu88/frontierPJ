@@ -11,7 +11,8 @@
  * そろえる（setStart）。そろえる相手がないときは最初のコマを時刻ゼロにする。
  *
  * Playwright の中身（lib/server/chromium/videoRecorder.js）に手を入れるので、package.json で版を固定している
- * （1.56.1）。形が合わなければ何もせず false を返す（録画は Playwright のまま。音は少しずつずれる）。 */
+ * （1.56.1）。形が合わなければ（メソッドと、使う内部フィールドの両方を確かめる）何もせず false を返す。録画ごとにも
+ * 起動後に形を確かめ、合わなければその録画は Playwright のままにする（どちらの場合も音は少しずつずれる）。 */
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -40,8 +41,15 @@ export function installVideoClock() {
     ({ VideoRecorder } = require(path.join(core, "lib", "server", "chromium", "videoRecorder.js")));
   } catch { return false; }
   const P = VideoRecorder?.prototype;
-  if (!P || typeof P._launch !== "function" || typeof P.writeFrame !== "function" || typeof P.stop !== "function" || typeof P._sendFrames !== "function") return false;
-  const launch = P._launch;
+  if (!P || ["_launch", "writeFrame", "stop", "_sendFrames"].some(m => typeof P[m] !== "function")) return false;
+  // 差し替えたあとで触る内部のフィールドも、クラスの中身にあるか確かめる（版が変わって中身が違えば差し替えない）
+  const FIELDS = ["_frameQueue", "_lastWritePromise", "_lastFrameBuffer", "_lastFrameTimestamp", "_isStopped", "_process", "_gracefullyClose"];
+  let src = "";
+  try { src = Function.prototype.toString.call(VideoRecorder); } catch {}
+  if (FIELDS.some(f => !src.includes(f))) return false;
+  const launch = P._launch, origWrite = P.writeFrame, origStop = P.stop;
+  // 録画ごとにも、起動したあとで実際の形を確かめる。合わなければその録画は Playwright のまま（以前のやり方）にする
+  const shapeOk = (r) => Array.isArray(r._frameQueue) && typeof r._lastWritePromise?.then === "function" && typeof r._gracefullyClose === "function" && !!r._process && typeof r._isStopped === "boolean";
 
   P._launch = async function (options) {
     this._fwFile = key(options.outputFile);
@@ -51,10 +59,13 @@ export function installVideoClock() {
     this._fwStats = { frames: 0, dup: 0, drop: 0 };
     recorders.set(this._fwFile, this);
     if (pending.has(this._fwFile)) { setStartOn(this, pending.get(this._fwFile)); pending.delete(this._fwFile); }
-    return launch.call(this, options);
+    const r = await launch.call(this, options);
+    if (!shapeOk(this)) { this._fwOff = true; recorders.delete(this._fwFile); this._fwStats = null; }
+    return r;
   };
 
   P.writeFrame = function (frame, timestamp) {
+    if (this._fwOff || !this._fwStats) return origWrite.call(this, frame, timestamp);
     if (this._isStopped || !this._process) return;
     if (!Number.isFinite(timestamp)) timestamp = Date.now() / 1000;
     this._fwStats.frames++;
@@ -80,6 +91,7 @@ export function installVideoClock() {
   };
 
   P.stop = async function () {
+    if (this._fwOff || !this._fwStats) return origStop.call(this);
     if (this._isStopped) return;
     if (this._fwStart === undefined) setStartOn(this, null);
     if (this._fwStart === null && this._fwFirst !== undefined) { this._fwStart = this._fwFirst; decided(this); }

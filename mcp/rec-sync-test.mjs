@@ -8,9 +8,10 @@
  *   ・プレイログの時刻：ページで鳴らした実際の時刻 − 動画の時刻ゼロ と、動画で光った時刻の差
  * を出す。音と映像を読むのに ffmpeg / ffprobe（ふつうの版）が要る。Playwright 付属の ffmpeg では読めない。
  *
- *   node rec-sync-test.mjs [秒数=60] [--headed] [--still] [--keep <フォルダ>]
+ *   node rec-sync-test.mjs [秒数=60] [--headed] [--still] [--keep <フォルダ>] [--allow-skip]
  *     --still  帯を動かさない（画面がほとんど変わらないとき）
- *     --keep   録画をそのフォルダに残す（既定は終わったら消す） */
+ *     --keep   録画をそのフォルダに残す（既定は終わったら消す）
+ *     --allow-skip  ffmpeg / ffprobe が無いとき、測らずに終了コード 0 で終える（既定は 2） */
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -49,7 +50,8 @@ requestAnimationFrame(frame);
 </script>`;
 
 const have = (cmd) => { try { execFileSync(cmd, ["-version"], { stdio: "ignore" }); return true; } catch { return false; } };
-if (!have("ffmpeg") || !have("ffprobe")) { console.log("ffmpeg / ffprobe が見つからないので測れません（PATH に入れてください）"); process.exit(0); }
+// 測れないときは成功にしない（終了コード 2）。測れなくてよい環境では --allow-skip で 0 にする
+if (!have("ffmpeg") || !have("ffprobe")) { console.log("スキップ：ffmpeg / ffprobe が見つからないので測っていません（PATH に入れてください）"); process.exit(argv.includes("--allow-skip") ? 0 : 2); }
 
 function flashes(file) {
   const esc = file.replace(/\\/g, "/").replace(/[:']/g, "\\$&");
