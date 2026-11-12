@@ -161,7 +161,7 @@ a { color: var(--blue); }
           <option value="readonly">読むだけ（腕前を固定）</option>
           <option value="off">使わない（毎回はじめて）</option>
         </select>
-        <label class="check"><input type="checkbox" id="record" name="record"> 録画する（試行ごとに1本、.webm・音つき）</label>
+        <label class="check"><input type="checkbox" id="record" name="record"> 録画する（試行ごとに、音つきの動画と、映像だけ・音だけのファイル）</label>
         <label class="check"><input type="checkbox" id="headless" name="headless"> ゲームの窓を出さない（裏で回す）</label>
         <details>
           <summary>詳しい設定</summary>
@@ -355,7 +355,7 @@ async function loadVideos() {
   const v = await api("/api/videos");
   $("videoDir").textContent = `保存先：${v.dir}`;
   $("videos").innerHTML = v.videos.map(x => `<div class="video"><span class="name">${esc(x.file)}</span><small>${mb(x.size)}・${new Date(x.mtime).toLocaleString("ja-JP")}</small>
-    <button type="button" data-video="${esc(x.file)}">再生</button><a href="/videos/${encodeURIComponent(x.file)}" download>保存</a></div>`).join("") || `<div class="empty">まだありません</div>`;
+    <button type="button" data-video="${esc(x.file)}">再生</button><a href="/videos/${encodeURIComponent(x.file)}" download>保存</a>${x.video ? `<a href="/videos/${encodeURIComponent(x.video)}" download title="${esc(x.video)}">映像だけ</a>` : ""}${x.audio ? `<a href="/videos/${encodeURIComponent(x.audio)}" download title="${esc(x.audio)}">音だけ</a>` : ""}</div>`).join("") || `<div class="empty">まだありません</div>`;
 }
 function play(file, sec) {
   selectTab("tVideo");

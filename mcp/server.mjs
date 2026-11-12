@@ -15,6 +15,7 @@
  *   --speaker <名前>  字幕・行動表示の名前（既定 のあ）                       GAME_SPEAKER
  *   --size 1280x720   ウィンドウの中身の大きさ                                GAME_SIZE
  *   --record <dir>    ゲーム画面を動画（.webm、BGM・効果音つき）で dir に録画する  GAME_RECORD
+ *                     （合成した <名前>.webm のほか、映像だけ <名前>.video.webm・音だけ <名前>.audio.webm も残す）
  *   --no-record-audio 録画に音を入れない
  *   --record-name <名前>  録画ファイルの名前（既定 日時。.webm は自動で付く）  GAME_RECORD_NAME
  *   --manual-battle   戦術戦闘を battle_* ツールで1隻ずつ操作する（既定はオート戦闘で、  GAME_MANUAL_BATTLE=1
@@ -26,6 +27,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
+import { prepareAudio, trackRecording, stopRecording, OLD_LAG_MS } from "./recorder.mjs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -97,95 +99,31 @@ async function openGame() {
   await inject(page);
   err(`game opened: ${GAME_URL}`);
 }
-/* ---------- 録画（Playwright の recordVideo。ページを閉じると確定するので、閉じたあとで名前を付け直す） ----------
- * 動画の機能は音を録らないので、ゲームの音は別に録って最後に重ねる。ゲームの音はすべて1つの AudioContext から
- * 出力（destination）へつながるので、そこへの connect を横取りして MediaStreamDestination にも流し、
- * ページ内の MediaRecorder（Opus）で録る。重ねるのは Playwright 付属の ffmpeg（ストリームのコピーだけ）。 */
-const AUDIO_TAP = `(() => {
-  if (!window.AudioContext || !window.MediaRecorder || window.__fwTapped) return;
-  window.__fwTapped = true;
-  const orig = AudioNode.prototype.connect;
-  let rec = null, queue = Promise.resolve(), stopped = false;
-  const send = (b) => { const u = new Uint8Array(b); let s = ""; for (let i = 0; i < u.length; i += 32768) s += String.fromCharCode.apply(null, u.subarray(i, i + 32768)); return window.__fwAudio("data", btoa(s)); };
-  function tap(ctx) {
-    if (ctx.__fwTap) return ctx.__fwTap;
-    const d = ctx.__fwTap = ctx.createMediaStreamDestination();
-    if (rec) return d;
-    rec = new MediaRecorder(d.stream, { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 128000 });
-    rec.onstart = () => { window.__fwAudio("start", String(Date.now())); };
-    rec.ondataavailable = (e) => { if (e.data.size) queue = queue.then(() => e.data.arrayBuffer()).then(send).catch(() => {}); };
-    rec.start(1000);
-    return d;
-  }
-  AudioNode.prototype.connect = function (dest, ...rest) {
-    const r = orig.call(this, dest, ...rest);
-    if (!stopped && dest instanceof AudioDestinationNode) { try { orig.call(this, tap(dest.context)); } catch (e) {} }
-    return r;
-  };
-  window.__fwRecStop = () => new Promise((res) => {
-    stopped = true;
-    if (!rec || rec.state === "inactive") return queue.then(res);
-    rec.onstop = () => setTimeout(() => queue.then(res), 50);
-    rec.stop();
-  });
-})();`;
-async function tapAudio(ctx) {
-  const a = { start: null, file: path.join(RECORD_DIR, `.audio-${process.pid}-${Date.now()}.webm`), out: null, bytes: 0, t0: null, onStart: null };
-  await ctx.exposeBinding("__fwAudio", async (_src, kind, data) => {
-    if (kind === "start") { a.start = Number(data); a.onStart?.(a.start); return; }
-    if (!a.out) a.out = await fs.open(a.file, "w");
-    const b = Buffer.from(data, "base64");
-    a.bytes += b.length;
-    await a.out.write(b);
-  });
-  await ctx.addInitScript(AUDIO_TAP);
-  a.t0 = Date.now(); // 動画はページを作ったときから始まる
-  return a;
-}
-/* 仕上げ（名前の付け直しと音の重ね合わせ）は mux-audio.mjs に切り離して任せる。録画フォルダの覚え書き .rec-*.json に
- * 必要なことを書いておくので、途中でサーバーが強制終了されても（Windows では MCP クライアントの終了から2秒で止められる）
- * 操作盤か次に起動したサーバーが仕上げる */
+/* ---------- 録画（recorder.mjs。映像・音・合成の3つを残す。仕上げは mux-audio.mjs に切り離して任せる） ---------- */
 const MUX = path.join(HERE, "mux-audio.mjs");
 const runMux = (...args) => spawn(process.execPath, [MUX, ...args], { stdio: "ignore", detached: true, windowsHide: true }).on("error", () => {}).unref();
 const recordings = [];
-let recCount = 0, recStart = null; // recStart：録画の開始時刻（プレイログの時刻を動画に合わせるため。recording_info で返す）
+let recCount = 0, recStart = null; // recStart：最初の録画（プレイログの時刻を動画に合わせるため。recording_info で返す）
+async function tapAudio(ctx) { return prepareAudio(ctx, RECORD_DIR); }
 function track(pg, audio) {
-  const v = pg.video();
-  if (!v) return;
   const stamp = new Date().toLocaleString("sv-SE").replace(/[-: ]/g, "").replace(/^(\d{8})(\d{4}).*/, "$1-$2");
   const base = (RECORD_NAME || stamp).replace(/[\\/:*?"<>|]+/g, "_") + (recCount++ ? `-${recCount}` : "");
+  const r = trackRecording(pg, audio, {
+    dir: RECORD_DIR, base, index: recCount, log: err,
+    onDone: (job, info) => {
+      runMux(job);
+      err(`recorded: ${info.dst}`);
+      err(audio?.bytes ? `録画を仕上げています（映像だけ・音だけ・合成の3つ。音 ${Math.round(audio.bytes / 1024)}KB、数秒〜数十秒で終わります）` : "録画の音：音のデータがないので、映像だけで保存します");
+    },
+  });
+  if (!r) return;
   err(`recording: ${path.join(RECORD_DIR, base + ".webm")}`);
-  const job = path.join(RECORD_DIR, `.rec-${process.pid}-${recCount}.json`);
-  const info = { pid: process.pid, base, src: null, dst: null, audio: audio?.file ?? null, t0: audio?.t0 ?? Date.now(), start: null };
-  recStart ??= { t0: info.t0, name: base };
-  let saving = Promise.resolve();
-  const save = () => (saving = saving.then(() => fs.writeFile(job, JSON.stringify(info))).catch(e => err("録画の覚え書き：", e.message)));
-  save();
-  v.path().then(p => { info.src = p; save(); }, () => {});
-  if (audio) audio.onStart = (t) => { info.start = t; save(); };
-  const ctx = pg.context(), ctxClosed = new Promise(r => ctx.once("close", r));
-  recordings.push(new Promise(r => pg.once("close", r)).then(async () => {
-    // コンテキストが閉じ終わると動画が書き終わる（閉じる途中で close() をもう一度呼んでもすぐ返るので、close イベントを待つ）
-    ctx.close().catch(() => {});
-    await ctxClosed;
-    const src = await v.path();
-    let dst = path.join(RECORD_DIR, base + ".webm");
-    for (let i = 2; await fs.stat(dst).then(() => true, () => false); i++) dst = path.join(RECORD_DIR, `${base}-${i}.webm`);
-    await fs.rename(src, dst);
-    info.src = src; info.dst = dst;
-    await audio?.out?.close().catch(() => {});
-    await save();
-    runMux(job);
-    err(`recorded: ${dst}`);
-    if (audio) err(audio.bytes ? `録画に音を重ねています（音 ${Math.round(audio.bytes / 1024)}KB、数秒〜数十秒で終わります）` : "録画の音：ゲームの音が一度も鳴らなかったので、音なしで保存します");
-    return dst;
-  }).catch(e => { err("recording failed:", e.message); return null; }));
+  recStart ??= { name: base, rec: r, t0: r.info.t0 };
+  recordings.push(r.done);
 }
 async function finishRecording() {
   if (!recordings.length) return;
-  // 録音を止めて、最後の音のかけらを受け取ってから閉じる
-  try { await Promise.race([page?.evaluate(() => window.__fwRecStop?.()), new Promise(r => setTimeout(r, 800))]); } catch {}
-  try { await page?.context().close(); } catch {}
+  await stopRecording(page);
   return (await Promise.all(recordings)).filter(Boolean);
 }
 if (RECORD_DIR && CDP) err("--record は --cdp と一緒には使えません（録画しません）");
@@ -234,7 +172,10 @@ function buildServer() {
   tool("finish_recording", "録画を仕上げる（ai-player が終わる前に呼ぶもの。プレイには使わない）。", {}, async () => ({ ok: true, videos: (await finishRecording()) ?? [] }));
   tool("recording_info", "録画の開始時刻（ミリ秒）と名前を返す（ai-player がプレイログの時刻を動画に合わせるためのもの。プレイには使わない）。", {}, async () => {
     if (RECORD_DIR && !CDP) await getPage();
-    return recStart ? { ok: true, recording: true, ...recStart } : { ok: true, recording: false };
+    if (!recStart) return { ok: true, recording: false };
+    // 動画の時刻ゼロ（録音の開始時刻）。時刻の補正が使えないときは以前のやり方（ページを作った時刻＋コマ遅れ 0.2 秒）
+    const t = await recStart.rec.start().catch(() => null);
+    return { ok: true, recording: true, name: recStart.name, t0: t ?? recStart.t0, lag: t ? 0 : OLD_LAG_MS };
   });
   tool("dismiss_dialog", "開いている通信ウィンドウを閉じる（「了解」を押す）。", {}, () => call("dismissDialog"));
 
