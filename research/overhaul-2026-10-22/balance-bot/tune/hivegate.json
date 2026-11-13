@@ -1,0 +1,22 @@
+{
+ "name": "hivegate",
+ "desc": "巣の中枢はセラフ級（対異生体）の爆装でしか傷つかない（HIVE_NONANTI=0。0.25 などにすれば他艦級でも1/4だけ通る）",
+ "edits": [
+  {
+   "find": "const HOME=0, CAPITAL=6, HIVE=12;",
+   "replace": "const HOME=0, CAPITAL=6, HIVE=12;\nconst HIVE_NONANTI=0; // 巣の中枢へのセラフ級以外の爆装の倍率（0=通らない）"
+  },
+  {
+   "find": "core={uid:uid(),side:\"E\",core:true,name:isHive?\"巣の中枢\"",
+   "replace": "core={uid:uid(),side:\"E\",core:true,hive:isHive,name:isHive?\"巣の中枢\""
+  },
+  {
+   "find": "if(t.core&&!w.core&&att.side===\"P\")continue;",
+   "replace": "if(t.core&&!w.core&&att.side===\"P\")continue;\n    if(t.hive&&att.side===\"P\"&&!att.anti&&HIVE_NONANTI<=0)continue;"
+  },
+  {
+   "find": "let dmg=(w.d+(fm===\"rear\"&&att.side===\"P\"&&w.n===\"ミサイル\"?1:0))*mult(att,t)*(att.anti&&t.xeno?1.5:1)*(10/(10+2*t.armor));",
+   "replace": "let dmg=(w.d+(fm===\"rear\"&&att.side===\"P\"&&w.n===\"ミサイル\"?1:0))*mult(att,t)*(att.anti&&t.xeno?1.5:1)*(t.hive&&att.side===\"P\"&&!att.anti?HIVE_NONANTI:1)*(10/(10+2*t.armor));"
+  }
+ ]
+}
