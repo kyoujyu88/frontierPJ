@@ -133,7 +133,7 @@ async function say(text, extra = {}) {
   const at = Date.now();
   const r = await tool("say", { ...extra, text: t }).catch(() => null);
   const durMs = r?.json?.durationMs ?? null;
-  capHold = at + Math.min(durMs ?? 0, 1500 + t.length * 100, 6000);
+  capHold = at + Math.min(durMs ?? Infinity, 1500 + t.length * 100, 6000); // 表示秒数が返らないときは文字数の目安で
   plog.write("talk", { who: NAME, text: t, durMs }, at); // 時刻は字幕を出し始めたとき
   return r;
 }
