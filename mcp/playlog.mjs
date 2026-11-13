@@ -25,6 +25,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { splitRecordedTalk } from "./talk.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const LOG_DIR = path.join(HERE, "logs");
@@ -131,10 +132,18 @@ export function clock(ms) { const s = Math.max(0, Math.floor(ms / 1000)), h = Ma
 /* セリフの表示区間：表示秒数か、次のセリフが出るまで（字幕は次のセリフで置き換わる） */
 export function cues(events) {
   const talks = events.filter(e => e.type === "talk" && e.text);
-  return talks.map((e, i) => {
+  return talks.flatMap((e, i) => {
     const start = at(e), next = talks[i + 1] ? at(talks[i + 1]) : Infinity;
     const end = Math.max(start + 100, Math.min(start + (e.durMs ?? 2500 + e.text.length * 120), next));
-    return { start, end, who: e.who ?? "", text: e.text };
+    // 修正前のログには say{text:「…」} が並んだまま1件で残っていることがある。1件ずつに分け、表示時間を文字数で割り振る
+    const parts = splitRecordedTalk(e.text, e.who ?? "");
+    if (parts.length === 1) return [{ start, end, who: e.who ?? "", text: parts[0] }];
+    const total = parts.reduce((n, p) => n + p.length, 0);
+    let t = start;
+    return parts.map((p, k) => {
+      const s = t; t = k === parts.length - 1 ? end : Math.round(t + (end - start) * p.length / total);
+      return { start: s, end: t, who: e.who ?? "", text: p };
+    });
   });
 }
 export function toSrt(events) {
@@ -164,7 +173,7 @@ export function describe(e, { all = false } = {}) {
     case "start": return { kind: "sys", text: `${e.name}（${e.model} @ ${e.baseUrl}）がプレイを始めます${e.think ? `　考える量 ${e.think}` : ""}　temperature ${e.temperature}` };
     case "video": return { kind: "sys", text: `録画を始めました${e.name ? `：${e.name}` : ""}` };
     case "turn": return { kind: "turn", text: `── ターン${e.turn}　資金${e.funds} ──` };
-    case "talk": return { kind: "talk", text: `${e.who ?? ""}「${e.text}」` };
+    case "talk": return { kind: "talk", text: splitRecordedTalk(e.text, e.who ?? "").map(t => `${e.who ?? ""}「${t}」`).join("\n") };
     case "tool": return { kind: "op", text: `${e.by === "auto" ? "（自動）" : "→ "}${e.name} ${j(e.args)}${e.message ? `　${e.ok === false ? "✗" : "○"} ${e.message}` : ""}${e.events?.length ? `\n    ${e.events.join("\n    ")}` : ""}` };
     case "refuse": return { kind: "op", text: `✗ ${e.name} ${j(e.args)}　${e.reason}` };
     case "battle": return { kind: "battle", text: `戦闘「${e.title}」${e.result}` };
