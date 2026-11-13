@@ -40,7 +40,12 @@ const llm = http.createServer(async (req, res) => {
     const last = b.messages.at(-1);
     if (last.role === "user" && last.content.includes("今の状況です")) {
       prompts.push(b.messages[0].content);
-      out = reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
+      out = mode === "say"
+        // say を地の文に書く（gemma4 で実際に出た形）＋ say ツールの直呼び
+        ? reply({ content: "say{text:「研究に投資するよ！」} say{text:「カルセは要塞だし、守りを固めよう。」}", tool_calls: [
+          { id: `s${prompts.length}`, type: "function", function: { name: "say", arguments: JSON.stringify({ text: "「第1艦隊、進軍！」" }) } },
+          { id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] })
+        : reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
     } else out = reply({ content: mode === "empty" ? "" : "様子を見るね" });
   }
   res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(out));
@@ -130,6 +135,21 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   const out = await new Promise((ok) => { const p = spawn(process.execPath, [path.join(HERE, "playlog.mjs"), "1", "--format", "vtt", "--dir", logDir], { stdio: ["ignore", "pipe", "inherit"] }); let o = ""; p.stdout.on("data", d => { o += d; }); p.on("exit", () => ok(o)); });
   check(out.startsWith("WEBVTT") && out.includes("<v テスト>ターンを終えるよ！"), "コマンド：node playlog.mjs 1 --format vtt");
   check((await listLogs(logDir))[0]?.video === "録画テスト.webm", "一覧：録画の名前が出る");
+}
+
+// 地の文に書かれた say{text:「…」} は1件ずつ字幕にし、生の記法は出さない。say ツールの直呼びもセリフに残る
+{
+  mode = "say";
+  await run(1, ["--no-notes"]);
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const talks = ev.filter(e => e.type === "talk").slice(0, 3); // end_turn のあとの「様子を見るね」は見ない
+  check(!ev.some(e => e.type === "talk" && /say|[{}]/.test(e.text)) && JSON.stringify(talks.map(e => e.text)) === JSON.stringify(["研究に投資するよ！", "カルセは要塞だし、守りを固めよう。", "第1艦隊、進軍！"]),
+    `say{text:…} を1件ずつ字幕にし、say ツールの直呼びもセリフに残る（${talks.map(e => e.text).join(" / ")}）`);
+  check(talks[1].ms - talks[0].ms >= 1500 && talks[2].ms - talks[1].ms >= 1500, `続けて話すときは前のセリフを読める長さだけ待つ（${talks.slice(1).map((e, k) => e.ms - talks[k].ms).join("ms・")}ms）`);
+  // 修正前のログ（記法つきのまま1件で残ったセリフ）も、字幕に書き出すときに分ける
+  const old = toSrt([{ type: "talk", ms: 0, who: "のあ", durMs: 9000, text: "say{text:「研究にガッツリ投資！」} say{text:「守りを固めよう。」}" }]);
+  check(!old.includes("say{") && /^1\n00:00:00,000 --> 00:00:0\d,\d{3}\n研究にガッツリ投資！\n\n2\n.+ --> 00:00:09,000\n守りを固めよう。\n$/.test(old), "修正前のログも SRT では1件ずつに分ける");
+  mode = "normal";
 }
 
 // 6回目以降：LLM のエラーの扱い（反省メモは使わない）

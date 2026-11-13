@@ -40,6 +40,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName } from "./notes.mjs";
 import { PlayLog, LOG_DIR, subtitlesBeside } from "./playlog.mjs";
+import { makeTalk, stripThink } from "./talk.mjs";
 
 const sep = process.argv.indexOf("--");
 const argv = sep >= 0 ? process.argv.slice(2, sep) : process.argv.slice(2);
@@ -112,6 +113,7 @@ async function tool(name, args = {}) {
   let out;
   try { out = { text, json: JSON.parse(text) }; } catch { out = { text, json: null }; }
   journal.onTool(name, out);
+  if (!QUIET.has(name)) capHold = 0; // ゲームを操作したら、次のセリフは待たずに出す
   const j = out.json;
   if (!QUIET.has(name)) plog.write("tool", { by: autoBy ? "auto" : "ai", name, args, ok: j?.ok ?? null, message: j?.message ?? (j ? undefined : text.slice(0, 300)),
     ...(j?.events?.length ? { events: j.events } : {}), ...(j?.funds != null ? { funds: j.funds } : {}), ...(j?.mode ? { mode: j.mode } : {}) });
@@ -120,18 +122,27 @@ async function tool(name, args = {}) {
   return out;
 }
 const summary = async () => (await tool("get_summary")).text;
-async function say(text) {
+// 字幕は次のセリフですぐ置き換わる。1つの返事に say が並んだときなどに前のセリフが読めるよう、
+// ゲームの操作をはさまずに続けて話すときは、前のセリフを読める長さ（最大6秒）だけ待ってから出す
+let capHold = 0;
+async function say(text, extra = {}) {
   const t = cleanTalk(text);
-  if (!t) return;
+  if (!t) return null;
+  const wait = capHold - Date.now();
+  if (wait > 0 && !stopping) await new Promise(r => setTimeout(r, wait));
   const at = Date.now();
-  const r = await tool("say", { text: t }).catch(() => null);
-  plog.write("talk", { who: NAME, text: t, durMs: r?.json?.durationMs ?? null }, at); // 時刻は字幕を出し始めたとき
+  const r = await tool("say", { ...extra, text: t }).catch(() => null);
+  const durMs = r?.json?.durationMs ?? null;
+  capHold = at + Math.min(durMs ?? Infinity, 1500 + t.length * 100, 6000); // 表示秒数が返らないときは文字数の目安で
+  plog.write("talk", { who: NAME, text: t, durMs }, at); // 時刻は字幕を出し始めたとき
+  return r;
 }
 
 // AIに渡すツール。重い get_state、画像の get_screenshot、やり直しの new_game は外す（say は地の文で代用）。
 // ルールはシステムプロンプトに入れてあるので get_rules も外す（小さなモデルが読み直しを繰り返すため）
 const HIDDEN = new Set(["get_state", "get_screenshot", "new_game", "battle_state", "get_rules", "finish_recording", "recording_info"]);
-const tools = (await mcp.listTools()).tools.filter(t => !HIDDEN.has(t.name)).map(t => ({
+const mcpTools = (await mcp.listTools()).tools;
+const tools = mcpTools.filter(t => !HIDDEN.has(t.name)).map(t => ({
   type: "function",
   function: { name: t.name, description: t.description, parameters: { type: "object", properties: {}, ...t.inputSchema } },
 }));
@@ -141,28 +152,9 @@ const TOOL_NAMES = new Set(tools.map(t => t.function.name));
 { const ri = (await tool("recording_info").catch(() => null))?.json; if (ri?.recording) plog.setVideo(ri.t0, { name: ri.name, lag: ri.lag ?? 200 }); }
 // 既定のオート戦闘では battle_* ツールが無い（サーバーを -- --manual-battle で起動したときだけ1隻ずつ操作する）
 const MANUAL_BATTLE = TOOL_NAMES.has("battle_attack");
-const TEXT_CALL = new RegExp(`\\b(${[...TOOL_NAMES].join("|")})\\s*\\(([^()]*)\\)`, "g");
-// Gemma 系がサーバー側で解釈されずに地の文へ漏らす書式：<|tool_call>call:battle_move{unit_id:30,x:3,y:2}<tool_call|>
-const TOKEN_CALL = new RegExp(`call:(${[...TOOL_NAMES].join("|")})\\{([^{}]*)\\}?`, "g");
-/* ツール呼び出しを地の文に書いてしまうモデル向け：dismiss_dialog() や move_fleet(fleet_id=1, to=2)、call:name{...} を拾う */
-function textCalls(s) {
-  const out = [];
-  const src = (s || "").replace(/<\|"\|>/g, '"');
-  const found = [...src.matchAll(TOKEN_CALL)].map(m => [m[1], m[2]]);
-  if (!found.length) for (const m of src.matchAll(TEXT_CALL)) found.push([m[1], m[2]]);
-  for (const [name, body] of found) {
-    const raw = body.trim();
-    let args = {};
-    if (raw.startsWith("{")) { try { args = JSON.parse(raw); } catch { continue; } }
-    else for (const kv of raw.split(",").map(x => x.trim()).filter(Boolean)) {
-      const mm = kv.match(/^(\w+)\s*[=:]\s*(.+)$/); if (!mm) continue;
-      const v = mm[2].trim().replace(/^["'](.*)["']$/, "$1");
-      args[mm[1]] = /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v === "true" ? true : v === "false" ? false : v;
-    }
-    out.push({ id: `text_${out.length}_${Math.random().toString(36).slice(2, 8)}`, type: "function", function: { name, arguments: JSON.stringify(args) } });
-  }
-  return out.slice(0, 4);
-}
+// 文字で書かれたツール呼び出し（dismiss_dialog()・call:name{…}・say{text:「…」} など）を拾い、字幕からは記法を外す（talk.mjs）
+// 渡していないツール（get_state など）も拾って字幕から外す。実行はせずに断る
+const { cleanTalk, splitReply } = makeTalk({ toolNames: mcpTools.map(t => t.name), name: NAME });
 
 /* ---------- プロンプト ---------- */
 const persona = PERSONA_FILE ? (await fs.readFile(PERSONA_FILE, "utf8")).trim()
@@ -229,36 +221,6 @@ async function chat(messages, { withTools = true } = {}) {
   return msg;
 }
 const llmError = (message, fatal) => Object.assign(new Error(message), { fatal });
-const stripThink = s => (s || "").replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<think>[\s\S]*$/, "")
-  .replace(/<\|channel\|?>\s*thought[\s\S]*?(<channel\|>|(?=<\|tool_call)|$)/g, "") // Gemma 系の考える部分
-  .trim();
-/* 字幕向けに整える：紛れ込んだHTMLタグ・名前の前置き・強調記号・セリフを囲む引用符や、片方だけ残った引用符を外す */
-const QUOTES = [['"', '"'], ["＂", "＂"], ["“", "”"], ["〝", "〟"], ["「", "」"], ["『", "』"], ["'", "'"], ["‘", "’"]];
-function cleanTalk(s) {
-  let t = (s || "").replace(/<\|tool_call\|?>[\s\S]*?(<tool_call\|>|$)/g, " ") // Gemma 系のツール呼び出し書式
-    .replace(/call:\w+\{[^{}]*\}?/g, " ")
-    .replace(/<\|[^<>]{0,40}>|<[^<>]{0,40}\|>/g, " ") // <|channel> <channel|> などの特殊トークン
-    .replace(/```[\s\S]*?(```|$)/g, " ") // コードブロック（ツール呼び出しを文字で書いたもの）
-    .replace(TEXT_CALL, " ")
-    .replace(/<\/?[a-zA-Z][\w-]*(?:\s[^<>]*)?\/?>/g, " ") // </td> や <dialog> など、紛れ込んだタグ
-    .replace(/\*\*|__/g, "").replace(/[ \t]{2,}/g, " ").replace(/\s*\n\s*/g, "\n").trim()
-    .replace(/(^|\n)thought$/i, "").trim(); // 考える部分の見出しだけが最後に残ったもの（Gemma 系）
-  t = t.replace(new RegExp(`^${NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[：:]\\s*`), "");
-  for (let changed = true; changed && t.length > 1;) {
-    changed = false;
-    for (const [a, b] of QUOTES) {
-      const n = t.split(a).length - 1 + (a === b ? 0 : t.split(b).length - 1);
-      if (n === 2 && t.length > 2 && t.startsWith(a) && t.endsWith(b)) { t = t.slice(1, -1).trim(); changed = true; }
-    }
-  }
-  const count = (c) => t.split(c).length - 1;
-  for (const [a, b] of QUOTES) {
-    if (a === b) { if (count(a) % 2) t = t.startsWith(a) ? t.slice(1) : t.endsWith(a) ? t.slice(0, -1) : t; }
-    else if (count(a) !== count(b)) { if (t.startsWith(a) && !count(b)) t = t.slice(1); else if (t.endsWith(b) && !count(a)) t = t.slice(0, -1); }
-    t = t.trim();
-  }
-  return t;
-}
 
 /* ツール結果をのあ向けに短くする（戦闘中は盤面のテキストに置き換える）。
  * 状況テキストをつけたときは、あとで古くなったとき用の縮めた版（short）も返す */
@@ -365,10 +327,13 @@ async function playTurn() {
     step++;
     plog.sentMessages(messages);
     const msg = await chat(slim(messages));
-    const talk = cleanTalk(stripThink(msg.content));
-    if (talk) { log(`${NAME}：` + talk); memo = turnTalk = talk.slice(0, 200); await say(talk.slice(0, 160)); }
+    // 地の文は1行、文字で書かれた say{text:「…」} は1件ずつ字幕にする（生の記法は出さない）
+    const { lines, calls: written } = splitReply(stripThink(msg.content));
+    const talk = lines.join("\n");
+    if (talk) memo = turnTalk = talk.slice(0, 200);
+    for (const line of lines) { log(`${NAME}：` + line); await say(line.slice(0, 160)); }
     let calls = msg.tool_calls ?? [];
-    if (!calls.length && (calls = textCalls(stripThink(msg.content))).length) log(`  （文字で書かれたツール呼び出しを実行します：${calls.map(c => c.function.name).join(", ")}）`);
+    if (!calls.length && (calls = written).length) log(`  （文字で書かれたツール呼び出しを実行します：${calls.map(c => c.function.name).join(", ")}）`);
     // content は必ず文字列にする（null だと Ollama が「invalid message content type: <nil>」の 400 で断る）
     messages.push({ role: "assistant", content: talk, ...(calls.length ? { tool_calls: calls } : {}) });
     if (!calls.length) {
@@ -381,7 +346,6 @@ async function playTurn() {
       c.id ||= `call_${step}_${Math.random().toString(36).slice(2, 8)}`;
       let args = c.function.arguments;
       if (typeof args === "string") { try { args = JSON.parse(args || "{}"); } catch { args = {}; } }
-      if (c.function.name === "say" && args?.text) args.text = cleanTalk(args.text); // say ツールを直接呼んだときも整える
       log(`→ ${c.function.name} ${JSON.stringify(args)}`);
       // 渡していないツールや、同じ情報の取り直しは実行せずに次の手を促す（読み直しのループを防ぐ）
       const refuse = !TOOL_NAMES.has(c.function.name)
@@ -390,6 +354,13 @@ async function playTurn() {
       lastName = c.function.name;
       if (refuse) { wasted++; log("  ✗ " + refuse.split("。")[0]); plog.write("refuse", { name: c.function.name, args, reason: refuse.split("。")[0] }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: refuse }); continue; }
       if (c.function.name !== "get_summary") wasted = 0;
+      if (c.function.name === "say") {
+        // say ツールを直接呼んだとき：地の文と同じく整えて字幕に出し、プレイログのセリフにも残す
+        const r = args?.text ? await say(args.text, args.seconds ? { seconds: args.seconds } : {}) : null;
+        if (r && !turnTalk) memo = turnTalk = cleanTalk(args.text).slice(0, 200);
+        messages.push({ role: "tool", tool_call_id: c.id, name: "say", content: r?.text ?? "失敗：text が空です。" });
+        continue;
+      }
       if (c.function.name === "battle_end_phase") {
         const stop = await checkEndPhase();
         if (stop) { log("  ✗ まだ動ける艦があるので、フェイズ終了を止めました"); plog.write("refuse", { name: c.function.name, args, reason: "まだ動ける艦があるので、フェイズ終了を止めました" }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: stop }); continue; }

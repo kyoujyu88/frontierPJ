@@ -12,6 +12,7 @@
     "test:notes": "node notes-test.mjs",
     "test:regress": "node regress.mjs",
     "test:recsync": "node rec-sync-test.mjs",
+    "test:talk": "node talk-test.mjs",
     "play": "node ai-player.mjs",
     "noa": "node ai-player.mjs",
     "ui": "node control.mjs",
