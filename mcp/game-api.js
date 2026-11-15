@@ -175,6 +175,7 @@ function result(ok,message,n){
   const bs=autoResults.filter(b=>b.seq>n).map(({seq,...b})=>b);if(bs.length)r.battles=bs;
   if(closedDialogs.length)r.dialogs=closedDialogs.splice(0); // この操作の前に自動で閉じた通信（まだ知らせていなかったもの）
   if(dialogOpen()){r.dialog=dialogText();r.dialog.note="次の操作で自動的に閉じます（dismiss_dialog は不要）";seeDialog(true)}
+  else forgetDialog(); // dismiss_dialog や画面の操作で閉じられたときも、記録を消す
   if(B)r.battle=battleState();
   // 戦闘のあとは、艦隊の残りの耐久も一緒に知らせる（状況テキストは付け直さない）
   const nx=nextHint();if(nx)r.next=bs.length?`${nx}\n自軍艦隊：${myFleets().map(f=>`${f.name} ID${f.id}@${f.node}${planet(f.node).name} ${f.ships.length}隻・耐久${f.ships.reduce((t,x)=>t+Math.ceil(x.hp),0)}/${f.ships.reduce((t,x)=>t+x.maxHp,0)}・${f.moved?"行動済":"未行動"}`).join("／")||"なし（全滅。造船所のある星で new_fleet）"}`:nx;
