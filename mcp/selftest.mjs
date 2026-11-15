@@ -39,7 +39,8 @@ async function clearDialogs() {
 async function fight() {
   if (!MANUAL) return clearDialogs(); // オート戦闘では戦闘は返ってくる前に決着している
   for (let round = 0; round < 40; round++) {
-    await clearDialogs();
+    const now = await clearDialogs();
+    if (now && !now.battle) return; // 通信だけで戦闘が無いとき（ターン終了後の知らせなど）は、盤面を聞かない
     const b = await call("battle_state");
     if (b.ok === false) return;
     if (b.ended) { const r = await call("battle_close"); console.log(`  戦闘終了：${r.message}`); await clearDialogs(); const s = await call("get_state"); if (!s.battle) return; continue; }
@@ -60,6 +61,22 @@ console.log(`${toolNames.length} tools（戦闘：${MANUAL ? "手動" : "オー�
 if (!MANUAL && toolNames.some(n => n.startsWith("battle_"))) fail("オート戦闘なのに battle_* ツールが出ている");
 if (MANUAL && !toolNames.includes("battle_state")) fail("手動戦闘なのに battle_* ツールが出ていない");
 const rules = await call("get_rules"); console.log("rules:", rules.length, "chars");
+// 通信が開いたままでも操作でき（自動で閉じる）、引数は寛容に読み、返り値に「のこりの手」が付く
+{
+  const before = await call("get_state");
+  const r = await call("invest_research", { amount: "100" }); // 文字列の数字・30刻みでない額 → 90 を投資
+  const after = await call("get_state");
+  if (!before.dialog) fail("最初の通信が開いていない（テストの前提）");
+  if (r.ok === false || after.funds !== before.funds - 90) fail(`invest_research 100 が 90 の投資にならなかった（${before.funds} → ${after.funds}）`);
+  if (after.dialog) fail("開いていた通信が、操作のあとも閉じていない");
+  if (!/のこりの手：資金\d+。払える内政：/.test(r.next ?? "") || !/未行動の艦隊：/.test(r.next ?? "")) fail("返り値に「のこりの手」が無い");
+  const bad = await call("move_fleet", { fleet_id: 1 }); // 引数が足りない → 日本語で何を書くかを返す（JSON ではなく MCP のエラー文）
+  if (typeof bad !== "string" || !/to（行き先の惑星ID）を指定してください/.test(bad)) fail(`引数が足りないときの案内が日本語で返らない：${JSON.stringify(bad).slice(0, 120)}`);
+  const stay = await call("move_fleet", { fleet_id: "第1艦隊", to: before.myFleets[0].at }, { reject: true }); // いまいる星へは動けない。行ける先を返す
+  if (!/行ける先：\d/.test(stay.message ?? "")) fail(`断るときに行ける先が付かない：${stay.message}`);
+  const dup = await call("build_facility", { planet_id: 0, facility: "採掘所" }, { reject: true }); // 既にある施設。建てられるものを返す
+  if (!/建てられるのは：/.test(dup.message ?? "")) fail(`断るときに建てられる施設が付かない：${dup.message}`);
+}
 await call("say", { text: "テストを始めるよ！" });
 await call("build_facility", { planet_id: 6, facility: "mine" }, { reject: true }); // 敵の星には建てられない
 await call("move_fleet", { fleet_id: 9999, to: 1 }, { reject: true }); // 無い艦隊は動かせない

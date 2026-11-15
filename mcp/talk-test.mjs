@@ -66,4 +66,11 @@ eq(splitRecordedTalk("I say yes", "のあ"), ["I say yes"], "記録済みのセ�
 eq(splitRecordedTalk("survey", "のあ"), ["survey"], "記録済みの _ の無い1語はそのまま（ふつうのセリフかもしれない）");
 eq(splitRecordedTalk("これで end_turn するね", "のあ"), ["これでターン終了するね"], "記録済みのセリフの中のツール名も置き換える");
 
+// 考える部分が「thought」の行から始まるもの（開きの特殊トークンが落ちた形。gemma4 系で字幕に考え途中の文が出た）
+eq(lines("thought\n<channel|>"), [], "thought と閉じトークンだけの返事は字幕に出さない");
+eq(lines("thought\nI should call invest_research first.\n1. Analyze"), [], "閉じていない thought は最後まで考える部分として外す");
+eq(calls("thought\nI should call end_turn() now"), [], "考える部分に書かれた呼び出しは実行しない");
+eq(lines("thought\nplan...<channel|>研究を進めるよ！"), ["研究を進めるよ！"], "閉じトークンのあとの本文は字幕に出す");
+eq(lines("thoughtful な一手だね"), ["thoughtful な一手だね"], "thought で始まるふつうの文は触らない");
+
 process.exit(failed ? 1 : 0);
