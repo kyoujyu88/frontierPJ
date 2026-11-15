@@ -74,6 +74,11 @@ const rules = await call("get_rules"); console.log("rules:", rules.length, "char
   if (typeof bad !== "string" || !/to（行き先の惑星ID）を指定してください/.test(bad)) fail(`引数が足りないときの案内が日本語で返らない：${JSON.stringify(bad).slice(0, 120)}`);
   const stay = await call("move_fleet", { fleet_id: "第1艦隊", to: before.myFleets[0].at }, { reject: true }); // いまいる星へは動けない。行ける先を返す
   if (!/行ける先：\d/.test(stay.message ?? "")) fail(`断るときに行ける先が付かない：${stay.message}`);
+  const f0 = before.myFleets[0];
+  const byName = await call("move_fleet", { fleet_id: f0.name, to: f0.atName }, { reject: true }); // 艦隊も星も名前で書いたもの。名前で探してIDにする
+  if (!/行ける先：\d/.test(byName.message ?? "")) fail(`名前で書いた艦隊・星を読めない：${byName.message}`);
+  const ghost = await call("move_fleet", { fleet_id: "第9艦隊", to: 1 }); // いない艦隊の名前。番号をIDとして読まずに、自軍艦隊の一覧つきで断る
+  if (typeof ghost !== "string" || !/第9艦隊 という自軍艦隊はいません。自軍艦隊：第1艦隊=ID\d/.test(ghost)) fail(`いない艦隊の名前の案内が返らない：${JSON.stringify(ghost).slice(0, 160)}`);
   const dup = await call("build_facility", { planet_id: 0, facility: "採掘所" }, { reject: true }); // 既にある施設。建てられるものを返す
   if (!/建てられるのは：/.test(dup.message ?? "")) fail(`断るときに建てられる施設が付かない：${dup.message}`);
 }

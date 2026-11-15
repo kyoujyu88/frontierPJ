@@ -52,7 +52,7 @@ const llm = http.createServer(async (req, res) => {
         : mode === "play" ? reply({ content: "", tool_calls: [
           callOf("p1", "invest_research", { amount: 100, say: "研究を進めるよ！" }),           // 30刻みでない額・ひとこと付き
           callOf("p2", ":build_facility", { planet_id: "1", facility: "採掘所" }),               // 記号つきの名前・文字列の数字・日本語の施設名
-          callOf("p3", "move_fleet", { fleet_id: "第2艦隊", to: 5 }),                           // 艦隊を名前で書く（ID は 6）。中立の星へ入って攻略戦になる
+          callOf("p3", "move_fleet", { fleet_id: "第2艦隊", to: 5 }),                           // 艦隊を名前で書く（ID は 6。名前の番号 2 をIDとしては読まない）。中立の星へ入って攻略戦になる
           callOf("p4", "replace_ship", { fleet_id: 1, class_index: 0 })] })                     // 無い名前（build_ship の replace=true に読み替える。置換する艦が無いので断られる）
         : mode === "say"
         // say を地の文に書く（gemma4 で実際に出た形）＋ say ツールの直呼び
@@ -191,7 +191,7 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   check(ev.some(e => e.type === "talk" && e.text === "研究を進めるよ！") && t("invest_research")?.ok && !("say" in t("invest_research").args), "操作ツールの say 引数は字幕とプレイログのセリフになり、操作には渡さない");
   check(/^90 投資/.test(t("invest_research")?.message ?? ""), `研究投資は30刻みに丸めて実行する（${t("invest_research")?.message}）`);
   check(t("build_facility")?.ok === true && !tools.some(e => e.name.startsWith(":")), "記号の付いたツール名（:build_facility）・文字列の数字・日本語の施設名でも通る");
-  check(t("move_fleet")?.ok === true && /第2艦隊（ID 6）と読み替え/.test(t("move_fleet").message), `艦隊を名前で書いても通る（${t("move_fleet")?.message}）`);
+  check(t("move_fleet")?.ok === true && /^第2艦隊 を /.test(t("move_fleet").message), `艦隊を名前で書いても、その名前の艦隊が動く（${t("move_fleet")?.message}）`);
   check(t("build_ship")?.ok === false && /旧式の艦がいません/.test(t("build_ship").message) && !ev.some(e => e.type === "refuse"), "無い名前 replace_ship は build_ship の置換に読み替える（断らない）");
   check(!tools.some(e => e.name === "dismiss_dialog") && /通信が届いています/.test(firstUser[0]) && !/通信が届いています/.test(firstUser[1] ?? "通信が届いています"), "最初の通信は dismiss_dialog なしで、次の操作のときに閉じる");
   const moved = toolSeen.find(m => m.name === "move_fleet")?.content ?? "";

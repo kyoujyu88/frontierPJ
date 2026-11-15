@@ -37,6 +37,9 @@ const autoResults=[];  // オートで片付けた戦闘の結果
 class GameError extends Error{}
 const fail=m=>{throw new GameError(m)};
 const dialogOpen=()=>!$("modal").hidden;
+// 艦隊の損傷と修理費（修理費の式はゲーム本体の repair() と同じ。状況テキスト・のこりの手・修理の3か所でここを使う）
+const fleetDamage=f=>f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);
+const repairCost=f=>Math.ceil(fleetDamage(f)/2);
 /* 引数は寛容に読む：小さなモデルは「第2艦隊」の 2 をIDに書いたり、数字を文字列で渡したり、星や施設を名前で書いたりする。
  * 読み替えたときは actNotes に書いて返り値の message に付ける。断るときは、いま選べるものを一緒に返す */
 let actNotes=[];
@@ -44,14 +47,19 @@ const note=m=>{actNotes.push(m)};
 const myFleets=()=>S.fleets.filter(f=>f.side==="P");
 const fleetList=()=>myFleets().map(f=>`${f.name}=ID${f.id}`).join("、")||"なし";
 const blank=v=>v==null||v==="";
+const FLEET_NAME=/第\s*(\d+)\s*艦隊/;
+// 名前で書かれた自軍艦隊（「第2艦隊」）。名前の番号とIDは別物なので（全滅・再編成でずれる）、名前の番号をIDとしては読まない
+const fleetNamed=s=>{const o=(s.match(FLEET_NAME)||[])[1];return myFleets().find(x=>x.name===s)||(o?myFleets().find(x=>x.name===`第${Number(o)}艦隊`):null)||null};
+const noFleetNamed=s=>`${s} という自軍艦隊はいません。自軍艦隊：${fleetList()}`;
 function myFleet(id){
   if(blank(id))fail(`fleet_id（艦隊ID）を指定してください。自軍艦隊：${fleetList()}`);
-  const mine=myFleets(),n=Number(id);
+  const mine=myFleets(),s=String(id).trim(),n=Number(s);
+  // 数字でないもの（艦隊の名前）は、名前で探す。数字だけのときはID
+  if(!/^-?\d+$/.test(s)){const g=fleetNamed(s);if(g)return g;fail(noFleetNamed(s))}
   let f=mine.find(x=>x.id===n);
   if(!f){
-    // 「第2艦隊」の 2 や艦隊の名前でも通す（そのIDの自軍艦隊がいないときだけ）
-    const s=String(id).trim(),num=/^\d+$/.test(s)?s:(s.match(/第\s*(\d+)\s*艦隊/)||[])[1];
-    f=mine.find(x=>x.name===s)||(num?mine.find(x=>x.name===`第${Number(num)}艦隊`):null);
+    // 「第2艦隊」の 2 をIDに書いたもの（そのIDの自軍艦隊がいないときだけ、名前の番号として読む）
+    f=mine.find(x=>x.name===`第${n}艦隊`);
     if(f)note(`艦隊ID ${id} は ${f.name}（ID ${f.id}）と読み替えました`);
   }
   if(!f){
@@ -60,10 +68,11 @@ function myFleet(id){
   }
   return f;
 }
+const planetNamed=s=>S.planets.find(q=>q.name===s||q.name===s.replace(/^\d+\s*/,""))||null; // 「リュネ」「1リュネ」
 function planetById(id){
   if(blank(id))fail("惑星ID を指定してください（状況テキストの「■惑星」の行の先頭の数字）");
   const s=String(id).trim();
-  const p=/^\d+$/.test(s)?S.planets[Number(s)]:S.planets.find(q=>q.name===s||q.name===s.replace(/^\d+\s*/,""));
+  const p=/^\d+$/.test(s)?S.planets[Number(s)]:planetNamed(s);
   if(!p)fail(`惑星ID ${id} は存在しません（0〜${S.planets.length-1}）`);
   return p;
 }
@@ -89,6 +98,8 @@ function pressDialog(){
   const btn=btns.find(b=>b.classList.contains("primary"))||btns.find(b=>!b.classList.contains("danger"));
   if(btn)btn.click();else closeModal();
 }
+// 閉じたあとは記録を消す（同じ本文の通信がもう一度出たときも、新しい通信として伝え、表示の間も取り直す）
+const forgetDialog=()=>{if(!dialogOpen())dialogSeen={text:null,at:0}};
 function seeDialog(told){
   const t=dialogText().text;
   if(t!==dialogSeen.text)dialogSeen={text:t,at:Date.now(),told:false};
@@ -101,7 +112,7 @@ async function clearDialogs(){
     if(!dialogSeen.told){closedDialogs.push(t);dialogSeen.told=true}
     const wait=dialogSeen.at+(pace?Math.min(5000,1200+t.length*25):0)-Date.now();
     if(wait>0)await sleep(wait);
-    pressDialog();await sleep(pace?120:0);
+    pressDialog();await sleep(pace?120:0);forgetDialog();
   }
 }
 function ensureBattle(needTurn=true){
@@ -226,11 +237,11 @@ function fleetInfo(f){
   if(f.side==="E"&&typeof docOf==="function"){const d=docOf(f);o.doctrine=`${d.name}：${d.tip}`}
   if(f.side==="P"){
     if(typeof formOf==="function"){const fm=formOf(f);o.formation=formKey(f);o.formationNote=`${fm.name}：${fm.tip}`}
-    const p=planet(f.node),dmg=f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);
+    const p=planet(f.node),dmg=fleetDamage(f);
     o.moved=!!f.moved;o.moveOptions=moveOptions(f);
     o.canIntercept=!f.moved&&!!intruder(f);
     if(o.canIntercept)o.interceptNote=foeNote(f,intruder(f));
-    o.repairCost=p.owner==="P"&&dmg?Math.ceil(dmg/2):null;
+    o.repairCost=p.owner==="P"&&dmg?repairCost(f):null;
     o.atShipyard=p.owner==="P"&&!!p.yard;
   }
   return o;
@@ -321,7 +332,6 @@ const BEST={鉱物:"mine",遺跡:"lab",要塞:"sats",工業:"yard"};
 const investCap=()=>typeof INVEST_CAP!=="undefined"?INVEST_CAP:120;
 const investRoom=()=>typeof investLeft==="function"?investLeft():investCap();
 const investMax=()=>Math.min(investRoom(),Math.floor(S.funds/30)*30); // いま投資できる最大（30刻み）
-const fleetDamage=f=>f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);
 /* 置換する艦（いちばん旧式。同じ艦級なら随伴艦から。ゲームの造船所と同じ）と実費 */
 function replaceOf(f,ci,yp){
   const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<=f.ships[m].cls)?i:m,-1);
@@ -386,7 +396,7 @@ function nextHint(){
   const ft=own.filter(p=>p.def<p.maxDef);if(funds>=30&&ft.length)pay.push(`防衛修復30 ${ft.map(p=>`${p.id}${p.name}`).join("・")}`);
   for(const f of mine){
     const p=planet(f.node);if(p.owner!=="P")continue;
-    const dmg=fleetDamage(f);if(dmg&&Math.ceil(dmg/2)<=funds)pay.push(`修理 ${f.name}(${Math.ceil(dmg/2)})`);
+    if(fleetDamage(f)&&repairCost(f)<=funds)pay.push(`修理 ${f.name}(${repairCost(f)})`);
     if(p.yard){
       const cc=bcost(S.tier,p),rp=replaceOf(f,S.tier,p);
       if(f.ships.length<4){if(cc<=funds)pay.push(`造船 ${f.name}に${CLASSES[S.tier].name}を追加(${cc})`)}
@@ -470,6 +480,15 @@ function movedMsg(f){
   return`${f.name} はこのターン行動済みです（艦隊が動けるのは1ターンに1回。続きは次のターン）。${idle.length?`未行動の艦隊：${idle.map(x=>`${x.name}=ID${x.id}`).join("、")}`:"未行動の艦隊はもうありません（内政が済んだら end_turn）"}`;
 }
 const api={
+  /* 名前で書かれた艦隊・星をIDにする（MCPサーバーが引数を読むときに使う）。
+   * 見つかれば {id}、艦隊の名前の形なのにいなければ {message}、名前として読めなければ null */
+  idOf:(kind,text)=>{
+    if(!S)return null;
+    const s=String(text??"").trim();
+    if(kind==="fleet"){const f=fleetNamed(s);return f?{id:f.id}:FLEET_NAME.test(s)?{message:noFleetNamed(s)}:null}
+    if(kind==="planet"){const p=planetNamed(s);return p?{id:p.id}:null}
+    return null;
+  },
   version:1,
   getState,
   getSummary,
@@ -593,9 +612,10 @@ const api={
   repairFleet:(fleetId)=>act("repair",async()=>{
     ensureMap();const f=myFleet(fleetId),p=planet(f.node);
     if(p.owner!=="P")fail("修理は自国の星にいる艦隊だけです");
-    const dmg=f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);if(!dmg)fail("損傷はありません");
-    needFunds(Math.ceil(dmg/2),"修理");focusPlanet(f.node,f.id);showAction(`${f.name} を修理`);repair(f);
-    return`修理完了（${Math.ceil(dmg/2)}）`;
+    if(!fleetDamage(f))fail("損傷はありません");
+    const cost=repairCost(f);
+    needFunds(cost,"修理");focusPlanet(f.node,f.id);showAction(`${f.name} を修理`);repair(f);
+    return`修理完了（${cost}）`;
   }),
   newFleet:(planetId)=>act("newfleet",async()=>{
     ensureMap();const p=myPlanet(planetId);
@@ -637,7 +657,7 @@ const api={
   }),
   newGame:()=>act("new",async()=>{
     if(B)fail("戦闘中はやり直せません");
-    $("modal").hidden=true;newGame();render();return"新しいゲームを開始（最初の通信を dismiss_dialog で閉じてください）";
+    $("modal").hidden=true;newGame();render();return"新しいゲームを開始（最初の通信は、次の操作で自動的に閉じます）";
   }),
 
   /* ---------- 戦術戦闘 ---------- */

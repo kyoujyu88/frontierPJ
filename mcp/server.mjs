@@ -143,13 +143,23 @@ async function call(method, ...args) {
 
 /* ---------- MCPツール ---------- */
 const asText = v => ({ content: [{ type: "text", text: typeof v === "string" ? v : JSON.stringify(v, null, 1) }], isError: v && v.ok === false });
-/* 引数は寛容に受ける（小さなモデル向け）。数字を文字列で書いたもの・「第2艦隊」「ID37」「1リュネ」のように数字が1つだけ入った文字列は数字として読み、
- * 施設・陣形は日本語の名前でも通す。それでも読めないときは、何を書けばよいかを日本語で返す（どのIDが正しいかは game-api.js が案内する） */
+/* 引数は寛容に受ける（小さなモデル向け）。数字を文字列で書いたもの・「ID37」のように数字が1つだけ入った文字列は数字として読み、
+ * 艦隊・星は名前（「第2艦隊」「リュネ」「1リュネ」）でも、施設・陣形は日本語の名前でも通す。
+ * それでも読めないときは、何を書けばよいかを日本語で返す（どのIDが正しいかは game-api.js が案内する） */
 const numLike = v => { if (typeof v !== "string") return v; const m = v.match(/-?\d+(\.\d+)?/g); return m?.length === 1 ? Number(m[0]) : v; };
+/* 艦隊・星を名前で書いたものは、ゲームに聞いてIDにする。「第2艦隊」の 2 をそのままIDにすると、名前の番号とIDがずれているとき
+ * （全滅・再編成のあと）に別の艦隊が動いてしまうので、名前は名前として探す。いない艦隊の名前なら、自軍艦隊の一覧つきで断る */
+const byName = kind => async (v, ctx) => {
+  if (typeof v !== "string" || /^\s*-?\d+(\.\d+)?\s*$/.test(v)) return numLike(v);
+  const r = await call("idOf", kind, v).catch(() => null);
+  if (r?.message) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: r.message }); return z.NEVER; }
+  return r?.id ?? numLike(v);
+};
+const idArg = (kind, what) => z.preprocess(byName(kind), z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }).int(`${what}は整数で指定してください`));
 const num = what => z.preprocess(numLike, z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }));
 const int = what => z.preprocess(numLike, z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }).int(`${what}は整数で指定してください`));
-const fleetId = int("fleet_id（自軍艦隊のID。状況テキストの「ID1」の数字）").describe("自軍艦隊のID");
-const planetId = int("planet_id（惑星のID。状況テキストの「■惑星」の行の先頭の数字）").describe("自国の惑星のID");
+const fleetId = idArg("fleet", "fleet_id（自軍艦隊のID。状況テキストの「ID1」の数字）").describe("自軍艦隊のID");
+const planetId = idArg("planet", "planet_id（惑星のID。状況テキストの「■惑星」の行の先頭の数字）").describe("自国の惑星のID");
 const shipIndex = int("ship_index（艦隊内の番号。0が旗艦）").describe("艦隊内の番号（0が旗艦）");
 const bool = z.preprocess(v => v === "true" ? true : v === "false" ? false : v, z.boolean({ invalid_type_error: "true か false で指定してください" }));
 const named = (map, what) => z.preprocess(v => typeof v === "string" ? (map[v.trim()] ?? v.trim().toLowerCase()) : v,
@@ -199,7 +209,7 @@ function buildServer() {
   // 作戦卓
   const BATTLE_NOTE = MANUAL_BATTLE ? "" : "戦闘はオートで決着してから返る（結果は events と battles）。";
   tool("move_fleet", "自軍艦隊を移動させる（1艦隊につき1ターンに1回）。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to=いまいる星 で攻略戦）。" + BATTLE_NOTE + "候補は状況テキストの「移動先」と、操作の返り値の「のこりの手」（get_state なら myFleets[].moveOptions）。", {
-    fleet_id: fleetId, to: int("to（行き先の惑星ID）").describe("行き先の惑星ID"), ...SAY,
+    fleet_id: fleetId, to: idArg("planet", "to（行き先の惑星ID）").describe("行き先の惑星ID"), ...SAY,
   }, ({ fleet_id, to }) => call("moveFleet", fleet_id, to));
   tool("intercept", "艦隊と同じ星に居座っている敵（異生体、休戦していなければヴァルガ艦隊も）を迎撃して戦闘を始める。使えるのは、状況テキストでその艦隊に「迎撃可」と出ているときだけ（別の星の敵へ攻め込むのは move_fleet）。自国の星なら対空砲台も働く。" + BATTLE_NOTE, { fleet_id: fleetId, ...SAY }, ({ fleet_id }) => call("intercept", fleet_id));
   tool("invest_research", "資金を研究に投資する（30刻み、1ターンに合計120まで）。必要量に達すると次の艦級が完成し、改装上限も上がる。多すぎる額は、投資できる額に減らして実行する。状況テキストに「いまは投資できない」と出ているあいだは呼ばない。", {

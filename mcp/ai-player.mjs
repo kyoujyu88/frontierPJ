@@ -112,7 +112,8 @@ async function tool(name, args = {}) {
   const text = r.content.filter(c => c.type === "text").map(c => c.text).join("\n");
   let out;
   try { out = { text, json: JSON.parse(text) }; } catch { out = { text, json: null }; }
-  // 引数の形が合わずに MCP サーバーが断ったもの（「MCP error -32602: … Invalid arguments for tool x: 〜を指定してください at to」）も、ふつうの失敗として扱う
+  // 引数の形が合わずに MCP サーバーが断ったもの（「MCP error -32602: … Invalid arguments for tool x: 〜を指定してください at to」）も、ふつうの失敗として扱う。
+  // この文言は MCP SDK（@modelcontextprotocol/sdk 1.x）のもの。SDK を上げて文言が変わると拾えなくなるが、そのときも本文はそのまま LLM に返る（selftest の「引数が足りないとき」の確認が先に落ちる）
   const bad = !out.json && text.match(/^MCP error -?\d+:[\s\S]*?Invalid arguments for tool [^:]+:\s*([\s\S]*)$/);
   if (bad) out.json = { ok: false, message: `引数が正しくありません：${bad[1].replace(/ at (\w+)$/gm, "（$1）").replace(/\n/g, "、")}` };
   journal.onTool(name, out);
