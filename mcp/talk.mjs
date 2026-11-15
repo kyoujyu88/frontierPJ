@@ -5,6 +5,10 @@
  *   <|tool_call>call:battle_move{unit_id:30,x:3,y:2}<tool_call|>              … Gemma 系の特殊トークン（文字列は <|"|> で囲む）
  *   say{text:「…」} say{text:「…」}                                          … call: も特殊トークンも付かない形（gemma4 で実際に出た）
  * say の呼び出しはセリフとして1件ずつ字幕にし、ほかの呼び出しは実行する候補として返す。どちらも字幕には生の記法を出さない。
+ *
+ * 括弧の付かないツール名だけを書くこともある（2026-11 の録画で字幕に「end_turn」とだけ出た）：
+ *   end_turn　　　　　　　　　… 行がツール名だけ → 字幕に出さず、引数なしの呼び出しの候補にする
+ *   これで end_turn するね　　… 文の中のツール名（_ を含むもの）→ 日本語の操作名（ターン終了）に置き換える
  */
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,6 +33,18 @@ function matchClose(src, i) {
   }
   return -1;
 }
+
+/* 文の中に出たツール名を置き換える日本語の操作名（空文字は名前ごと外す）。載っていない名前も外す */
+export const LABELS = {
+  end_turn: "ターン終了", move_fleet: "艦隊の移動", intercept: "迎撃", invest_research: "研究への投資",
+  refit_ship: "改装", set_flagship: "旗艦の変更", set_formation: "陣形の変更", build_ship: "造船",
+  repair_fleet: "修理", new_fleet: "艦隊の編成", build_facility: "施設の建設", demolish_facility: "施設の撤去",
+  survey: "探査", fortify: "防衛強化", dismiss_dialog: "通信を閉じる",
+  battle_attack: "攻撃", battle_move: "移動", battle_wait: "待機", battle_end_phase: "フェイズ終了",
+  battle_retreat: "撤退", battle_close: "戦闘の終了",
+  get_summary: "状況の確認", get_state: "状況の確認", get_rules: "ルールの確認", get_screenshot: "画面の確認",
+  battle_state: "戦況の確認", new_game: "新しいゲーム", say: "", finish_recording: "", recording_info: "",
+};
 
 const scalar = (v) => /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v === "true" ? true : v === "false" ? false : v === "null" ? null : v;
 
@@ -104,10 +120,45 @@ function tidy(s, name) {
   return t;
 }
 
-/* toolNames：拾うツールの名前、name：話し手の名前（「のあ：」の前置きを外す） */
-export function makeTalk({ toolNames, name = "" }) {
-  const names = [...toolNames].sort((a, b) => b.length - a.length).map(esc).join("|");
+/* toolNames：拾うツールの名前、name：話し手の名前（「のあ：」の前置きを外す）、labels：文の中のツール名の言い換え */
+export function makeTalk({ toolNames, name = "", labels = LABELS }) {
+  const sorted = [...toolNames].sort((a, b) => b.length - a.length);
+  const names = sorted.map(esc).join("|");
   const HEAD = new RegExp(`(?:<\\|tool_call\\|?>\\s*)?(?:call:)?\\b(${names})\\s*([({])`, "g");
+  // 文の中で拾うのは _ を含む名前だけ（survey・intercept・say などは英語の地の文と紛れるため）
+  const snake = sorted.filter(n => n.includes("_")).map(esc).join("|");
+  const MENTION = snake ? new RegExp(`[ \\t]*\`?\\b(${snake})\\b\`?(?:[ \\t]*（([^（）\\n]{1,20})）)?[ \\t]*`, "g") : null;
+  const NAME_SET = new Set(toolNames);
+  const WORD = /[A-Za-z0-9]/;
+
+  /* 行がツール名だけ（飾りの記号を除いて）なら、その名前の並びを返す。そうでなければ null */
+  function bareNames(line) {
+    const words = line.replace(/[`'"“”「」『』（）()［］\[\]【】<>＜＞→⇒➡、。,.!！?？・:：;；…\-‐ー~〜*＊#\s]+/g, " ").trim().split(" ");
+    return words[0] && words.every(w => NAME_SET.has(w)) ? words : null;
+  }
+
+  /* 置き換えた語の前後の空白。隣が英数字のときだけ入れる（日本語の文に「 ターン終了 」と空白が入らないように）
+   *   「これで end_turn するね」→「これでターン終了するね」　「go end_turn now」→「go ターン終了 now」
+   *   外すだけ（言い換えの無い名前）のときは、英数字にはさまれていれば空白を1つ残す */
+  function spaced(word, before, after) {
+    if (!word) return WORD.test(before) && WORD.test(after) ? " " : "";
+    return (WORD.test(before) ? " " : "") + word + (WORD.test(after) ? " " : "");
+  }
+
+  /* 整えた字幕からツール名を外す。ツール名だけの行は捨てて bare に名前を足し、文の中の名前は操作名に置き換える */
+  function dropNames(text, bare = []) {
+    const out = [];
+    for (const line of (text || "").split("\n")) {
+      const only = bareNames(line);
+      if (only) { bare.push(...only); continue; }
+      let t = !MENTION ? line : line.replace(MENTION, (m, n, paren, off, src) =>
+        spaced((paren ?? labels[n] ?? "").trim(), src[off - 1] ?? "", src[off + m.length] ?? ""));
+      t = t.replace(/[ \t]{2,}/g, " ").trim();
+      if (t && !/^[\p{P}\p{S}\s]*$/u.test(t)) out.push(t);
+    }
+    return out.join("\n");
+  }
+  const clean = (s, bare) => dropNames(tidy(s, name), bare);
 
   /* 文字で書かれた呼び出しを、書かれた順に { name, args, start, end } で返す（args が読めないものは null） */
   function findCalls(text) {
@@ -137,43 +188,53 @@ export function makeTalk({ toolNames, name = "" }) {
   }
 
   /* 呼び出しの記法をすべて外して字幕向けに整える */
-  function cleanTalk(text) {
+  function cleanTalk(text, bare) {
     const calls = findCalls(text);
-    if (!calls.length) return tidy(text, name);
+    if (!calls.length) return clean(text, bare);
     const src = calls[0].src;
     let rest = "", at = 0;
     for (const c of calls) { rest += src.slice(at, c.start) + " "; at = c.end; }
-    return tidy(rest + src.slice(at), name);
+    return clean(rest + src.slice(at), bare);
   }
 
   /* 返事を字幕の行に分ける。地の文はまとめて1行、say の呼び出しは1件ずつ1行（書かれた順）。
-   * calls は say 以外の呼び出し（OpenAI 形式。実行するかどうかは呼ぶ側が決める） */
+   * calls は say 以外の呼び出し（OpenAI 形式。実行するかどうかは呼ぶ側が決める）。
+   * ツール名だけの行（end_turn など）は字幕に出さず、引数なしの呼び出しとして calls の後ろに足す */
   function splitReply(text) {
     const found = findCalls(text);
-    const lines = [], calls = [];
+    const lines = [], calls = [], bare = [];
     let buf = "", at = 0;
-    const flush = () => { const t = tidy(buf, name); if (t) lines.push(t); buf = ""; };
+    const flush = () => { const t = clean(buf, bare); if (t) lines.push(t); buf = ""; };
+    const add = (n, args) => calls.push({ id: `text_${calls.length}_${Math.random().toString(36).slice(2, 8)}`, type: "function", function: { name: n, arguments: JSON.stringify(args) } });
     for (const c of found) {
       buf += c.src.slice(at, c.start) + " "; at = c.end;
       if (c.name === "say") {
-        const t = typeof c.args?.text === "string" ? cleanTalk(c.args.text) : "";
+        const t = typeof c.args?.text === "string" ? cleanTalk(c.args.text, bare) : "";
         if (t) { flush(); lines.push(t); }
-      } else if (c.args) {
-        calls.push({ id: `text_${calls.length}_${Math.random().toString(36).slice(2, 8)}`, type: "function", function: { name: c.name, arguments: JSON.stringify(c.args) } });
-      }
+      } else if (c.args) add(c.name, c.args);
     }
     buf += found.length ? found.at(-1).src.slice(at) : (text || "");
     flush();
-    return { lines, calls: calls.slice(0, 4) };
+    // ツール名だけの行から足すのは _ を含む名前だけ（survey・intercept など1語の英単語は、字幕から外すだけで実行しない）。
+    // 括弧つきの呼び出しが4件を超えても切られないよう、上限は括弧つきの方にだけかける
+    calls.splice(4);
+    const have = new Set(calls.map(c => c.function.name));
+    for (const n of bare) if (n.includes("_") && !have.has(n)) { have.add(n); add(n, {}); }
+    return { lines, calls };
   }
 
   return { findCalls, cleanTalk, splitReply };
 }
 
-/* プレイログ用：記録済みのセリフに say{…} などの記法が残っていたら（この修正より前のログ）、1件ずつに分けて返す */
-const SAY_ONLY = makeTalk({ toolNames: ["say"] });
+/* プレイログ用：記録済みのセリフに say{…} などの記法やツール名が残っていたら（この修正より前のログ）、直して1件ずつに分けて返す。
+ * ツール名だけのセリフ（end_turn など）は空の配列になる（字幕に出さない） */
+const RECORDED = new Map();
+// 直すのは say の記法か、_ を含むツール名があるときだけ（say・survey などの英単語だけなら、ふつうのセリフとしてそのまま返す）
+const NAME_HINT = new RegExp(`\\bsay\\s*[({]|\\b(${Object.keys(LABELS).filter(n => n.includes("_")).map(esc).join("|")})\\b`);
 export function splitRecordedTalk(text, who = "") {
-  if (!/\bsay\s*[({]/.test(text || "")) return [text];
-  const { lines } = (who ? makeTalk({ toolNames: ["say"], name: who }) : SAY_ONLY).splitReply(text);
-  return lines.length ? lines : [text];
+  if (!NAME_HINT.test(text || "")) return [text];
+  if (!RECORDED.has(who)) RECORDED.set(who, makeTalk({ toolNames: Object.keys(LABELS), name: who }));
+  const { lines, calls } = RECORDED.get(who).splitReply(text);
+  // 整えて空になったのが操作（ツール名・呼び出し）だけのセリフなら外す。それ以外で空になったら元の文を残す
+  return lines.length || calls.length ? lines : [text];
 }

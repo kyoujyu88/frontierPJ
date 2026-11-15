@@ -45,6 +45,8 @@ const llm = http.createServer(async (req, res) => {
         ? reply({ content: "say{text:「研究に投資するよ！」} say{text:「カルセは要塞だし、守りを固めよう。」}", tool_calls: [
           { id: `s${prompts.length}`, type: "function", function: { name: "say", arguments: JSON.stringify({ text: "「第1艦隊、進軍！」" }) } },
           { id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] })
+        // ツール名だけを地の文に書く（2026-11 の録画で字幕に「end_turn」と出た形）。ツール呼び出しは付けない
+        : mode === "bare" ? reply({ content: "内政はおしまい！\nend_turn" })
         : reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
     } else out = reply({ content: mode === "empty" ? "" : "様子を見るね" });
   }
@@ -149,6 +151,20 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   // 修正前のログ（記法つきのまま1件で残ったセリフ）も、字幕に書き出すときに分ける
   const old = toSrt([{ type: "talk", ms: 0, who: "のあ", durMs: 9000, text: "say{text:「研究にガッツリ投資！」} say{text:「守りを固めよう。」}" }]);
   check(!old.includes("say{") && /^1\n00:00:00,000 --> 00:00:0\d,\d{3}\n研究にガッツリ投資！\n\n2\n.+ --> 00:00:09,000\n守りを固めよう。\n$/.test(old), "修正前のログも SRT では1件ずつに分ける");
+  mode = "normal";
+}
+
+// 括弧の付かないツール名だけの行（end_turn）は字幕に出さず、その操作を実行する
+{
+  mode = "bare";
+  await run(1, ["--no-notes"]);
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const talks = ev.filter(e => e.type === "talk").map(e => e.text);
+  const ended = ev.find(e => e.type === "tool" && e.name === "end_turn");
+  check(talks[0] === "内政はおしまい！" && !talks.some(t => /end_turn/.test(t)) && ended && ended.by !== "auto",
+    `ツール名だけの行は字幕に出さずに実行する（セリフ：${talks.join(" / ")}・end_turn：${ended ? ended.by ?? "AI" : "なし"}）`);
+  const old = toSrt([{ type: "talk", ms: 0, who: "のあ", durMs: 2000, text: "end_turn" }, { type: "talk", ms: 3000, who: "のあ", durMs: 2000, text: "これで end_turn するね" }]);
+  check(/^1\n00:00:03,000 --> 00:00:05,000\nこれでターン終了するね\n$/.test(old), "修正前のログも SRT では操作名だけのセリフを外し、文の中の名前は置き換える");
   mode = "normal";
 }
 
