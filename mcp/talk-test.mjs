@@ -52,11 +52,18 @@ eq(T.cleanTalk("end_turn"), "", "say ツールに渡されたツール名だけ�
 eq(lines('say{text:「end_turn」}'), [], "say の中身がツール名だけでも出さない");
 eq(lines("I'll say hello and survey the area."), ["I'll say hello and survey the area."], "_ を含まない名前は英語の文の中では外さない");
 eq(lines("say"), [], "ただし行が say だけなら出さない");
+eq(lines("research"), [], "_ の無いツール名だけの行も字幕には出さない");
+eq(calls("research"), [], "ただし _ の無い1語は英単語と紛れるので実行しない");
+eq(calls("move_fleet(fleet_id=1, to=2) move_fleet(fleet_id=2, to=3) move_fleet(fleet_id=3, to=4) move_fleet(fleet_id=4, to=5) move_fleet(fleet_id=5, to=6)\nend_turn").map(c => c[0]),
+  ["move_fleet", "move_fleet", "move_fleet", "move_fleet", "end_turn"], "括弧つきの呼び出しが4件を超えても、ツール名だけの行の end_turn は残す");
+eq(lines("go end_turn now"), ["go ターン終了 now"], "英数字にはさまれた置き換えには空白を残す");
 
 // 修正前のプレイログ（記法つきで1件に残ったセリフ）
 eq(splitRecordedTalk(seen, "のあ").length, 3, "記録済みのセリフも1件ずつに分けられる");
 eq(splitRecordedTalk("ふつうのセリフ", "のあ"), ["ふつうのセリフ"], "記法の無いセリフはそのまま");
 eq(splitRecordedTalk("end_turn", "のあ"), [], "記録済みの操作名だけのセリフは出さない");
+eq(splitRecordedTalk("I say yes", "のあ"), ["I say yes"], "記録済みのセリフの英単語は触らない");
+eq(splitRecordedTalk("survey", "のあ"), ["survey"], "記録済みの _ の無い1語はそのまま（ふつうのセリフかもしれない）");
 eq(splitRecordedTalk("これで end_turn するね", "のあ"), ["これでターン終了するね"], "記録済みのセリフの中のツール名も置き換える");
 
 process.exit(failed ? 1 : 0);
