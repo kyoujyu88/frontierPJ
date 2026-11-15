@@ -143,17 +143,44 @@ async function call(method, ...args) {
 
 /* ---------- MCPツール ---------- */
 const asText = v => ({ content: [{ type: "text", text: typeof v === "string" ? v : JSON.stringify(v, null, 1) }], isError: v && v.ok === false });
-const id = z.number().int();
+/* 引数は寛容に受ける（小さなモデル向け）。数字を文字列で書いたもの・「ID37」のように数字が1つだけ入った文字列は数字として読み、
+ * 艦隊・星は名前（「第2艦隊」「リュネ」「1リュネ」）でも、施設・陣形は日本語の名前でも通す。
+ * それでも読めないときは、何を書けばよいかを日本語で返す（どのIDが正しいかは game-api.js が案内する） */
+const numLike = v => { if (typeof v !== "string") return v; const m = v.match(/-?\d+(\.\d+)?/g); return m?.length === 1 ? Number(m[0]) : v; };
+/* 艦隊・星を名前で書いたものは、ゲームに聞いてIDにする。「第2艦隊」の 2 をそのままIDにすると、名前の番号とIDがずれているとき
+ * （全滅・再編成のあと）に別の艦隊が動いてしまうので、名前は名前として探す。いない艦隊の名前なら、自軍艦隊の一覧つきで断る */
+const byName = kind => async (v, ctx) => {
+  if (typeof v !== "string" || /^\s*-?\d+(\.\d+)?\s*$/.test(v)) return numLike(v);
+  const r = await call("idOf", kind, v).catch(() => null);
+  if (r?.message) { ctx.addIssue({ code: z.ZodIssueCode.custom, message: r.message }); return z.NEVER; }
+  return r?.id ?? numLike(v);
+};
+const idArg = (kind, what) => z.preprocess(byName(kind), z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }).int(`${what}は整数で指定してください`));
+const num = what => z.preprocess(numLike, z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }));
+const int = what => z.preprocess(numLike, z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }).int(`${what}は整数で指定してください`));
+const fleetId = idArg("fleet", "fleet_id（自軍艦隊のID。状況テキストの「ID1」の数字）").describe("自軍艦隊のID");
+const planetId = idArg("planet", "planet_id（惑星のID。状況テキストの「■惑星」の行の先頭の数字）").describe("自国の惑星のID");
+const shipIndex = int("ship_index（艦隊内の番号。0が旗艦）").describe("艦隊内の番号（0が旗艦）");
+const bool = z.preprocess(v => v === "true" ? true : v === "false" ? false : v, z.boolean({ invalid_type_error: "true か false で指定してください" }));
+const named = (map, what) => z.preprocess(v => typeof v === "string" ? (map[v.trim()] ?? v.trim().toLowerCase()) : v,
+  z.enum(Object.values(map), { errorMap: () => ({ message: `${what}は ${Object.entries(map).map(([n, k]) => `${k}=${n}`).join("・")} のいずれかで指定してください` }) }));
+const facility = named({ 採掘所: "mine", 造船所: "yard", 防衛衛星群: "sats", 研究所: "lab", 対空砲台: "flak" }, "facility（施設）");
+const formation = named({ 横陣: "line", 楔形: "wedge", 方陣: "square", 鶴翼: "crane", 後衛陣: "rear" }, "formation（陣形）");
+// ゲームを操作するツールに付ける「ひとこと」。セリフだけの say を別に呼ばなくても、操作と一緒に字幕を出せる（LLM との往復が1回減る）
+const SAY = { say: z.string().optional().describe("この操作と一緒に視聴者へ言うひとこと（字幕に出る。なくてもよい）") };
 
 function buildServer() {
   const s = new McpServer({ name: "frontier-war", version: "1.0.0" }, {
-    instructions: "SF戦略シミュレーション『辺境星系戦記』を操作するサーバー。最初に get_rules を読み、get_state で状況を確認してから行動する。通信ウィンドウ（dialog）が出たら内容を読んで dismiss_dialog。"
+    instructions: "SF戦略シミュレーション『辺境星系戦記』を操作するサーバー。最初に get_rules を読み、get_state（短い文章なら get_summary）で状況を確認してから行動する。操作の返り値の next に、いまの資金で払える内政と未行動の艦隊が出る。通信ウィンドウ（dialog）は内容を読めばよく、次の操作で自動的に閉じる。"
       + (MANUAL_BATTLE ? "戦闘が始まったら battle_* で戦い、終わったら battle_close。" : "戦術戦闘はオートで決着し、結果は行動の返り値（events・battles）に出る。")
       + "視聴者向けの一言は say で字幕に出せる。",
   });
   const tool = (name, description, shape, fn) =>
     s.registerTool(name, { description, inputSchema: shape }, async (a) => {
-      try { const v = await fn(a ?? {}); return v && Array.isArray(v.content) ? v : asText(v); }
+      try {
+        if (shape.say && typeof a?.say === "string" && a.say.trim()) await call("say", a.say.trim()); // ひとことを先に字幕に出してから操作する
+        const v = await fn(a ?? {}); return v && Array.isArray(v.content) ? v : asText(v);
+      }
       catch (e) { return asText({ ok: false, message: `サーバーエラー：${e.message}` }); }
     });
 
@@ -165,7 +192,7 @@ function buildServer() {
     const buf = await pg.screenshot({ type: "jpeg", quality: 70 });
     return { content: [{ type: "image", data: buf.toString("base64"), mimeType: "image/jpeg" }] };
   });
-  tool("say", "視聴者に向けたセリフを画面下に字幕として表示する（ゲームには影響しない）。", {
+  tool("say", "視聴者に向けたセリフを画面下に字幕として表示する（ゲームには影響しない）。操作と一緒に言うなら、その操作ツールの say 引数に書くほうが早い（これは操作を伴わないひとこと用）。", {
     text: z.string().describe("表示するセリフ"),
     seconds: z.number().optional().describe("表示秒数（省略時は文字数から自動）"),
   }, ({ text, seconds }) => call("say", text, undefined, seconds ? seconds * 1000 : undefined));
@@ -177,54 +204,54 @@ function buildServer() {
     const t = await recStart.rec.start().catch(() => null);
     return { ok: true, recording: true, name: recStart.name, t0: t ?? recStart.t0, lag: t ? 0 : OLD_LAG_MS };
   });
-  tool("dismiss_dialog", "開いている通信ウィンドウを閉じる（「了解」を押す）。", {}, () => call("dismissDialog"));
+  tool("dismiss_dialog", "開いている通信ウィンドウを閉じる（「了解」を押す）。通信は次の操作をすれば自動で閉じるので、ふつうは呼ばなくてよい。", {}, () => call("dismissDialog"));
 
   // 作戦卓
   const BATTLE_NOTE = MANUAL_BATTLE ? "" : "戦闘はオートで決着してから返る（結果は events と battles）。";
-  tool("move_fleet", "自軍艦隊を移動させる。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to=いまいる星 で攻略戦）。" + BATTLE_NOTE + "候補は get_summary の「移動先」（get_state なら myFleets[].moveOptions）。", {
-    fleet_id: id.describe("自軍艦隊のID"), to: id.describe("行き先の惑星ID"),
+  tool("move_fleet", "自軍艦隊を移動させる（1艦隊につき1ターンに1回）。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to=いまいる星 で攻略戦）。" + BATTLE_NOTE + "候補は状況テキストの「移動先」と、操作の返り値の「のこりの手」（get_state なら myFleets[].moveOptions）。", {
+    fleet_id: fleetId, to: idArg("planet", "to（行き先の惑星ID）").describe("行き先の惑星ID"), ...SAY,
   }, ({ fleet_id, to }) => call("moveFleet", fleet_id, to));
-  tool("intercept", "艦隊がいる星に居座る敵（異生体、休戦していなければヴァルガ艦隊も）を迎撃して戦闘を始める。自国の星なら対空砲台も働く。" + BATTLE_NOTE, { fleet_id: id }, ({ fleet_id }) => call("intercept", fleet_id));
-  tool("invest_research", "資金を研究に投資する（30・60・120）。必要量に達すると次の艦級が完成し、改装上限も上がる。", {
-    amount: z.union([z.literal(30), z.literal(60), z.literal(120)]),
+  tool("intercept", "艦隊と同じ星に居座っている敵（異生体、休戦していなければヴァルガ艦隊も）を迎撃して戦闘を始める。使えるのは、状況テキストでその艦隊に「迎撃可」と出ているときだけ（別の星の敵へ攻め込むのは move_fleet）。自国の星なら対空砲台も働く。" + BATTLE_NOTE, { fleet_id: fleetId, ...SAY }, ({ fleet_id }) => call("intercept", fleet_id));
+  tool("invest_research", "資金を研究に投資する（30刻み、1ターンに合計120まで）。必要量に達すると次の艦級が完成し、改装上限も上がる。多すぎる額は、投資できる額に減らして実行する。状況テキストに「いまは投資できない」と出ているあいだは呼ばない。", {
+    amount: num("amount（投資額）").describe("投資額（30・60・90・120）"), ...SAY,
   }, ({ amount }) => call("investResearch", amount));
-  tool("refit_ship", "艦の能力ポイントを振り直す。合計は艦級のポイント以下、各項目は改装上限以下。変える項目だけ書けばよく、書かない項目は今の値のまま（今の配分は get_summary の[装2砲2ミ0爆0機2]など）。", {
-    fleet_id: id, ship_index: id.describe("艦隊内の番号（0が旗艦）"),
-    sh: z.number().int().optional().describe("装甲"), ca: z.number().int().optional().describe("主砲"),
-    mi: z.number().int().optional().describe("ミサイル"), bo: z.number().int().optional().describe("爆装（惑星・巣の中枢攻撃に必須）"),
-    sp: z.number().int().optional().describe("機関（戦闘時の移動力）"),
+  tool("refit_ship", "艦の能力ポイントを振り直す。合計は艦級のポイント以下、各項目は改装上限以下。変える項目だけ書けばよく、書かない項目は今の値のまま（今の配分は状況テキストの[装2砲2ミ0爆0機2]など）。", {
+    fleet_id: fleetId, ship_index: shipIndex,
+    sh: int("sh（装甲）").optional().describe("装甲"), ca: int("ca（主砲）").optional().describe("主砲"),
+    mi: int("mi（ミサイル）").optional().describe("ミサイル"), bo: int("bo（爆装）").optional().describe("爆装（惑星・巣の中枢攻撃に必須）"),
+    sp: int("sp（機関）").optional().describe("機関（戦闘時の移動力）"), ...SAY,
   }, ({ fleet_id, ship_index, sh, ca, mi, bo, sp }) => call("refitShip", fleet_id, ship_index, { sh, ca, mi, bo, sp }));
-  tool("set_flagship", "艦隊の旗艦（★、沈むと戦闘に負ける）を指定する。", { fleet_id: id, ship_index: id }, ({ fleet_id, ship_index }) => call("setFlagship", fleet_id, ship_index));
+  tool("set_flagship", "艦隊の旗艦（★、沈むと戦闘に負ける）を指定する。", { fleet_id: fleetId, ship_index: shipIndex, ...SAY }, ({ fleet_id, ship_index }) => call("setFlagship", fleet_id, ship_index));
   tool("set_formation", "艦隊の陣形を変える（行動は消費しない）。line横陣＝補正なし／wedge楔形＝1ラウンド目の移動+1／square方陣＝旗艦の隣に味方がいる間、旗艦の被ダメージ-25%／crane鶴翼＝側面・背面への攻撃+15%／rear後衛陣＝ミサイル+1。", {
-    fleet_id: id, formation: z.enum(["line", "wedge", "square", "crane", "rear"]),
+    fleet_id: fleetId, formation, ...SAY,
   }, ({ fleet_id, formation }) => call("setFormation", fleet_id, formation));
-  tool("build_ship", "造船所のある自国の星にいる艦隊に艦を建造する。replace=true なら最も旧式の艦を下取りして置き換える。", {
-    fleet_id: id, class_index: id.describe("艦級 0ラーク 1ファルコ 2グレイヴ 3アークライト 4セラフ"),
-    replace: z.boolean().optional(),
+  tool("build_ship", "造船所のある自国の星にいる艦隊に艦を建造する。4隻未満なら追加（replace は付けない）。4隻いて旧式の艦がいるときだけ replace=true で、最も旧式の艦を下取りして置き換える。", {
+    fleet_id: fleetId, class_index: int("class_index（艦級の番号）").describe("艦級 0ラーク 1ファルコ 2グレイヴ 3アークライト 4セラフ"),
+    replace: bool.optional().describe("true＝旧艦と置換（4隻いるとき）"), ...SAY,
   }, ({ fleet_id, class_index, replace }) => call("buildShip", fleet_id, class_index, !!replace));
-  tool("repair_fleet", "自国の星にいる艦隊を修理する（損傷の半分の資金）。", { fleet_id: id }, ({ fleet_id }) => call("repairFleet", fleet_id));
-  tool("new_fleet", "造船所のある自国の星で新しい艦隊（ラーク級1隻）を編成する。自軍艦隊は最大3つ。", { planet_id: id }, ({ planet_id }) => call("newFleet", planet_id));
-  tool("build_facility", "自国の星の空きスロットに施設を建てる。mine採掘所 yard造船所 sats防衛衛星群 lab研究所 flak対空砲台。", {
-    planet_id: id, facility: z.enum(["mine", "yard", "sats", "lab", "flak"]),
+  tool("repair_fleet", "自国の星にいる艦隊を修理する（損傷の半分の資金）。", { fleet_id: fleetId, ...SAY }, ({ fleet_id }) => call("repairFleet", fleet_id));
+  tool("new_fleet", "造船所のある自国の星で新しい艦隊（ラーク級1隻）を編成する。自軍艦隊は最大3つ。", { planet_id: planetId, ...SAY }, ({ planet_id }) => call("newFleet", planet_id));
+  tool("build_facility", "自国の星の空きスロットに、まだ無い施設を建てる。mine採掘所 yard造船所 sats防衛衛星群 lab研究所 flak対空砲台。建てられる星と施設は状況テキストの「■内政の候補」と、返り値の「のこりの手」に出る。", {
+    planet_id: planetId, facility, ...SAY,
   }, ({ planet_id, facility }) => call("buildFacility", planet_id, facility));
   tool("demolish_facility", "自国の星の施設を撤去してスロットを空ける（返金なし）。", {
-    planet_id: id, facility: z.enum(["mine", "yard", "sats", "lab", "flak"]),
+    planet_id: planetId, facility, ...SAY,
   }, ({ planet_id, facility }) => call("demolishFacility", planet_id, facility));
-  tool("survey", "自国の星で小惑星探査（40）。45%で収入+20。", { planet_id: id }, ({ planet_id }) => call("survey", planet_id));
-  tool("fortify", "自国の星の防衛力を修復（30で+15）。", { planet_id: id }, ({ planet_id }) => call("fortify", planet_id));
-  tool("end_turn", "ターンを終了する。収入・研究が入り、敵が行動する。" + (MANUAL_BATTLE ? "敵に襲われると戦闘が始まった状態で返る。" : "敵に襲われたときの防衛戦もオートで決着してから返る（結果は events と battles）。"), {}, () => call("endTurn"));
+  tool("survey", "自国の星で小惑星探査（40）。45%で収入+15。", { planet_id: planetId, ...SAY }, ({ planet_id }) => call("survey", planet_id));
+  tool("fortify", "自国の星の防衛力を修復（30で+15）。", { planet_id: planetId, ...SAY }, ({ planet_id }) => call("fortify", planet_id));
+  tool("end_turn", "ターンを終了する。収入・研究が入り、敵が行動する。" + (MANUAL_BATTLE ? "敵に襲われると戦闘が始まった状態で返る。" : "敵に襲われたときの防衛戦もオートで決着してから返る（結果は events と battles）。"), { ...SAY }, () => call("endTurn"));
   tool("new_game", "最初からやり直す（現在の戦況は失われる）。", { confirm: z.literal(true).describe("true を渡したときだけ実行") }, () => call("newGame"));
 
   // 戦術戦闘（--manual-battle のときだけ。既定のオート戦闘では出さない）
   if (!MANUAL_BATTLE) return s;
   tool("battle_state", "戦術戦闘の盤面（ユニット・座標・向き・各自軍艦の移動先と攻撃候補と予測ダメージ）を取得する。", {}, async () => (await call("getState")).battle ?? { ok: false, message: "戦闘中ではありません" });
   tool("battle_attack", "自軍艦で敵を攻撃する（射程内のみ。武器は最も効く物が自動で選ばれる）。その艦はこのラウンド行動済みになる。", {
-    unit_id: id, target_id: id,
+    unit_id: int("unit_id（自軍ユニットのID）"), target_id: int("target_id（敵ユニットのID）"),
   }, ({ unit_id, target_id }) => call("battleAttack", unit_id, target_id));
   tool("battle_move", "自軍艦を移動する（移動先は get_summary の「移動先」、battle_state なら moves）。移動した艦はこのラウンド攻撃できない。移動方向を向く。", {
-    unit_id: id, x: id, y: id,
+    unit_id: int("unit_id（自軍ユニットのID）"), x: int("x"), y: int("y"),
   }, ({ unit_id, x, y }) => call("battleMove", unit_id, x, y));
-  tool("battle_wait", "自軍艦を待機させる（何もしない）。", { unit_id: id }, ({ unit_id }) => call("battleWait", unit_id));
+  tool("battle_wait", "自軍艦を待機させる（何もしない）。", { unit_id: int("unit_id（自軍ユニットのID）") }, ({ unit_id }) => call("battleWait", unit_id));
   tool("battle_end_phase", "自軍フェイズを終了し、敵フェイズを進める。まだ動いていない艦は何もしないまま終わる（全艦が攻撃・移動・待機を終えれば、呼ばなくても自動で敵の番になる）。", {}, () => call("battleEndPhase"));
   tool("battle_retreat", "戦闘から撤退する（艦隊は主星へ戻る。防衛戦で撤退すると、その星は敵に攻められる）。", {}, () => call("battleRetreat"));
   tool("battle_close", "終わった戦闘を閉じて作戦卓に戻る。ターン終了中なら次の戦闘やターン処理が続く。", {}, () => call("battleClose"));

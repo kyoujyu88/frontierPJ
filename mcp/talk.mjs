@@ -91,6 +91,9 @@ export function parseArgs(body) {
 
 export const stripThink = (s) => (s || "").replace(/<think>[\s\S]*?<\/think>/g, "").replace(/<think>[\s\S]*$/, "")
   .replace(/<\|channel\|?>\s*thought[\s\S]*?(<channel\|>|(?=<\|tool_call)|$)/g, "") // Gemma 系の考える部分
+  // 開きの特殊トークンが落ちて「thought」の行から始まるもの（Ollama の gemma4 系で実際に出た）。閉じの <channel|> か
+  // ツール呼び出しまでが考える部分。閉じが無ければ（返事が途中で切れた）最後まで考える部分とみなす
+  .replace(/^\s*thought[ \t]*\r?\n[\s\S]*?(<channel\|>|(?=<\|tool_call)|$)/, "")
   .trim();
 
 /* 字幕向けに整える：紛れ込んだHTMLタグ・名前の前置き・強調記号・セリフを囲む引用符や、片方だけ残った引用符を外す */

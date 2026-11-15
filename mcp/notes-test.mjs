@@ -16,7 +16,11 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LESSON = "爆装を2以上積んだ艦隊で惑星を攻める";
 let prompts = [], reflections = 0;
 // LLM のふるまい：normal／empty（黙った返事を返す）／flaky（2ターン目の最初だけ 400）／notools（ツール非対応の 400）／always400（毎回 400）
+// ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）
 let mode = "normal", emptySent = false;
+// 会話の書き換えの見張り：同じターンの中で、前に送ったメッセージが次の問い合わせで変わっていたら数える（変わるとローカルLLMがプロンプト全体を読み直す）
+let lastMsgs = null, rewrites = 0, toolSeen = [], firstUser = [];
+const callOf = (id, name, args) => ({ id, type: "function", function: { name, arguments: JSON.stringify(args) } });
 
 const reply = (message) => ({ choices: [{ index: 0, message: { role: "assistant", ...message }, finish_reason: "stop" }] });
 const llm = http.createServer(async (req, res) => {
@@ -38,9 +42,19 @@ const llm = http.createServer(async (req, res) => {
     out = reply({ content: `<think>うーん</think>\n反省します！\n- ${LESSON}\n- 状況テキストのIDだけを使う\n1. 研究に早めに投資する\n感想：次こそ勝つよ！` });
   } else {
     const last = b.messages.at(-1);
-    if (last.role === "user" && last.content.includes("今の状況です")) {
+    const starts = last.role === "user" && last.content.includes("今の状況です");
+    if (!starts && lastMsgs && JSON.stringify(b.messages.slice(0, lastMsgs.length)) !== JSON.stringify(lastMsgs)) rewrites++;
+    lastMsgs = b.messages;
+    if (starts) firstUser.push(last.content); else toolSeen.push(...b.messages.filter(m => m.role === "tool"));
+    if (starts) {
       prompts.push(b.messages[0].content);
-      out = mode === "say"
+      out = mode === "empty" ? reply({ content: "" }) // 黙った返事（話さず、ツールも呼ばない）
+        : mode === "play" ? reply({ content: "", tool_calls: [
+          callOf("p1", "invest_research", { amount: 100, say: "研究を進めるよ！" }),           // 30刻みでない額・ひとこと付き
+          callOf("p2", ":build_facility", { planet_id: "1", facility: "採掘所" }),               // 記号つきの名前・文字列の数字・日本語の施設名
+          callOf("p3", "move_fleet", { fleet_id: "第2艦隊", to: 5 }),                           // 艦隊を名前で書く（ID は 6。名前の番号 2 をIDとしては読まない）。中立の星へ入って攻略戦になる
+          callOf("p4", "replace_ship", { fleet_id: 1, class_index: 0 })] })                     // 無い名前（build_ship の replace=true に読み替える。置換する艦が無いので断られる）
+        : mode === "say"
         // say を地の文に書く（gemma4 で実際に出た形）＋ say ツールの直呼び
         ? reply({ content: "say{text:「研究に投資するよ！」} say{text:「カルセは要塞だし、守りを固めよう。」}", tool_calls: [
           { id: `s${prompts.length}`, type: "function", function: { name: "say", arguments: JSON.stringify({ text: "「第1艦隊、進軍！」" }) } },
@@ -48,7 +62,7 @@ const llm = http.createServer(async (req, res) => {
         // ツール名だけを地の文に書く（2026-11 の録画で字幕に「end_turn」と出た形）。ツール呼び出しは付けない
         : mode === "bare" ? reply({ content: "内政はおしまい！\nend_turn" })
         : reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
-    } else out = reply({ content: mode === "empty" ? "" : "様子を見るね" });
+    } else out = mode === "empty" || mode === "play" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] }) : reply({ content: "様子を見るね" });
   }
   res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(out));
 });
@@ -165,6 +179,25 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
     `ツール名だけの行は字幕に出さずに実行する（セリフ：${talks.join(" / ")}・end_turn：${ended ? ended.by ?? "AI" : "なし"}）`);
   const old = toSrt([{ type: "talk", ms: 0, who: "のあ", durMs: 2000, text: "end_turn" }, { type: "talk", ms: 3000, who: "のあ", durMs: 2000, text: "これで end_turn するね" }]);
   check(/^1\n00:00:03,000 --> 00:00:05,000\nこれでターン終了するね\n$/.test(old), "修正前のログも SRT では操作名だけのセリフを外し、文の中の名前は置き換える");
+  mode = "normal";
+}
+
+// 操作ミスを減らす仕組み：ひとこと付きの操作・寛容な引数・名前のゆれ・通信の自動クローズ・「のこりの手」。会話は後ろに足すだけ（書き換えない）
+{
+  mode = "play"; rewrites = 0; toolSeen = []; firstUser = [];
+  await run(2, ["--no-notes"]);
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const tools = ev.filter(e => e.type === "tool" && e.by === "ai"), t = (name) => tools.find(e => e.name === name);
+  check(ev.some(e => e.type === "talk" && e.text === "研究を進めるよ！") && t("invest_research")?.ok && !("say" in t("invest_research").args), "操作ツールの say 引数は字幕とプレイログのセリフになり、操作には渡さない");
+  check(/^90 投資/.test(t("invest_research")?.message ?? ""), `研究投資は30刻みに丸めて実行する（${t("invest_research")?.message}）`);
+  check(t("build_facility")?.ok === true && !tools.some(e => e.name.startsWith(":")), "記号の付いたツール名（:build_facility）・文字列の数字・日本語の施設名でも通る");
+  check(t("move_fleet")?.ok === true && /^第2艦隊 を /.test(t("move_fleet").message), `艦隊を名前で書いても、その名前の艦隊が動く（${t("move_fleet")?.message}）`);
+  check(t("build_ship")?.ok === false && /旧式の艦がいません/.test(t("build_ship").message) && !ev.some(e => e.type === "refuse"), "無い名前 replace_ship は build_ship の置換に読み替える（断らない）");
+  check(!tools.some(e => e.name === "dismiss_dialog") && /通信が届いています/.test(firstUser[0]) && !/通信が届いています/.test(firstUser[1] ?? "通信が届いています"), "最初の通信は dismiss_dialog なしで、次の操作のときに閉じる");
+  const moved = toolSeen.find(m => m.name === "move_fleet")?.content ?? "";
+  check(/のこりの手：資金\d+/.test(moved) && /自軍艦隊：/.test(moved) && /戦闘「/.test(moved) && !moved.includes("■惑星"), "戦闘のあとの返り値は、状況テキスト全体ではなく「のこりの手」と艦隊の残りを付ける");
+  check(/払える内政：/.test(toolSeen.find(m => m.name === "build_ship")?.content ?? ""), "断られたときも「のこりの手」が付く");
+  check(rewrites === 0 && toolSeen.length >= 5, `同じターンの中で、前に送ったメッセージを書き換えない（書き換え ${rewrites} 回）`);
   mode = "normal";
 }
 

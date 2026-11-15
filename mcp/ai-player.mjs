@@ -112,6 +112,10 @@ async function tool(name, args = {}) {
   const text = r.content.filter(c => c.type === "text").map(c => c.text).join("\n");
   let out;
   try { out = { text, json: JSON.parse(text) }; } catch { out = { text, json: null }; }
+  // 引数の形が合わずに MCP サーバーが断ったもの（「MCP error -32602: … Invalid arguments for tool x: 〜を指定してください at to」）も、ふつうの失敗として扱う。
+  // この文言は MCP SDK（@modelcontextprotocol/sdk 1.x）のもの。SDK を上げて文言が変わると拾えなくなるが、そのときも本文はそのまま LLM に返る（selftest の「引数が足りないとき」の確認が先に落ちる）
+  const bad = !out.json && text.match(/^MCP error -?\d+:[\s\S]*?Invalid arguments for tool [^:]+:\s*([\s\S]*)$/);
+  if (bad) out.json = { ok: false, message: `引数が正しくありません：${bad[1].replace(/ at (\w+)$/gm, "（$1）").replace(/\n/g, "、")}` };
   journal.onTool(name, out);
   if (!QUIET.has(name)) capHold = 0; // ゲームを操作したら、次のセリフは待たずに出す
   const j = out.json;
@@ -168,11 +172,13 @@ const SYSTEM = () => `${persona}
 - 大事な判断（攻める先、研究、改装）の前に理由をひとこと話す。長い計画は話さない。
 - 1ターンの流れ：状況を見る → 内政（研究・建設・探査・造船・改装）→ 戦いに行く艦隊は相手に合わせて陣形（set_formation）→ 艦隊の移動 → end_turn。
 - 内政は「■内政の候補」に打てる手が呼び出しの形で並んでいる。毎ターン艦隊を動かす前に、資金の使い道を決めて1つ以上実行する（収入が増えると強い艦を作れる。◎は星の特性に合う施設）。修理のために少し残すのはよいが、使わずに貯めすぎない。
-- 通信ウィンドウが出たら内容をひとことで紹介してから dismiss_dialog。
+- 操作と一緒に話すときは、その操作ツールの say 引数にセリフを書く（say だけを先に呼ぶと、そのぶん1手遅くなる）。
+- 操作の返り値の「のこりの手」に、いまの資金で払える内政と、まだ動かしていない艦隊が出る。資金を使ったあと・艦隊を動かしたあとの次の手は、そこから選ぶ（最初の状況テキストは古くなっている）。「打てる手はもうありません」と出たら end_turn。
+- 通信が届いたら内容をひとことで紹介する。通信は次の操作で自動的に閉じるので、dismiss_dialog は呼ばなくてよい。
 ${MANUAL_BATTLE ? `- 戦闘中は、攻撃候補（予測ダメージつき）と移動先から1隻ずつ battle_attack / battle_move を選ぶ。動かしたくない艦（傷ついていて前に出したくない・射程外で近づくと不利など）は battle_wait で待機させる。全艦が動く（待機も含む）と自動で敵の番になるので、「敵の動きを見る」ために battle_end_phase を使わない。終わったら battle_close。
 - 惑星の攻略戦では、中枢と防衛衛星はその場から動かない。待っていても撃たれるだけなので、毎ターン近づいて攻撃する。中枢は爆装（射程1）でしか壊せないので、爆装を持つ艦を中枢の隣まで進める（深淵の巣の中枢はセラフ級の爆装でしか壊せない）。` : `- 戦闘はオートで進む。攻め込む（move_fleet）か襲われると、戦闘は自動で決着して「出来事」に結果が出る。結果をひとこと実況する。
 - あなたの仕事は戦う前の準備：勝てる相手を選ぶ、傷ついた艦隊は修理してから出す、惑星の攻略には爆装を持つ艦を入れる（中枢は爆装でしか壊せない。深淵の巣の中枢はセラフ級の爆装でしか壊せない）、相手に合わせて陣形を選ぶ（移動先の「陣形の目安」）、旗艦は打たれ強い艦にする。オートの戦い方はルールの「オートの戦い方」のとおりで、改装の配分がそのまま戦い方になる。`}
-- IDは状況テキストに書かれた数字だけを使う。失敗したら理由を読んで別の手を選ぶ。
+- IDは状況テキストに書かれた数字だけを使う（艦隊は「ID」の後ろの数字、星は名前の前の数字）。断られたときは、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。
 
 ${rules}
 ${USE_NOTES ? `\n${notesPrompt(notes, NOTES_CHARS)}` : ""}`.trimEnd();
@@ -222,22 +228,29 @@ async function chat(messages, { withTools = true } = {}) {
 }
 const llmError = (message, fatal) => Object.assign(new Error(message), { fatal });
 
-/* ツール結果をのあ向けに短くする（戦闘中は盤面のテキストに置き換える）。
- * 状況テキストをつけたときは、あとで古くなったとき用の縮めた版（short）も返す */
+/* ツール結果をのあ向けに短くする。
+ * 作戦卓では、状況テキストを付け直さずに「のこりの手」（いま払える内政・未行動の艦隊。game-api.js の next）だけを付ける。
+ * 以前は戦闘や通信のたびに状況テキスト全体を付け直し、古いものを縮めていたが、会話の前のほうを書き換えると
+ * ローカルLLMがプロンプト全体を読み直す（実測で1回 約10秒。読み直しがなければ 約1.4秒）ので、会話は後ろに足すだけにする。
+ * 手動戦闘（--manual-battle）では盤面が要るので、これまでどおり盤面のテキストに置き換え、古くなったとき用の縮めた版（short）も返す */
+const DIALOG_MAX = 700;
 async function digest(name, r) {
   const j = r.json;
   if (!j || typeof j !== "object" || !("ok" in j)) return { content: r.text.slice(0, 6000), short: null };
   const lines = [`${j.ok ? "成功" : "失敗"}：${j.message}`];
   if (j.events?.length) lines.push("出来事：\n " + j.events.slice(-12).join("\n "));
-  // 戦闘中・通信・戦闘を閉じて作戦卓に戻ったときは、最新の状況テキストをつける
-  if (j.ok && (j.mode === "battle" || j.mode === "battle_ended" || j.dialog || ((name === "battle_close" || j.battles?.length) && j.mode === "map"))) {
+  for (const d of j.dialogs ?? []) lines.push(`届いていた通信（閉じました）：\n${d.slice(0, DIALOG_MAX)}`);
+  // 戦闘中（手動戦闘）と、戦闘を閉じて作戦卓に戻ったときは、最新の状況テキストをつける
+  if (j.ok && (j.mode === "battle" || j.mode === "battle_ended" || (name === "battle_close" && j.mode === "map"))) {
     const short = [lines[0], ...(j.events?.length ? ["出来事：\n " + j.events.slice(-4).join("\n ")] : []), OLD_NOTE].join("\n");
     return { content: [...lines, await summary()].join("\n"), short };
   }
-  if (j.ok) lines.push(`資金${j.funds}`);
+  if (j.dialog) lines.push(`通信が届きました（次の操作で自動的に閉じます。dismiss_dialog は不要）：\n${j.dialog.text.slice(0, DIALOG_MAX)}`);
+  if (j.next) lines.push(j.next);
+  else if (j.ok && j.funds != null) lines.push(`資金${j.funds}`);
   return { content: lines.join("\n"), short: null };
 }
-/* 1ターンの会話は貯まっていくので、状況テキスト（戦闘の盤面など）は最新の1つだけ全文で送り、古いものは縮める */
+/* 手動戦闘では盤面のテキストが貯まっていくので、最新の1つだけ全文で送り、古いものは縮める（オート戦闘では縮めるものがなく、会話は後ろに足すだけ） */
 const OLD_NOTE = "（このときの状況テキストは省略。最新の状況は後ろのメッセージにあります）";
 const shortOf = new WeakMap();
 function slim(messages) {
@@ -301,6 +314,11 @@ async function checkEndPhase() {
   return `失敗：まだ行動していない艦がいます。敵の番は全艦が動けば自動で来るので、先に次の手を打ってください。${core ? "惑星の中枢と防衛衛星は動かないので、待っても有利になりません。" : ""}\n ${tips.join("\n ")}\n動かしたくない艦は battle_wait（unit_id を指定）で待機させれば、全艦が終わった時点で敵の番になります。（それでも今すぐ終えたいときは、もう一度 battle_end_phase）`;
 }
 
+/* ---------- ツール名のゆれ ---------- */
+// 「:build_ship」のように記号が付いた名前は記号を外す。実際に出た無い名前（replace_ship）は、同じ意味の呼び出しに読み替える
+const fixName = (n) => String(n ?? "").replace(/^[^A-Za-z_]+|[^A-Za-z0-9_]+$/g, "");
+const ALIAS = { replace_ship: ["build_ship", { replace: true }] };
+
 /* ---------- 1ターン ---------- */
 let memo = "", turnTalk = "";
 async function playTurn() {
@@ -346,10 +364,16 @@ async function playTurn() {
       c.id ||= `call_${step}_${Math.random().toString(36).slice(2, 8)}`;
       let args = c.function.arguments;
       if (typeof args === "string") { try { args = JSON.parse(args || "{}"); } catch { args = {}; } }
+      if (!args || typeof args !== "object" || Array.isArray(args)) args = {};
+      if (!TOOL_NAMES.has(c.function.name)) {
+        let n = fixName(c.function.name);
+        if (ALIAS[n]) { args = { ...args, ...ALIAS[n][1] }; n = ALIAS[n][0]; }
+        if (TOOL_NAMES.has(n)) c.function.name = n; // 会話に残る名前も直す（次の返事でまた同じ名前を書かないように）
+      }
       log(`→ ${c.function.name} ${JSON.stringify(args)}`);
       // 渡していないツールや、同じ情報の取り直しは実行せずに次の手を促す（読み直しのループを防ぐ）
       const refuse = !TOOL_NAMES.has(c.function.name)
-        ? `失敗：${c.function.name} は使えません。ルールはシステムプロンプトに、今の状況は最初のメッセージに書いてあります。操作のツールを選んでください。`
+        ? `失敗：${c.function.name} は使えません。ルールはシステムプロンプトに、今の状況は最初のメッセージに書いてあります。使えるツール：${[...TOOL_NAMES].join("、")}`
         : c.function.name === "get_summary" && lastName === "get_summary" ? "状況はさっきと同じです。操作のツールを選んでください。" : null;
       lastName = c.function.name;
       if (refuse) { wasted++; log("  ✗ " + refuse.split("。")[0]); plog.write("refuse", { name: c.function.name, args, reason: refuse.split("。")[0] }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: refuse }); continue; }
@@ -361,11 +385,16 @@ async function playTurn() {
         messages.push({ role: "tool", tool_call_id: c.id, name: "say", content: r?.text ?? "失敗：text が空です。" });
         continue;
       }
+      // 操作ツールの say 引数（ひとこと）：地の文と同じく整えて字幕に出し、プレイログのセリフにも残す。サーバーには渡さない（二重に出さない）
+      if (typeof args.say === "string") {
+        const line = args.say; delete args.say;
+        if (await say(line.slice(0, 160)) && !turnTalk) memo = turnTalk = cleanTalk(line).slice(0, 200);
+      } else delete args.say;
       if (c.function.name === "battle_end_phase") {
         const stop = await checkEndPhase();
         if (stop) { log("  ✗ まだ動ける艦があるので、フェイズ終了を止めました"); plog.write("refuse", { name: c.function.name, args, reason: "まだ動ける艦があるので、フェイズ終了を止めました" }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: stop }); continue; }
       } else if (c.function.name.startsWith("battle_")) endPhaseNagged = false;
-      const r = await tool(c.function.name, args ?? {});
+      const r = await tool(c.function.name, args);
       if (c.function.name === "end_turn" && r.json?.ok) ended = true;
       if (r.json?.mode === "over") { over = true; break; } // 勝敗がついた（結果の画面は配信用に出したまま、振り返りへ）
       if (r.json?.mode) { const b = r.json.mode === "battle" || r.json.mode === "battle_ended"; if (b && !inBattle) battleSteps = 0; inBattle = b; }
@@ -377,8 +406,9 @@ async function playTurn() {
     }
     if (over) return { st: (await tool("get_state")).json, auto };
     if (ended) {
+      // 通信が開いていても次のターンへ進む（次のターンの状況テキストに出て、最初の操作で自動的に閉じる）
       const s = (await tool("get_state")).json;
-      if (!s.battle && !s.dialog) return { st: s, auto };
+      if (!s.battle) return { st: s, auto };
     }
   }
   // 上限まで来た・黙った：残りを自動で片付けてターンを終える

@@ -37,20 +37,86 @@ const autoResults=[];  // オートで片付けた戦闘の結果
 class GameError extends Error{}
 const fail=m=>{throw new GameError(m)};
 const dialogOpen=()=>!$("modal").hidden;
-const fleetById=id=>S.fleets.find(f=>f.id===Number(id))||fail(`艦隊ID ${id} は存在しません`);
-const myFleet=id=>{const f=fleetById(id);if(f.side!=="P")fail(`${f.name} は自軍艦隊ではありません`);return f};
-const planetById=id=>{const p=S.planets[Number(id)];if(!p)fail(`惑星ID ${id} は存在しません`);return p};
-const myPlanet=id=>{const p=planetById(id);if(p.owner!=="P")fail(`${p.name} は自国の星ではありません`);return p};
+// 艦隊の損傷と修理費（修理費の式はゲーム本体の repair() と同じ。状況テキスト・のこりの手・修理の3か所でここを使う）
+const fleetDamage=f=>f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);
+const repairCost=f=>Math.ceil(fleetDamage(f)/2);
+/* 引数は寛容に読む：小さなモデルは「第2艦隊」の 2 をIDに書いたり、数字を文字列で渡したり、星や施設を名前で書いたりする。
+ * 読み替えたときは actNotes に書いて返り値の message に付ける。断るときは、いま選べるものを一緒に返す */
+let actNotes=[];
+const note=m=>{actNotes.push(m)};
+const myFleets=()=>S.fleets.filter(f=>f.side==="P");
+const fleetList=()=>myFleets().map(f=>`${f.name}=ID${f.id}`).join("、")||"なし";
+const blank=v=>v==null||v==="";
+const FLEET_NAME=/第\s*(\d+)\s*艦隊/;
+// 名前で書かれた自軍艦隊（「第2艦隊」）。名前の番号とIDは別物なので（全滅・再編成でずれる）、名前の番号をIDとしては読まない
+const fleetNamed=s=>{const o=(s.match(FLEET_NAME)||[])[1];return myFleets().find(x=>x.name===s)||(o?myFleets().find(x=>x.name===`第${Number(o)}艦隊`):null)||null};
+const noFleetNamed=s=>`${s} という自軍艦隊はいません。自軍艦隊：${fleetList()}`;
+function myFleet(id){
+  if(blank(id))fail(`fleet_id（艦隊ID）を指定してください。自軍艦隊：${fleetList()}`);
+  const mine=myFleets(),s=String(id).trim(),n=Number(s);
+  // 数字でないもの（艦隊の名前）は、名前で探す。数字だけのときはID
+  if(!/^-?\d+$/.test(s)){const g=fleetNamed(s);if(g)return g;fail(noFleetNamed(s))}
+  let f=mine.find(x=>x.id===n);
+  if(!f){
+    // 「第2艦隊」の 2 をIDに書いたもの（そのIDの自軍艦隊がいないときだけ、名前の番号として読む）
+    f=mine.find(x=>x.name===`第${n}艦隊`);
+    if(f)note(`艦隊ID ${id} は ${f.name}（ID ${f.id}）と読み替えました`);
+  }
+  if(!f){
+    const other=S.fleets.find(x=>x.id===n);
+    fail(`${other?`${other.name} は自軍艦隊ではありません`:`艦隊ID ${id} は存在しません`}。自軍艦隊：${fleetList()}`);
+  }
+  return f;
+}
+const planetNamed=s=>S.planets.find(q=>q.name===s||q.name===s.replace(/^\d+\s*/,""))||null; // 「リュネ」「1リュネ」
+function planetById(id){
+  if(blank(id))fail("惑星ID を指定してください（状況テキストの「■惑星」の行の先頭の数字）");
+  const s=String(id).trim();
+  const p=/^\d+$/.test(s)?S.planets[Number(s)]:planetNamed(s);
+  if(!p)fail(`惑星ID ${id} は存在しません（0〜${S.planets.length-1}）`);
+  return p;
+}
+const ownList=()=>S.planets.filter(p=>p.owner==="P").map(p=>`${p.id}${p.name}`).join("・")||"なし";
+const myPlanet=id=>{const p=planetById(id);if(p.owner!=="P")fail(`${p.name} は自国の星ではありません。自国の星：${ownList()}`);return p};
 const needFunds=(v,what)=>{if(S.funds<v)fail(`資金不足：${what}には ${v} 必要（現在 ${S.funds}）`)};
+const facKey=k=>FAC[k]?k:FAC_KEYS.find(x=>FAC[x].name===String(k??"").trim())||fail(`施設は ${FAC_KEYS.map(x=>`${x}=${FAC[x].name}`).join("・")} のいずれかです`);
+const shortKind=k=>k.replace(/（.*$/s,"");
 
 function ensureMap(){
   if(!S)fail("ゲームが始まっていません");
   if(S.over)fail(S.over==="win"?"ゲームはクリア済みです。new_game で再開できます":"ゲームオーバーです。new_game で再開できます");
-  if(dialogOpen())fail("通信ウィンドウが開いています。dialog の内容を読んでから dismiss_dialog を呼んでください");
+  if(dialogOpen())fail("通信ウィンドウを閉じられませんでした。dismiss_dialog を呼んでください");
   if(B)fail("戦術戦闘中です。battle_* の操作で戦闘を進めてください");
 }
+/* 通信ウィンドウは、次の操作が来たときに自動で閉じる（開いたまま操作して断られる・閉じるだけの往復、をなくす）。
+ * 内容は、開いたときの返り値（dialog）か、ここで閉じたときの返り値（dialogs）のどちらかで必ず伝える。
+ * 配信で読めるよう、出てから少しの間（文字数に応じて最大5秒）は閉じない */
+let closedDialogs=[],dialogSeen={text:null,at:0};
+function pressDialog(){
+  // 押すのは下の行のボタン（了解・完了・閉じる）。「やり直す」など danger のボタンや、建設・陣形の選択肢は押さない
+  const foot=[...$("modalCard").querySelectorAll(":scope > .row")].pop(),btns=foot?[...foot.querySelectorAll("button")]:[];
+  const btn=btns.find(b=>b.classList.contains("primary"))||btns.find(b=>!b.classList.contains("danger"));
+  if(btn)btn.click();else closeModal();
+}
+// 閉じたあとは記録を消す（同じ本文の通信がもう一度出たときも、新しい通信として伝え、表示の間も取り直す）
+const forgetDialog=()=>{if(!dialogOpen())dialogSeen={text:null,at:0}};
+function seeDialog(told){
+  const t=dialogText().text;
+  if(t!==dialogSeen.text)dialogSeen={text:t,at:Date.now(),told:false};
+  if(told)dialogSeen.told=true;
+  return t;
+}
+async function clearDialogs(){
+  for(let i=0;i<8&&dialogOpen()&&!(S&&S.over);i++){
+    const t=seeDialog(false);
+    if(!dialogSeen.told){closedDialogs.push(t);dialogSeen.told=true}
+    const wait=dialogSeen.at+(pace?Math.min(5000,1200+t.length*25):0)-Date.now();
+    if(wait>0)await sleep(wait);
+    pressDialog();await sleep(pace?120:0);forgetDialog();
+  }
+}
 function ensureBattle(needTurn=true){
-  if(dialogOpen())fail("通信ウィンドウが開いています。先に dismiss_dialog を呼んでください");
+  if(dialogOpen())fail("通信ウィンドウを閉じられませんでした。dismiss_dialog を呼んでください");
   if(!B)fail("戦闘中ではありません");
   if(needTurn){
     if(B.ended)fail("戦闘は終わっています。battle_close で作戦卓へ戻ってください");
@@ -92,11 +158,13 @@ async function closeAutoBattle(){
 /* 行動の実行ラッパー：成否・新しいログ・状況の要約を返す */
 async function act(name,fn){
   const n=seq;
+  actNotes=[];closedDialogs=[];
   try{
     if(B&&autoBattle)await settle(); // 前の呼び出しで終わりきらなかったオート戦闘を片付けてから
+    if(name!=="dismiss"&&name!=="new"&&dialogOpen())await clearDialogs(); // 開いたままの通信は閉じてから操作する
     const message=await fn();
     await settle();await sleep(80);
-    return result(true,message,n);
+    return result(true,[message,...actNotes].filter(Boolean).join("。"),n);
   }catch(e){
     if(e instanceof GameError)return result(false,e.message,n);
     throw e;
@@ -105,8 +173,12 @@ async function act(name,fn){
 function result(ok,message,n){
   const r={ok,message:message||(ok?"完了":""),events:since(n),funds:S?S.funds:null,turn:S?S.turn:null,mode:B?(B.ended?"battle_ended":"battle"):(S&&S.over?"over":"map")};
   const bs=autoResults.filter(b=>b.seq>n).map(({seq,...b})=>b);if(bs.length)r.battles=bs;
-  if(dialogOpen())r.dialog=dialogText();
+  if(closedDialogs.length)r.dialogs=closedDialogs.splice(0); // この操作の前に自動で閉じた通信（まだ知らせていなかったもの）
+  if(dialogOpen()){r.dialog=dialogText();r.dialog.note="次の操作で自動的に閉じます（dismiss_dialog は不要）";seeDialog(true)}
+  else forgetDialog(); // dismiss_dialog や画面の操作で閉じられたときも、記録を消す
   if(B)r.battle=battleState();
+  // 戦闘のあとは、艦隊の残りの耐久も一緒に知らせる（状況テキストは付け直さない）
+  const nx=nextHint();if(nx)r.next=bs.length?`${nx}\n自軍艦隊：${myFleets().map(f=>`${f.name} ID${f.id}@${f.node}${planet(f.node).name} ${f.ships.length}隻・耐久${f.ships.reduce((t,x)=>t+Math.ceil(x.hp),0)}/${f.ships.reduce((t,x)=>t+x.maxHp,0)}・${f.moved?"行動済":"未行動"}`).join("／")||"なし（全滅。造船所のある星で new_fleet）"}`:nx;
   return r;
 }
 
@@ -166,11 +238,11 @@ function fleetInfo(f){
   if(f.side==="E"&&typeof docOf==="function"){const d=docOf(f);o.doctrine=`${d.name}：${d.tip}`}
   if(f.side==="P"){
     if(typeof formOf==="function"){const fm=formOf(f);o.formation=formKey(f);o.formationNote=`${fm.name}：${fm.tip}`}
-    const p=planet(f.node),dmg=f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);
+    const p=planet(f.node),dmg=fleetDamage(f);
     o.moved=!!f.moved;o.moveOptions=moveOptions(f);
     o.canIntercept=!f.moved&&!!intruder(f);
     if(o.canIntercept)o.interceptNote=foeNote(f,intruder(f));
-    o.repairCost=p.owner==="P"&&dmg?Math.ceil(dmg/2):null;
+    o.repairCost=p.owner==="P"&&dmg?repairCost(f):null;
     o.atShipyard=p.owner==="P"&&!!p.yard;
   }
   return o;
@@ -255,28 +327,44 @@ function battleSummary(){
   if(b.messages.length)L.push("直近："+b.messages.slice(0,4).join("／"));
   return L.join("\n");
 }
-/* 内政の候補：艦隊の移動先と同じように「打てる手」を呼び出しの形で並べ、内政を考えに入れやすくする */
+/* 内政の候補：艦隊の移動先と同じように「打てる手」を呼び出しの形で並べ、内政を考えに入れやすくする。
+ * いまの資金で払えるものだけを並べ、払えないものは最後の1行にまとめる（払えない手を呼んで断られるのを防ぐ） */
+const BEST={鉱物:"mine",遺跡:"lab",要塞:"sats",工業:"yard"};
+const investCap=()=>typeof INVEST_CAP!=="undefined"?INVEST_CAP:120;
+const investRoom=()=>typeof investLeft==="function"?investLeft():investCap();
+const investMax=()=>Math.min(investRoom(),Math.floor(S.funds/30)*30); // いま投資できる最大（30刻み）
+/* 置換する艦（いちばん旧式。同じ艦級なら随伴艦から。ゲームの造船所と同じ）と実費 */
+function replaceOf(f,ci,yp){
+  const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<=f.ships[m].cls)?i:m,-1);
+  return worst<0?null:{index:worst,refund:Math.floor(CLASSES[f.ships[worst].cls].cost/2),net:bcost(ci,yp)-Math.floor(CLASSES[f.ships[worst].cls].cost/2)};
+}
 function devSummary(st){
-  const L=[],funds=S.funds,mark=c=>c>funds?" ※資金不足":"";
+  const L=[],no=[],funds=S.funds;
+  const add=(cost,line,name)=>{if(cost<=funds)L.push(line);else no.push(`${name}${cost}`)};
   const r=st.research;
-  const left=typeof investLeft==="function"?investLeft():120;
-  if(r.next&&left>=30)L.push(` 研究：invest_research(amount=${[30,60,120].filter(v=>v<=left).join("/")}) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1。投資は1ターン${120}まで、このターンはあと${left}）`);
-  const BEST={鉱物:"mine",遺跡:"lab",要塞:"sats",工業:"yard"};
+  if(r.next){
+    const m=investMax();
+    if(investRoom()<30)L.push(` 研究：このターンの投資は上限（${investCap()}）まで済み。invest_research はもう呼ばない`);
+    else if(m>=30)L.push(` 研究：invest_research(amount=${m>30?`30〜${m}`:"30"}) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1。30刻み、投資は1ターン${investCap()}まで）`);
+    else no.push("研究30");
+  }else L.push(` 研究：いまは投資できない（${r.note}）。invest_research は呼ばない`);
   for(const p of S.planets.filter(p=>p.owner==="P")){
     const free=p.slots-p.fac.length;
     if(free>0){
-      const opts=FAC_KEYS.filter(k=>!hasF(p,k)).map(k=>`${BEST[p.trait]===k?"◎":""}${k}=${FAC[k].name}${FAC[k].cost}（${FAC[k].desc(p)}）${mark(FAC[k].cost)}`);
-      L.push(` 施設：${p.name}（${p.trait}・空き${free}）build_facility(planet_id=${p.id}, facility=…) ${opts.join("／")}`);
+      const ks=FAC_KEYS.filter(k=>!hasF(p,k)),ok=ks.filter(k=>FAC[k].cost<=funds),ng=ks.filter(k=>FAC[k].cost>funds);
+      const show=k=>BEST[p.trait]===k?`◎${k}=${FAC[k].name}${FAC[k].cost}（${FAC[k].desc(p)}）`:`${k}=${FAC[k].name}${FAC[k].cost}`;
+      if(ok.length)L.push(` 施設：${p.name}（${p.trait}・空き${free}）build_facility(planet_id=${p.id}, facility=…) ${ok.map(show).join("／")}${ng.length?`（資金不足：${ng.map(k=>`${k}${FAC[k].cost}`).join("・")}）`:""}`);
+      else if(ks.length)no.push(`${p.name}の施設${Math.min(...ks.map(k=>FAC[k].cost))}〜`);
     }
-    if(p.survey>0)L.push(` 探査：${p.name} survey(planet_id=${p.id}) 40 → 45%で収入+15（残り${p.survey}回）${mark(40)}`);
-    if(p.def<p.maxDef)L.push(` 防衛修復：${p.name} 防衛${p.def}/${p.maxDef} fortify(planet_id=${p.id}) 30で+15${mark(30)}`);
+    if(p.survey>0)add(40,` 探査：${p.name} survey(planet_id=${p.id}) 40 → 45%で収入+15（残り${p.survey}回）`,`${p.name}の探査`);
+    if(p.def<p.maxDef)add(30,` 防衛修復：${p.name} 防衛${p.def}/${p.maxDef} fortify(planet_id=${p.id}) 30で+15`,`${p.name}の防衛修復`);
   }
   for(const f of st.myFleets){
-    if(f.repairCost)L.push(` 修理：${f.name} repair_fleet(fleet_id=${f.id}) ${f.repairCost}${mark(f.repairCost)}`);
+    if(f.repairCost)add(f.repairCost,` 修理：${f.name} repair_fleet(fleet_id=${f.id}) ${f.repairCost}`,`${f.name}の修理`);
     if(f.atShipyard){
-      const cc=bcost(S.tier,planet(f.at));
-      if(f.ships.length<4)L.push(` 造船：${f.name}（${f.ships.length}/4隻）build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${CLASSES[S.tier].name}を追加 ${cc}${mark(cc)}`);
-      else if(f.ships.some(x=>x.class<S.tier))L.push(` 造船：${f.name} build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で旧艦を${CLASSES[S.tier].name}に置換`);
+      const yp=planet(f.at),cc=bcost(S.tier,yp),rp=replaceOf(S.fleets.find(x=>x.id===f.id),S.tier,yp);
+      if(f.ships.length<4)add(cc,` 造船：${f.name}（${f.ships.length}/4隻）build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${CLASSES[S.tier].name}を追加 ${cc}`,`${f.name}に${CLASSES[S.tier].name}を追加`);
+      else if(rp)add(rp.net,` 造船：${f.name} build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で旧艦を${CLASSES[S.tier].name}に置換 実費${rp.net}`,`${f.name}の旧艦を置換`);
     }
     const bo=f.ships.reduce((s,x)=>s+(x.alloc?.bo||0),0);
     if(!bo&&f.moveOptions.some(o=>/攻略|突入/.test(o.kind))){
@@ -286,13 +374,50 @@ function devSummary(st){
     }
   }
   const yards=S.planets.filter(p=>p.owner==="P"&&p.yard);
-  if(st.myFleets.length<3&&yards.length)L.push(` 新艦隊：new_fleet(planet_id=${yards[0].id}) ${bcost(0,yards[0])}${mark(bcost(0,yards[0]))}（ラーク級1隻の艦隊が増える）`);
-  return L.length?`■内政の候補（資金${funds}・収入+${st.incomePerTurn}/ターン。◎はその星の特性に合う施設）\n${L.join("\n")}`:"";
+  if(st.myFleets.length<3&&yards.length)add(bcost(0,yards[0]),` 新艦隊：new_fleet(planet_id=${yards[0].id}) ${bcost(0,yards[0])}（ラーク級1隻の艦隊が増える）`,"新艦隊");
+  if(no.length)L.push(` 資金不足でいまは打てない（呼ばない）：${no.join("、")}`);
+  return L.length?`■内政の候補（資金${funds}・収入+${st.incomePerTurn}/ターン。いま払えるものだけ。◎はその星の特性に合う施設）\n${L.join("\n")}`:"";
+}
+/* 操作の返り値に付ける「のこりの手」：いまの資金で払える内政と、まだ動かしていない艦隊を短くまとめる。
+ * 状況テキストはターンの最初のものなので、資金を使ったあと・艦隊を動かしたあとの手はここで知らせる */
+function fleetNext(f){
+  const opts=moveOptions(f).filter(o=>!o.kind.startsWith("不可"));
+  const near=opts.filter(o=>o.kind!=="亜空間移動").map(o=>`${o.to}${o.name}=${shortKind(o.kind)}${/爆装なし/.test(o.kind)?"・爆装なし":""}`);
+  if(opts.some(o=>o.kind==="亜空間移動"))near.push("ほか自国の星へ亜空間移動");
+  return`${f.name} ID${f.id}@${f.node}${planet(f.node).name}${intruder(f)?"（迎撃可）":""} → ${near.join("、")||"行ける星なし"}`;
+}
+let idleTold=null;
+function nextHint(){
+  if(!S||S.over||B)return null;
+  const funds=S.funds,pay=[],own=S.planets.filter(p=>p.owner==="P"),mine=myFleets();
+  if(researchOpen()&&investMax()>=30)pay.push(`研究 invest_research(${investMax()>30?`30〜${investMax()}`:"30"})`);
+  const sites=own.map(p=>({p,ks:p.fac.length<p.slots?FAC_KEYS.filter(k=>!hasF(p,k)&&FAC[k].cost<=funds):[]})).filter(x=>x.ks.length);
+  if(sites.length)pay.push(`施設 ${sites.slice(0,5).map(x=>`${x.p.id}${x.p.name}(${x.ks.join("/")})`).join(" ")}${sites.length>5?` ほか${sites.length-5}星`:""}`);
+  const sv=own.filter(p=>p.survey>0);if(funds>=40&&sv.length)pay.push(`探査40 ${sv.map(p=>`${p.id}${p.name}`).join("・")}`);
+  const ft=own.filter(p=>p.def<p.maxDef);if(funds>=30&&ft.length)pay.push(`防衛修復30 ${ft.map(p=>`${p.id}${p.name}`).join("・")}`);
+  for(const f of mine){
+    const p=planet(f.node);if(p.owner!=="P")continue;
+    if(fleetDamage(f)&&repairCost(f)<=funds)pay.push(`修理 ${f.name}(${repairCost(f)})`);
+    if(p.yard){
+      const cc=bcost(S.tier,p),rp=replaceOf(f,S.tier,p);
+      if(f.ships.length<4){if(cc<=funds)pay.push(`造船 ${f.name}に${CLASSES[S.tier].name}を追加(${cc})`)}
+      else if(rp&&rp.net<=funds)pay.push(`造船 ${f.name}の旧艦を置換(replace=true・実費${rp.net})`);
+    }
+  }
+  const yards=own.filter(p=>p.yard);
+  if(mine.length<3&&yards.length&&bcost(0,yards[0])<=funds)pay.push(`新艦隊(${bcost(0,yards[0])}) ${yards[0].id}${yards[0].name}`);
+  const idle=mine.filter(f=>!f.moved),full=idle.map(fleetNext).join("／"),key=`${S.turn}|${full}`;
+  const L=[`のこりの手：資金${funds}。払える内政：${pay.join("、")||"なし"}`];
+  // 行き先は、前に知らせたときから変わっていなければ繰り返さない（返り値を短く保つ）
+  L.push(`未行動の艦隊：${!idle.length?"なし":key===idleTold?`${idle.map(f=>`${f.name} ID${f.id}`).join("・")}（行き先は前と同じ）`:full}`);
+  idleTold=key;
+  if(!pay.length&&!idle.length)L.push("→ 打てる手はもうありません。end_turn でターンを終えてください");
+  return L.join("\n");
 }
 function getSummary(){
   if(!S)return"ゲームが始まっていません";
   const st=getState(),L=[];
-  if(st.dialog)L.push(`【通信ウィンドウが開いています → 読んだら dismiss_dialog】\n${st.dialog.text}`);
+  if(st.dialog){L.push(`【通信が届いています（次の操作で自動的に閉じます。dismiss_dialog は不要）】\n${st.dialog.text}`);seeDialog(true)}
   if(B){L.push(battleSummary());return L.join("\n\n")}
   if(st.over)L.push(`【ゲーム終了：${st.over==="win"?"勝利":"敗北"}】`);
   const r=st.research;
@@ -316,6 +441,7 @@ function getSummary(){
   if(!st.otherFleets.length)L.push(" なし");
   for(const f of st.otherFleets)L.push(` ${f.name} ID${f.id} ${f.sideLabel}${f.doctrine?`〈${f.doctrine.split("：")[0]}〉`:""} @${f.at}${f.atName} 戦力${f.power} ${f.ships.map(shipShort).join(" ")}`);
   L.push("■最近の出来事\n "+st.recentLog.slice(0,6).join("\n "));
+  idleTold=`${S.turn}|${myFleets().filter(f=>!f.moved).map(fleetNext).join("／")}`; // 行き先は上の「移動先」で知らせた
   return L.join("\n");
 }
 
@@ -350,7 +476,20 @@ let actTimer=null,speaker="のあ";
 function showAction(t){ensureOverlay();const el=$("gapi-act");el.textContent=`${speaker}：${t}`;el.hidden=false;clearTimeout(actTimer);actTimer=setTimeout(()=>{el.hidden=true},4000)}
 
 /* ---------- 戦略コマンド ---------- */
+function movedMsg(f){
+  const idle=myFleets().filter(x=>!x.moved);
+  return`${f.name} はこのターン行動済みです（艦隊が動けるのは1ターンに1回。続きは次のターン）。${idle.length?`未行動の艦隊：${idle.map(x=>`${x.name}=ID${x.id}`).join("、")}`:"未行動の艦隊はもうありません（内政が済んだら end_turn）"}`;
+}
 const api={
+  /* 名前で書かれた艦隊・星をIDにする（MCPサーバーが引数を読むときに使う）。
+   * 見つかれば {id}、艦隊の名前の形なのにいなければ {message}、名前として読めなければ null */
+  idOf:(kind,text)=>{
+    if(!S)return null;
+    const s=String(text??"").trim();
+    if(kind==="fleet"){const f=fleetNamed(s);return f?{id:f.id}:FLEET_NAME.test(s)?{message:noFleetNamed(s)}:null}
+    if(kind==="planet"){const p=planetNamed(s);return p?{id:p.id}:null}
+    return null;
+  },
   version:1,
   getState,
   getSummary,
@@ -370,19 +509,18 @@ const api={
     if(!dialogOpen())fail("開いている通信ウィンドウはありません");
     // 結果画面の「もう一度遊ぶ」は押さない（押すと勝敗が消えて新しいゲームになる。やり直しは new_game だけ）
     if(S&&S.over){$("modal").hidden=true;render();return`結果の画面を閉じました（${S.over==="win"?"勝利":"敗北"}）。次のゲームは new_game`}
-    // 押すのは下の行のボタン（了解・完了・閉じる）。「やり直す」など danger のボタンや、建設・陣形の選択肢は押さない
-    const foot=[...$("modalCard").querySelectorAll(":scope > .row")].pop(),btns=foot?[...foot.querySelectorAll("button")]:[];
-    const btn=btns.find(b=>b.classList.contains("primary"))||btns.find(b=>!b.classList.contains("danger"));
-    if(btn)btn.click();else closeModal();
+    pressDialog();
     return"閉じました";
   }),
 
   moveFleet:(fleetId,to)=>act("move",async()=>{
     ensureMap();const f=myFleet(fleetId),p=planetById(to);
-    if(f.moved)fail(`${f.name} はこのターン行動済みです`);
-    const opt=moveOptions(f).find(o=>o.to===p.id);
-    if(!opt)fail(`${f.name}（${planet(f.node).name}）から ${p.name} へは移動できません。隣接する星か、自国の星（亜空間移動）を選んでください`);
-    if(opt.kind.startsWith("不可"))fail(`${p.name} へは進めません：${opt.kind}`);
+    if(f.moved)fail(movedMsg(f));
+    const opts=moveOptions(f),opt=opts.find(o=>o.to===p.id);
+    const can=`${f.name} が行ける先：${opts.filter(o=>!o.kind.startsWith("不可")).map(o=>`${o.to}${o.name}=${shortKind(o.kind)}`).join("、")||"なし"}`;
+    if(!opt&&p.id===f.node)fail(`${f.name} はいま ${p.name} にいます（とどまるなら何もしなくてよい）。${can}`);
+    if(!opt)fail(`${f.name}（${planet(f.node).name}）から ${p.name} へは移動できません（隣接する星か、自国の星への亜空間移動だけ）。${can}`);
+    if(opt.kind.startsWith("不可"))fail(`${p.name} へは進めません：${opt.kind}。${can}`);
     showAction(`${f.name} → ${p.name}（${opt.kind}）`);
     S.sel=f.node;S.selFleet=f.id;S.mode="move";render();await sleep(pace);
     S.mode=null;await orderMove(f,p.id,p.id!==f.node&&!neighbors(f.node).includes(p.id));
@@ -390,22 +528,34 @@ const api={
   }),
   intercept:(fleetId)=>act("intercept",async()=>{
     ensureMap();const f=myFleet(fleetId);
-    if(f.moved)fail(`${f.name} はこのターン行動済みです`);
-    const ef=intruder(f);if(!ef)fail(`${planet(f.node).name} に迎撃できる敵はいません`);
+    if(f.moved)fail(movedMsg(f));
+    const ef=intruder(f);
+    if(!ef){
+      const can=myFleets().filter(x=>!x.moved&&intruder(x)).map(x=>`${x.name}=ID${x.id}`);
+      fail(`${planet(f.node).name} に迎撃できる敵はいません（迎撃は、艦隊と同じ星に敵が居座っているときだけ。状況テキストに「迎撃可」と出る）。${can.length?`迎撃できる艦隊：${can.join("、")}`:"いま迎撃できる艦隊はありません"}。敵のいる星へ攻め込むなら move_fleet`);
+    }
     showAction(`${f.name} が ${ef.name} を迎撃`);focusPlanet(f.node,f.id);await sleep(pace);
     intercept(f);return`${ef.name} との戦闘を開始`;
   }),
   investResearch:(amount)=>act("invest",async()=>{
-    ensureMap();const v=Number(amount);
-    if(![30,60,120].includes(v))fail("投資額は 30・60・120 のいずれかです");
-    if(!researchOpen())fail(researchInfo().note);
-    if(typeof investLeft==="function"&&v>investLeft())fail(`研究への投資は1ターンに${INVEST_CAP}まで。このターンはあと ${investLeft()}`);
-    needFunds(v,"研究投資");showAction(`研究に ${v} 投資`);invest(v);
-    const r=researchInfo();return r.next?`研究進捗 ${r.next.progress}/${r.next.need}（${r.next.name}）`:"研究完了";
+    ensureMap();
+    if(!researchOpen())fail(`いまは研究に投資できません（${researchInfo().note}）。資金は施設・造船・修理などに回してください`);
+    // 額は30刻みに丸め、1ターンの上限と手持ちに収まる分だけ投資する（30・60・120 以外の額や、多すぎる額で断らない）
+    let v=Math.floor(Number(amount)/30)*30;
+    if(!(v>=30))fail(`投資額は 30 以上の数で指定してください（30刻み、1ターンに${investCap()}まで。例：amount=60）`);
+    if(investRoom()<30)fail(`研究への投資は1ターンに${investCap()}まで。このターンはもう投資できません（次のターンに）`);
+    if(S.funds<30)fail(`資金不足：研究投資には 30 必要（現在 ${S.funds}）`);
+    const m=investMax();
+    if(v>m){note(`${amount} は投資できないので ${m} にしました（1ターンの上限まであと${investRoom()}・資金${S.funds}）`);v=m}
+    else if(v!==Number(amount))note(`投資額は30刻みなので ${v} にしました`);
+    showAction(`研究に ${v} 投資`);
+    let done=0;
+    for(let rest=v;rest>0&&researchOpen();){const c=rest>=120?120:rest>=60?60:30;invest(c);rest-=c;done+=c} // 本体のボタンと同じ額（30・60・120）に分けて入れる。途中で開発が終わり、次の艦級がなければそこまで
+    const r=researchInfo();return`${done} 投資。`+(r.next?`研究進捗 ${r.next.progress}/${r.next.need}（${r.next.name}）`:"研究完了");
   }),
   refitShip:(fleetId,shipIndex,alloc)=>act("refit",async()=>{
     ensureMap();const f=myFleet(fleetId),s=f.ships[Number(shipIndex)];
-    if(!s)fail(`${f.name} に ${shipIndex} 番艦はいません（0〜${f.ships.length-1}）`);
+    if(blank(shipIndex)||!s)fail(`${f.name} に ${blank(shipIndex)?"ship_index（何番艦か）の指定がありません":`${shipIndex} 番艦はいません`}（0〜${f.ships.length-1} で指定。0 が旗艦）`);
     const c=CLASSES[s.cls],cap=capOf("P"),a={};
     if(!STAT_KEYS.some(k=>alloc?.[k]!=null))fail(`変える項目（${STAT_KEYS.join("・")}）を1つ以上書いてください`);
     // 書かなかった項目は今の値のまま
@@ -427,7 +577,7 @@ const api={
   setFormation:(fleetId,key)=>act("form",async()=>{
     ensureMap();const f=myFleet(fleetId);
     if(typeof FORM==="undefined")fail("このバージョンのゲームには陣形がありません");
-    if(!FORM[key])fail(`陣形は ${FORM_KEYS.join("・")} のいずれかです`);
+    if(!FORM[key])key=FORM_KEYS.find(k=>FORM[k].name===String(key??"").trim())||fail(`陣形は ${FORM_KEYS.map(k=>`${k}=${FORM[k].name}`).join("・")} のいずれかです`);
     f.form=key;focusPlanet(f.node,f.id);showAction(`${f.name} の陣形を${FORM[key].name}に`);
     openFormation(f);await sleep(pace*2);if(dialogOpen())closeModal();
     log(`${f.name}の陣形を${FORM[key].name}に変更。`);render();
@@ -435,13 +585,17 @@ const api={
   }),
   buildShip:(fleetId,classIndex,replace)=>act("ship",async()=>{
     ensureMap();const f=myFleet(fleetId),yp=planet(f.node),ci=Number(classIndex),c=CLASSES[ci];
-    if(yp.owner!=="P"||!yp.yard)fail(`${yp.name} には自国の造船所がありません`);
-    if(!c)fail("艦級の番号が不正です");if(ci>S.tier)fail(`${c.name} はまだ開発されていません`);
+    if(yp.owner!=="P"||!yp.yard){
+      const at=myFleets().filter(x=>{const q=planet(x.node);return q.owner==="P"&&q.yard}).map(x=>`${x.name}=ID${x.id}`);
+      fail(`${f.name} のいる ${yp.name} には自国の造船所がありません（造船は、造船所のある自国の星にいる艦隊だけ）。${at.length?`造船所にいる艦隊：${at.join("、")}`:"いま造船所にいる艦隊はありません"}`);
+    }
+    if(!c||!Number.isInteger(ci))fail(`艦級は class_index=0〜${S.tier} で指定してください（いま造れるいちばん新しい艦級は ${S.tier}=${CLASSES[S.tier].name}）`);
+    if(ci>S.tier)fail(`${c.name} はまだ開発されていません。いま造れるのは class_index=0〜${S.tier}（${S.tier}=${CLASSES[S.tier].name}）`);
     const cc=bcost(ci,yp);
     focusPlanet(f.node,f.id);
     if(replace){
       const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<=f.ships[m].cls)?i:m,-1); // 同じ艦級なら随伴艦から（ゲームの造船所と同じ）
-      if(worst<0)fail(`${f.name} に ${c.name} より旧式の艦がいません`);
+      if(worst<0)fail(`${f.name} に ${c.name} より旧式の艦がいません（置換するものがない）。${f.ships.length<4?`追加で造るなら replace を付けずに build_ship(fleet_id=${f.id}, class_index=${ci})（${cc}）`:"この艦隊は4隻とも最新なので、造船は要りません"}`);
       const refund=Math.floor(CLASSES[f.ships[worst].cls].cost/2);
       if(S.funds+refund<cc)fail(`資金不足：実費 ${cc-refund} 必要（現在 ${S.funds}）`);
       showAction(`${f.name} の旧艦を ${c.name} に置換`);openYard(f);await sleep(pace);
@@ -449,7 +603,7 @@ const api={
       openYard(f);await sleep(pace);closeModal();
       return`${CLASSES[old.cls].name} を ${c.name} に置換（実費 ${cc-refund}）。新しい艦は標準配分なので必要なら改装を`;
     }
-    if(f.ships.length>=4)fail("艦隊は最大4隻です。replace=true で旧艦と置換できます");
+    if(f.ships.length>=4)fail(`艦隊は最大4隻です。${f.ships.some(x=>x.cls<ci)?`旧艦と置換するなら build_ship(fleet_id=${f.id}, class_index=${ci}, replace=true)`:`${f.name} は4隻とも ${c.name} 以上なので、造船は要りません`}`);
     needFunds(cc,`${c.name}の建造`);
     showAction(`${f.name} に ${c.name} を建造`);openYard(f);await sleep(pace);
     S.funds-=cc;f.ships.push(makeShip(ci,"P"));log(`${f.name}に${c.name}を配備。`);
@@ -459,9 +613,10 @@ const api={
   repairFleet:(fleetId)=>act("repair",async()=>{
     ensureMap();const f=myFleet(fleetId),p=planet(f.node);
     if(p.owner!=="P")fail("修理は自国の星にいる艦隊だけです");
-    const dmg=f.ships.reduce((s,x)=>s+(x.maxHp-x.hp),0);if(!dmg)fail("損傷はありません");
-    needFunds(Math.ceil(dmg/2),"修理");focusPlanet(f.node,f.id);showAction(`${f.name} を修理`);repair(f);
-    return`修理完了（${Math.ceil(dmg/2)}）`;
+    if(!fleetDamage(f))fail("損傷はありません");
+    const cost=repairCost(f);
+    needFunds(cost,"修理");focusPlanet(f.node,f.id);showAction(`${f.name} を修理`);repair(f);
+    return`修理完了（${cost}）`;
   }),
   newFleet:(planetId)=>act("newfleet",async()=>{
     ensureMap();const p=myPlanet(planetId);
@@ -472,17 +627,17 @@ const api={
     return`${f.name}（ID ${f.id}）を編成。このターンは行動済み`;
   }),
   buildFacility:(planetId,key)=>act("build",async()=>{
-    ensureMap();const p=myPlanet(planetId);
-    if(!FAC[key])fail(`施設キーは ${FAC_KEYS.join("・")} のいずれかです`);
-    if(hasF(p,key))fail(`${p.name} には ${FAC[key].name} が既にあります`);
-    if(p.fac.length>=p.slots)fail(`${p.name} の施設スロットは満杯です（${p.slots}）。demolish_facility で空けられます`);
+    ensureMap();const p=myPlanet(planetId);key=facKey(key);
+    const can=()=>{const ks=p.fac.length<p.slots?FAC_KEYS.filter(k=>!hasF(p,k)):[];return ks.length?`${p.name} に建てられるのは：${ks.map(k=>`${k}=${FAC[k].name}${FAC[k].cost}`).join("・")}`:`${p.name} にはもう建てられません`};
+    if(p.fac.length>=p.slots)fail(`${p.name} の施設スロットは満杯です（${p.slots}）。ほかの星に建ててください（どうしても入れ替えるなら demolish_facility）`);
+    if(hasF(p,key))fail(`${p.name} には ${FAC[key].name} が既にあります。${can()}`);
     needFunds(FAC[key].cost,FAC[key].name);
     focusPlanet(p.id);showAction(`${p.name} に ${FAC[key].name} を建設`);openBuild(p);await sleep(pace);$("modal").hidden=true;
     buildFac(p,key);return`${p.name} に ${FAC[key].name} を建設（${FAC[key].cost}）`;
   }),
   demolishFacility:(planetId,key)=>act("demolish",async()=>{
-    ensureMap();const p=myPlanet(planetId);
-    if(!hasF(p,key))fail(`${p.name} に ${FAC[key]?.name||key} はありません`);
+    ensureMap();const p=myPlanet(planetId);key=facKey(key);
+    if(!hasF(p,key))fail(`${p.name} に ${FAC[key].name} はありません（いまの施設：${p.fac.map(k=>`${k}=${FAC[k].name}`).join("・")||"なし"}）`);
     focusPlanet(p.id);showAction(`${p.name} の ${FAC[key].name} を撤去`);await sleep(pace/2);demolish(p,key);return"撤去しました（返金なし）";
   }),
   survey:(planetId)=>act("survey",async()=>{
@@ -503,7 +658,7 @@ const api={
   }),
   newGame:()=>act("new",async()=>{
     if(B)fail("戦闘中はやり直せません");
-    $("modal").hidden=true;newGame();render();return"新しいゲームを開始（最初の通信を dismiss_dialog で閉じてください）";
+    $("modal").hidden=true;newGame();render();return"新しいゲームを開始（最初の通信は、次の操作で自動的に閉じます）";
   }),
 
   /* ---------- 戦術戦闘 ---------- */
@@ -566,7 +721,7 @@ const RULES=`# 辺境星系戦記 ルール要約（AIプレイヤー向け）
 - 敵の艦級は6ターンごとに上がる（ターン7・13・19）。ヴァルガは本星から3ターンごとに増援を出す。
 - ターン18か、ヴァルガ本星（ID 6）占領で異生体ゾアが出現。そのときヴァルガ本星がヴァルガ領なら休戦になり、最後まで解けない（ヴァルガ艦隊は自領へ引き上げて動かなくなる。休戦中はヴァルガの星・ヴァルガ艦隊のいる星へ入れず、迎撃もできない）。巣からは群れが何度も湧く。群れに艦隊戦で3回勝つと進化し、以後に湧く群れは改になる（すでにいる群れは改にならない）。異生体に浸食された星は施設がなくなる。
 ## 内政
-- 研究投資（30/60/120、1ターンに合計120まで）で次の艦級を開発。完成で改装上限（各項目）+1。セラフ級（対異生体。異生体と浸食核・巣の中枢への攻撃が1.5倍）はゾア出現後、アークライト級の次に開発できる。
+- 研究投資（30刻み、1ターンに合計120まで）で次の艦級を開発。完成で改装上限（各項目）+1。セラフ級（対異生体。異生体と浸食核・巣の中枢への攻撃が1.5倍）はゾア出現後、アークライト級の次に開発できる。
 - 艦級：0 ラーク級(耐久12,P6,40) 1 ファルコ級(20,P9,70,研究160) 2 グレイヴ級(30,P12,110,研究300) 3 アークライト級(44,P16,160,研究450) 4 セラフ級(56,P20,200,研究600)
 - 造船：造船所のある自国の星で、艦隊に追加建造（工業惑星は20%引き）か、旧艦と置換（旧艦の半額下取り）。
 - 施設（スロット数まで）：mine 採掘所60（収入+10、鉱物惑星+20）／yard 造船所80／sats 防衛衛星群50（防衛上限+20、要塞+35）／lab 研究所70（毎ターン研究+10、遺跡+25。開発できる艦級がないあいだは貯まらない）／flak 対空砲台60（この星での艦隊戦〈防衛戦・迎撃〉の開始時に敵全艦5ダメージ）。
@@ -588,7 +743,8 @@ const RULES=`# 辺境星系戦記 ルール要約（AIプレイヤー向け）
 - 自軍艦隊は陣形を持つ（set_formation、いつでも変更でき行動は消費しない）。戦闘開始時の並びと補正が変わる：line 横陣＝標準・補正なし／wedge 楔形＝前に出て始まり1ラウンド目は移動+1（旗艦も前に出る）／square 方陣＝旗艦を囲む、旗艦の隣に味方がいる間は旗艦の被ダメージ-25%／crane 鶴翼＝両翼が前に出る、側面・背面への攻撃+15%／rear 後衛陣＝後ろに下がって始まる、ミサイル+1。目安：突撃や強襲には方陣、砲撃には楔形、重装には鶴翼、ミサイル艦が多ければ後衛陣。
 - 戦闘が終わったら battle_close で作戦卓へ戻る。
 ## 操作上の注意
-- 通信ウィンドウ（dialog）が開いている間は他の操作ができない。内容を読んで dismiss_dialog。
+- 通信ウィンドウ（dialog）は、次の操作をすると自動で閉じる（内容は返り値と状況テキストに出る。dismiss_dialog は呼ばなくてよい）。
+- 操作の返り値の「のこりの手」（next）に、いまの資金で払える内政と未行動の艦隊が出る。資金を使ったあと・艦隊を動かしたあとは、状況テキストではなくこちらを見て次の手を選ぶ。断られたときは、理由と一緒に出る「選べるもの」から選び直す。
 - IDは状況テキスト（get_summary）や get_state に出る数値を使う。戦闘ユニットのIDは「ID30」のような番号（get_state なら battle.units[].id）。
 `;
 
