@@ -327,7 +327,7 @@ async function playTurn() {
     step++;
     plog.sentMessages(messages);
     const msg = await chat(slim(messages));
-    // 地の文は1行、文字で書かれた say{text:「…」} は1件ずつ字幕にする（生の記法は出さない）
+    // 地の文は1行、文字で書かれた say{text:「…」} は1件ずつ字幕にする（生の記法や、end_turn だけの行のようなツール名は出さない）
     const { lines, calls: written } = splitReply(stripThink(msg.content));
     const talk = lines.join("\n");
     if (talk) memo = turnTalk = talk.slice(0, 200);

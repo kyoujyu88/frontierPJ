@@ -34,10 +34,29 @@ eq(lines("よし行くよ！ move_fleet(fleet_id=1, to=2) end_turn()"), ["よし
 eq(calls("<|tool_call>call:battle_move{unit_id:30,x:3,y:2}<tool_call|>前に出るよ"), [["battle_move", { unit_id: 30, x: 3, y: 2 }]], "Gemma の call:name{…} を拾う");
 eq(calls("call:move_fleet{fleet_id:1,to:3<tool_call|>"), [["move_fleet", { fleet_id: 1, to: 3 }]], "閉じ括弧の無い call:name{… も拾う");
 eq(calls("build{planet_id:2, kind:\"mine\"} say{text:「採掘所を建てたよ」}"), [["build", { planet_id: 2, kind: "mine" }]], "say 以外の name{…} の形も拾う");
-eq(lines("end_turn（ターン終了）するね"), ["end_turn（ターン終了）するね"], "全角の括弧は呼び出しとみなさない");
+eq(lines("end_turn（ターン終了）するね"), ["ターン終了するね"], "全角の括弧は呼び出しとみなさない（ツール名は外して括弧の中を残す）");
+eq(calls("end_turn（ターン終了）するね"), [], "文の中のツール名は実行しない");
+
+// 括弧の付かないツール名（2026-11 の録画で字幕に「end_turn」とだけ出た）
+eq(lines("end_turn"), [], "ツール名だけの返事は字幕に出さない");
+eq(calls("end_turn"), [["end_turn", {}]], "ツール名だけの返事は引数なしの呼び出しにする");
+eq(lines("`end_turn`。"), [], "記号で飾ったツール名だけでも字幕に出さない");
+eq(lines("よし、内政はおしまい！\nend_turn"), ["よし、内政はおしまい！"], "ツール名だけの行は外し、ほかの行は残す");
+eq(calls("よし、内政はおしまい！\nend_turn"), [["end_turn", {}]], "ツール名だけの行は呼び出しにする");
+eq(lines("dismiss_dialog → end_turn"), [], "ツール名を並べただけの行も出さない");
+eq(calls("dismiss_dialog → end_turn"), [["dismiss_dialog", {}], ["end_turn", {}]], "並べたツール名は順に呼び出しにする");
+eq(calls("move_fleet(fleet_id=1, to=2)\nmove_fleet"), [["move_fleet", { fleet_id: 1, to: 2 }]], "括弧つきで呼んだ名前は重ねて足さない");
+eq(lines("これで end_turn するね！"), ["これでターン終了するね！"], "文の中のツール名は日本語の操作名に置き換える");
+eq(lines("第1艦隊を move_fleet でリュネへ！"), ["第1艦隊を艦隊の移動でリュネへ！"], "文の中の別のツール名も置き換える");
+eq(T.cleanTalk("end_turn"), "", "say ツールに渡されたツール名だけのセリフも出さない");
+eq(lines('say{text:「end_turn」}'), [], "say の中身がツール名だけでも出さない");
+eq(lines("I'll say hello and survey the area."), ["I'll say hello and survey the area."], "_ を含まない名前は英語の文の中では外さない");
+eq(lines("say"), [], "ただし行が say だけなら出さない");
 
 // 修正前のプレイログ（記法つきで1件に残ったセリフ）
 eq(splitRecordedTalk(seen, "のあ").length, 3, "記録済みのセリフも1件ずつに分けられる");
 eq(splitRecordedTalk("ふつうのセリフ", "のあ"), ["ふつうのセリフ"], "記法の無いセリフはそのまま");
+eq(splitRecordedTalk("end_turn", "のあ"), [], "記録済みの操作名だけのセリフは出さない");
+eq(splitRecordedTalk("これで end_turn するね", "のあ"), ["これでターン終了するね"], "記録済みのセリフの中のツール名も置き換える");
 
 process.exit(failed ? 1 : 0);

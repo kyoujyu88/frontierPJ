@@ -135,8 +135,10 @@ export function cues(events) {
   return talks.flatMap((e, i) => {
     const start = at(e), next = talks[i + 1] ? at(talks[i + 1]) : Infinity;
     const end = Math.max(start + 100, Math.min(start + (e.durMs ?? 2500 + e.text.length * 120), next));
-    // 修正前のログには say{text:「…」} が並んだまま1件で残っていることがある。1件ずつに分け、表示時間を文字数で割り振る
+    // 修正前のログには say{text:「…」} が並んだまま1件で残っていることがある。1件ずつに分け、表示時間を文字数で割り振る。
+    // 操作名だけのセリフ（end_turn など）は出さない
     const parts = splitRecordedTalk(e.text, e.who ?? "");
+    if (!parts.length) return [];
     if (parts.length === 1) return [{ start, end, who: e.who ?? "", text: parts[0] }];
     const total = parts.reduce((n, p) => n + p.length, 0);
     let t = start;
@@ -173,7 +175,10 @@ export function describe(e, { all = false } = {}) {
     case "start": return { kind: "sys", text: `${e.name}（${e.model} @ ${e.baseUrl}）がプレイを始めます${e.think ? `　考える量 ${e.think}` : ""}　temperature ${e.temperature}` };
     case "video": return { kind: "sys", text: `録画を始めました${e.name ? `：${e.name}` : ""}` };
     case "turn": return { kind: "turn", text: `── ターン${e.turn}　資金${e.funds} ──` };
-    case "talk": return { kind: "talk", text: splitRecordedTalk(e.text, e.who ?? "").map(t => `${e.who ?? ""}「${t}」`).join("\n") };
+    case "talk": {
+      const parts = splitRecordedTalk(e.text, e.who ?? "");
+      return parts.length ? { kind: "talk", text: parts.map(t => `${e.who ?? ""}「${t}」`).join("\n") } : { kind: "sys", text: `（操作名だけのセリフ「${e.text}」は字幕から外しました）` };
+    }
     case "tool": return { kind: "op", text: `${e.by === "auto" ? "（自動）" : "→ "}${e.name} ${j(e.args)}${e.message ? `　${e.ok === false ? "✗" : "○"} ${e.message}` : ""}${e.events?.length ? `\n    ${e.events.join("\n    ")}` : ""}` };
     case "refuse": return { kind: "op", text: `✗ ${e.name} ${j(e.args)}　${e.reason}` };
     case "battle": return { kind: "battle", text: `戦闘「${e.title}」${e.result}` };
