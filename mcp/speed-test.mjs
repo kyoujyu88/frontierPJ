@@ -5,6 +5,25 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "node:url";
+import { readFile } from "node:fs/promises";
+import { chromium } from "playwright";
+
+/* 先に、倍速で縮むのが本体の wait()・banner() のタイマーだけで、ほかの setTimeout（効果音・録画など）はそのままかを、ページの中で直接測る */
+async function timersAtSpeed2() {
+  const br = await chromium.launch(), pg = await br.newPage();
+  await pg.goto(new URL("../game/frontier-war.html", import.meta.url).href);
+  await pg.addScriptTag({ content: await readFile(new URL("./game-api.js", import.meta.url), "utf8") });
+  const r = await pg.evaluate(`(async()=>{
+    const ms=async f=>{const t=performance.now();await f();return performance.now()-t};
+    gameAPI.setSpeed(2);B={};  // 戦闘中と同じ「倍速の場面」にする
+    const w=await ms(()=>wait(400)), plain=await ms(()=>new Promise(r=>setTimeout(r,400)));
+    B=null;const after=await ms(()=>wait(400));
+    return {w,plain,after};
+  })()`);
+  await br.close();
+  return r;
+}
+const tm = await timersAtSpeed2();
 
 async function battleAt(speed) {
   const c = new Client({ name: "speed-test", version: "1" });
@@ -25,6 +44,9 @@ console.log(`1倍：戦闘 ${(a.battle / 1000).toFixed(1)}秒（${a.result}・${
 console.log(`2倍：戦闘 ${(b.battle / 1000).toFixed(1)}秒（${b.result}・${b.rounds}ラウンド）・陣形 ${b.map}ms`);
 let failed = 0;
 const check = (ok, what) => { console.log(`${ok ? "✓" : "✗"} ${what}`); if (!ok) failed++; };
+check(tm.w < 300, `倍速の場面では本体の wait(400) が縮む（${tm.w.toFixed(0)}ms）`);
+check(tm.plain >= 380, `ほかの setTimeout(400) は縮まない（${tm.plain.toFixed(0)}ms）`);
+check(tm.after >= 380, `戦闘が終われば wait(400) は元の長さ（${tm.after.toFixed(0)}ms）`);
 check(a.ok && b.ok && a.result && b.result, "どちらも戦闘が決着して作戦卓に戻る");
 check(a.battle / b.battle >= 1.6, `2倍にすると戦闘の時間がおよそ半分になる（${(a.battle / b.battle).toFixed(2)}倍速）`);
 check(Math.abs(a.map - b.map) < 400, "作戦卓の操作（陣形の変更）の演出の長さは変わらない");

@@ -39,10 +39,13 @@ const autoResults=[];  // オートで片付けた戦闘の結果
 /* ---------- 演出の倍速（setSpeed） ----------
  * 戦闘・ターン処理（敵の移動）・艦隊の移動の演出だけを speed 倍の速さで流す。ゲームの中身（乱数・オートの判断・結果）は変わらず、待ち時間だけが縮む。
  * 本体の演出は wait()（setTimeout）・tween()（requestAnimationFrame）・banner()（帯の CSS アニメ）で時間を数えるので、
- * 倍速の場面のあいだだけ、setTimeout の時間と tween・帯の長さを 1/speed にする。作戦卓の操作や通信の表示は今までどおり */
+ * 倍速の場面のあいだだけ、wait・banner のタイマーと tween・帯の長さを 1/speed にする。作戦卓の操作や通信の表示は今までどおり */
 let speed=1,moving=false;
 const sped=()=>speed>1&&!window.FAST&&(!!B||!!turnTask||moving);
-window.setTimeout=function(fn,ms,...a){return realTimeout(fn,sped()?Math.max(0,Number(ms)||0)/speed:ms,...a)};
+/* 縮めるのは本体の wait() と banner() から来たタイマーだけ（wait は const なので差し替えられず、呼び出し元で見分ける）。
+ * 効果音・終わりの画面・録画などほかのタイマーは、倍速の場面でも元の長さのまま */
+const fromAnim=()=>/\bat (?:wait|banner) \(/.test(new Error().stack||"");
+window.setTimeout=function(fn,ms,...a){return realTimeout(fn,sped()&&fromAnim()?Math.max(0,Number(ms)||0)/speed:ms,...a)};
 if(typeof tween==="function"){
   const orig=tween;
   // 本体の tween と同じ動き（進み具合は requestAnimationFrame の時刻で数え、画面が隠れていても止まらないよう時間切れでも終える）を、長さ 1/speed で

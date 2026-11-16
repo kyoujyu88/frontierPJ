@@ -16,8 +16,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LESSON = "爆装を2以上積んだ艦隊で惑星を攻める";
 let prompts = [], reflections = 0;
 // LLM のふるまい：normal／empty（黙った返事を返す）／flaky（2ターン目の最初だけ 400）／notools（ツール非対応の 400）／always400（毎回 400）
-// ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）
-let mode = "normal", emptySent = false;
+// ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）／emptytalk（空と地の文だけの返事を交互に返す）
+let mode = "normal", emptySent = false, etStart = "", etN = 0;
 // Ollama の /api/ps に見せるコンテキスト長（0 なら /api/ps は 404。ai-player はコンテキスト長が分からず、毎ターン会話を作り直す）
 let psCtx = 0;
 // 送られてきた問い合わせ（keep のテスト用。ターンをまたいで会話を続けたかを見る）
@@ -80,6 +80,13 @@ const llm = http.createServer(async (req, res) => {
       if (starts) out = reply({ content: "", tool_calls: [callOf(`r${sentAll.length}`, "invest_research", { amount: 30, say: "研究に少し投資するよ！" })] });
       out.usage = { prompt_tokens: Math.ceil(JSON.stringify(b.messages).length / 2), completion_tokens: 20 };
     }
+    // emptytalk：ターンごとに 空→地の文だけ→空→地の文だけ→空→end_turn（空は3回だが続いてはいない）
+    if (mode === "emptytalk") {
+      if (starts && last.content !== etStart) { etStart = last.content; etN = 0; }
+      etN++;
+      out = etN >= 6 ? reply({ content: "", tool_calls: [callOf(`t${sentAll.length}`, "end_turn", {})] })
+        : reply({ content: etN % 2 ? "" : "うーん、どうしようかな" });
+    }
   }
   res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(out));
 });
@@ -92,7 +99,7 @@ let logNo = 0;
 function run(turns, extra = [], serverExtra = []) {
   return new Promise((ok, ng) => {
     const p = spawn(process.execPath, [path.join(HERE, "ai-player.mjs"), "--model", "mock", "--base-url", BASE, "--name", "テスト",
-      "--notes", notesFile, "--turns", String(turns), "--max-steps", "4", "--log-dir", logDir, "--log-name", `run${++logNo}`, ...extra, "--", "--headless", "--pace", "0", ...serverExtra], { stdio: ["ignore", "pipe", "inherit"] });
+      "--notes", notesFile, "--turns", String(turns), ...(extra.includes("--max-steps") ? [] : ["--max-steps", "4"]), "--log-dir", logDir, "--log-name", `run${++logNo}`, ...extra, "--", "--headless", "--pace", "0", ...serverExtra], { stdio: ["ignore", "pipe", "inherit"] });
     let log = ""; p.stdout.on("data", d => { log += d; });
     p.on("exit", code => code === 0 ? ok(log) : ng(new Error(`exit ${code}\n${log}`)));
   });
@@ -259,6 +266,13 @@ let l = await run(3, ["--no-notes"]);
   check(ev.filter(e => e.type === "empty").length === 6 && nudge.length === 3 && nudge.every(e => /のこりの手：資金\d+/.test(e.content)),
     `空の返事は1回目は聞き直し、2回目は「のこりの手」を見せる（空 ${ev.filter(e => e.type === "empty").length} 回・のこりの手 ${nudge.length} 回）`);
   check(ev.filter(e => e.type === "tool" && e.name === "end_turn").every(e => e.by === "ai") && !ev.some(e => e.type === "auto"), "空の返事のあと、自動進行にならずに本人が手を打つ");
+}
+mode = "emptytalk"; prompts = [];
+l = await run(2, ["--no-notes", "--max-steps", "8"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(ev.filter(e => e.type === "empty").length === 6 && !ev.some(e => e.type === "auto") && ev.filter(e => e.type === "tool" && e.name === "end_turn").every(e => e.by === "ai"),
+    `空の返事が話した返事をはさんで3回あっても、続いていなければ自動進行にしない（空 ${ev.filter(e => e.type === "empty").length} 回）`);
 }
 mode = "flaky"; prompts = [];
 l = await run(3, ["--no-notes"]);

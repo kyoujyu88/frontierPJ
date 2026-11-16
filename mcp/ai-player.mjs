@@ -198,18 +198,18 @@ ${USE_NOTES ? `\n${notesPrompt(notes, NOTES_CHARS)}` : ""}`.trimEnd();
 const TOOLS_CHARS = JSON.stringify(tools).length;
 const charsOf = (ms) => ms.reduce((t, m) => t + (typeof m.content === "string" ? m.content.length : 0) + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0);
 const sizeOf = {
-  last: null, perChar: 1,
+  last: null, perChar: null, // perChar：トークン/字（まだ測っていなければ null で、1字=1トークンとして数える）
   seen(messages, usage) {
     if (!usage?.prompt_tokens) { this.last = null; return; }
     this.last = { messages, count: messages.length, tokens: usage.prompt_tokens + (usage.completion_tokens ?? 0) };
     const r = usage.prompt_tokens / (charsOf(messages) + TOOLS_CHARS);
-    if (r > 0.2 && r < 3) this.perChar = Math.max(this.perChar === 1 ? 0 : this.perChar, r * 1.1);
+    if (r > 0.2 && r < 3) this.perChar = Math.max(this.perChar ?? 0, r * 1.1);
   },
   // messages を送ったときのトークン数の見積もり
   of(messages) {
     const l = this.last;
-    if (l && messages.length >= l.count && l.messages.every((m, i) => messages[i] === m)) return l.tokens + Math.ceil(charsOf(messages.slice(l.count)) * this.perChar);
-    return Math.ceil((charsOf(messages) + TOOLS_CHARS) * this.perChar);
+    if (l && messages.length >= l.count && l.messages.every((m, i) => messages[i] === m)) return l.tokens + Math.ceil(charsOf(messages.slice(l.count)) * (this.perChar ?? 1));
+    return Math.ceil((charsOf(messages) + TOOLS_CHARS) * (this.perChar ?? 1));
   },
 };
 /* コンテキスト長：--ctx がなければ Ollama に聞く（読み込み中のモデルの context_length。古い Ollama ならモデルの num_ctx）。分からなければ 0 */
@@ -303,13 +303,15 @@ async function digest(name, r) {
   else if (j.ok && j.funds != null) lines.push(`資金${j.funds}`);
   return { content: lines.join("\n"), short: null };
 }
-/* 手動戦闘では盤面のテキストが貯まっていくので、最新の1つだけ全文で送り、古いものは縮める（オート戦闘では縮めるものがなく、会話は後ろに足すだけ） */
+/* 手動戦闘では盤面のテキストが貯まっていくので、最新の1つだけ全文で送り、古いものは縮める（オート戦闘では縮めるものがなく、会話は後ろに足すだけ）。
+ * 前のターンから続けている会話（keepFrom より前）は縮めない：送るプロンプトの先頭が変わると、Ollama が全部を読み直すため */
 const OLD_NOTE = "（このときの状況テキストは省略。最新の状況は後ろのメッセージにあります）";
 const shortOf = new WeakMap();
+let keepFrom = 0;
 function slim(messages) {
   let last = -1;
   messages.forEach((m, i) => { if (shortOf.has(m)) last = i; });
-  return messages.map((m, i) => i < last && shortOf.has(m) ? { ...m, content: shortOf.get(m) } : m);
+  return messages.map((m, i) => i >= keepFrom && i < last && shortOf.has(m) ? { ...m, content: shortOf.get(m) } : m);
 }
 
 /* ---------- 自動進行（のあが詰まったときの保険） ---------- */
@@ -398,7 +400,7 @@ const START = "今の状況です。操作を始めてください。";
 function freshTurn(text) {
   const first = { role: "user", content: text };
   shortOf.set(first, `${text.split(START)[0]}${START}\n${OLD_NOTE}`);
-  convoTurns = 1;
+  convoTurns = 1; keepFrom = 0;
   return [{ role: "system", content: SYSTEM() }, first];
 }
 async function startTurn(turn) {
@@ -408,7 +410,7 @@ async function startTurn(turn) {
     const add = { role: "user", content: `【ターン${turn}】前のターンが終わりました。ここまでの状況テキストと「のこりの手」は古くなっています（資金・艦隊・星が変わっています）。下の新しい状況を見てください。\n${START}\n\n${sum}` };
     const est = sizeOf.of([...convo, add]);
     if (est + RESERVE <= CTX * 0.9) {
-      convo.push(add); convoTurns++;
+      keepFrom = convo.length; convo.push(add); convoTurns++;
       plog.write("context", { keep: true, turns: convoTurns, est });
       return convo;
     }
@@ -471,6 +473,7 @@ async function playTurn(turn) {
       } else log("  （空の返事だったので、もう一度聞きます）");
       continue;
     }
+    empty = 0; // 「空の返事が3回続いたら」なので、話した返事でも数え直す
     // content は必ず文字列にする（null だと Ollama が「invalid message content type: <nil>」の 400 で断る）
     messages.push({ role: "assistant", content: talk, ...(calls.length ? { tool_calls: calls } : {}) });
     if (!calls.length) {
@@ -479,7 +482,7 @@ async function playTurn(turn) {
       messages.push({ role: "user", content: ended ? "状況を見て、残りの戦闘や通信を片付けてください。" : `ツールで操作を続けてください。やることが終わったら end_turn。${nx ? `\n${nx}` : ""}` });
       continue;
     }
-    idle = 0; empty = 0;
+    idle = 0;
     for (const c of calls) {
       c.id ||= `call_${step}_${Math.random().toString(36).slice(2, 8)}`;
       let args = c.function.arguments;
