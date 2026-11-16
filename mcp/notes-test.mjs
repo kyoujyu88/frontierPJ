@@ -22,6 +22,8 @@ let mode = "normal", emptySent = false, etStart = "", etN = 0;
 let psCtx = 0;
 // /api/ps に見せるメモリの量（全体と、そのうち GPU の VRAM に載った分）
 const psSize = 20e9; let psVram = psSize;
+// /api/ps がこの回数だけモデルを返さない（すぐ外れた・タイミングで見つからない、のまね）
+let psMiss = 0;
 // 送られてきた問い合わせ（keep のテスト用。ターンをまたいで会話を続けたかを見る）
 let sentAll = [];
 // 会話の書き換えの見張り：同じターンの中で、前に送ったメッセージが次の問い合わせで変わっていたら数える（変わるとローカルLLMがプロンプト全体を読み直す）
@@ -33,6 +35,7 @@ const llm = http.createServer(async (req, res) => {
   let body = ""; for await (const c of req) body += c;
   if (req.url === "/api/ps") {
     if (!psCtx) { res.writeHead(404); return res.end(); }
+    if (psMiss > 0) { psMiss--; res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ models: [] })); }
     res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ models: [{ name: "mock:latest", model: "mock:latest", context_length: psCtx, size: psSize, size_vram: psVram,
       details: { family: "gemma3", parameter_size: "25.8B", quantization_level: "Q4_K_M" } }] }));
   }
@@ -277,10 +280,21 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   check(ld?.ctx === 24576 && ld.gpuPct === 75 && ld.cpuPct === 25 && ld.warnings?.length === 1 && ev.some(e => e.type === "ctx" && e.ctx === 24576)
     && /読み込み状態：コンテキスト長 24,576・メモリ 20\.0 GB：GPU（VRAM）15\.0 GB 75%／メインメモリ 5\.0 GB 25%・GPU RTX 4090 24GB/.test(out) && /⚠ モデルの 25% がメインメモリ/.test(out),
     "最初の返事のあと、実際のコンテキスト長（num_ctx より /api/ps を使う）とメモリの載り方を出し、メインメモリにはみ出していれば注意する");
+  check(/^[\d:]+\s+  コンテキスト長：モデル本来の上限/m.test(out) && /^[\d:]+\s+  ⚠ /m.test(out), "複数行の2行目以降にも時刻を付ける（操作盤の色分けに合わせる）");
   check(/LLM：mock（gemma3/.test(toText(ev)) && /読み込み状態：コンテキスト長 24,576/.test(toText(ev)), "台本（txt）にもモデルの詳細と読み込み状態が出る");
   psVram = psSize;
   out = await run(1, ["--no-notes"]);
   check(/メモリ 20\.0 GB すべて GPU（VRAM）/.test(out) && !/⚠/.test(out), "すべて GPU に載っていれば注意を出さない");
+  psVram = 0;
+  out = await run(1, ["--no-notes"]);
+  check(/メモリ 20\.0 GB：GPU を使っていません（すべてメインメモリ・CPU で計算）/.test(out) && !/⚠/.test(out), "GPU をまったく使っていなければ、注意ではなく読み込み状態の行に書くだけ");
+  psVram = psSize;
+  // 最初のターンに /api/ps で見つからなければ、次のターンにもう一度調べて、会話を続ける長さもその値にする
+  psMiss = 1;
+  out = await run(2, ["--no-notes"]);
+  ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(/見つかりませんでした（次のターンにもう一度調べます）/.test(out) && ev.some(e => e.type === "loaded" && e.ctx === 24576) && ev.filter(e => e.type === "ctx").map(e => e.ctx).join() === "16384,24576",
+    `/api/ps で見つからなければ次のターンに聞き直す（コンテキスト長 ${ev.filter(e => e.type === "ctx").map(e => e.ctx).join(" → ")}）`);
   psCtx = 0;
   out = await run(1, ["--no-notes"]);
   ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));

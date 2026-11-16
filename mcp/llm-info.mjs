@@ -89,14 +89,15 @@ export function describeLoaded(l, { gpu } = {}) {
   if (!l) return null;
   const mem = l.size == null ? "メモリ不明"
     : l.cpuPct === 0 ? `メモリ ${gb(l.size)} すべて GPU（VRAM）`
-    : l.gpuPct === 0 ? `メモリ ${gb(l.size)} すべてメインメモリ（CPU で計算）`
+    : l.gpuPct === 0 ? `メモリ ${gb(l.size)}：GPU を使っていません（すべてメインメモリ・CPU で計算）`
     : `メモリ ${gb(l.size)}：GPU（VRAM）${gb(l.sizeVram)} ${l.gpuPct}%／メインメモリ ${gb(l.sizeRam)} ${l.cpuPct}%`;
   return `コンテキスト長 ${l.ctx ? num(l.ctx) : "不明"}・${mem}${gpu ? `・GPU ${gpu}` : ""}`;
 }
 /* 遅くなりそうなときの注意 */
 export function loadWarnings(l, info) {
   const w = [];
-  if (l?.cpuPct > 0) w.push(`モデルの ${l.cpuPct}% がメインメモリに載っていて、その分は CPU で計算するので遅くなります（コンテキスト長を縮めるか、小さい量子化にすると GPU に収まります）`);
+  // 一部だけメインメモリにはみ出したとき（GPU をまったく使っていないときは、読み込み状態の行に書くだけにする）
+  if (l?.cpuPct > 0 && l.gpuPct > 0) w.push(`モデルの ${l.cpuPct}% がメインメモリに載っていて、その分は CPU で計算するので遅くなります（コンテキスト長を縮めるか、小さい量子化にすると GPU に収まります）`);
   if (l?.others?.length) w.push(`ほかのモデルも読み込まれています（${l.others.join("、")}）。VRAM を取り合います`);
   if (l?.ctx && info?.maxCtx && l.ctx > info.maxCtx) w.push(`コンテキスト長 ${num(l.ctx)} がモデル本来の上限 ${num(info.maxCtx)} を超えています`);
   return w;

@@ -176,8 +176,8 @@ export function describe(e, { all = false } = {}) {
   const j = (v) => JSON.stringify(v ?? {});
   switch (e.type) {
     case "start": return { kind: "sys", text: `${e.name}（${e.model} @ ${e.baseUrl}）がプレイを始めます${e.think ? `　考える量 ${e.think}` : ""}　temperature ${e.temperature}` };
-    case "model": return { kind: "sys", text: `LLM：${e.ollama === false ? `${e.model}（Ollama ではないので詳細は分かりません）` : describeModel(e.model, e)}${e.gpu ? `\n  GPU：${e.gpu}${e.gpuFrom ? `（${e.gpuFrom === "--gpu" ? "--gpu の指定" : e.gpuFrom}）` : ""}` : ""}` };
-    case "loaded": return { kind: "sys", text: `読み込み状態：${describeLoaded(e, { gpu: e.gpu })}${e.warnings?.length ? `\n  ⚠ ${e.warnings.join("\n  ⚠ ")}` : ""}` };
+    case "model": return { kind: "sys", text: `LLM：${e.ollama === false ? `${e.model}（Ollama ではないので詳細は分かりません）` : describeModel(e.model, e)}${e.gpu ? `\n  GPU：${e.gpu}${e.gpuFrom ? `（${e.gpuFrom === "--gpu" ? "--gpu の指定" : e.gpuFrom === "nvidia-smi" ? "この PC の nvidia-smi" : e.gpuFrom}）` : ""}` : ""}` };
+    case "loaded": return e.found === false ? { kind: "sys", text: "読み込み状態：Ollama の /api/ps にこのモデルが見つかりませんでした" } : { kind: "sys", text: `読み込み状態：${describeLoaded(e, { gpu: e.gpu })}${e.warnings?.length ? `\n  ⚠ ${e.warnings.join("\n  ⚠ ")}` : ""}` };
     case "ctx": return { kind: "sys", text: e.ctx ? `コンテキスト長 ${e.ctx}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します" };
     case "video": return { kind: "sys", text: `録画を始めました${e.name ? `：${e.name}` : ""}` };
     case "turn": return { kind: "turn", text: `── ターン${e.turn}　資金${e.funds} ──` };
