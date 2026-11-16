@@ -12,6 +12,8 @@
  *   --cdp <url>       起動済み Chrome に接続（例 http://127.0.0.1:9222）     GAME_CDP
  *   --headless        ウィンドウを出さない（テスト用）                        GAME_HEADLESS=1
  *   --pace <ms>       行動ごとの演出の間（既定 300、0で即時）                GAME_PACE
+ *   --battle-speed <n> 戦闘・ターン処理（敵の移動）・艦隊の移動の演出を n 倍の速さで流す（1〜4、既定 1）。  GAME_BATTLE_SPEED
+ *                     結果は変わらず、待ち時間だけが縮む（AIプレイの時間の6〜7割は戦闘の演出）
  *   --speaker <名前>  字幕・行動表示の名前（既定 のあ）                       GAME_SPEAKER
  *   --size 1280x720   ウィンドウの中身の大きさ                                GAME_SIZE
  *   --record <dir>    ゲーム画面を動画（.webm、BGM・効果音つき）で dir に録画する  GAME_RECORD
@@ -42,6 +44,7 @@ const GAME_PATH = path.resolve(HERE, opt("game", "GAME_PATH", "../game/frontier-
 const CDP = opt("cdp", "GAME_CDP", null);
 const HEADLESS = flag("headless", "GAME_HEADLESS");
 const PACE = Number(opt("pace", "GAME_PACE", 300));
+const SPEED = Number(opt("battle-speed", "GAME_BATTLE_SPEED", 1)) || 1;
 const SPEAKER = opt("speaker", "GAME_SPEAKER", "のあ");
 const [W, H] = opt("size", "GAME_SIZE", "1280x720").split("x").map(Number);
 const HTTP_PORT = opt("http", "GAME_HTTP", null);
@@ -74,7 +77,7 @@ let browser = null, page = null, opening = null;
 async function inject(pg) {
   if (await pg.evaluate(() => !!window.gameAPI).catch(() => false)) return;
   await pg.addScriptTag({ content: API_JS });
-  const r = await pg.evaluate(([pace, sp, auto]) => { gameAPI.setPace(pace); gameAPI.setSpeaker(sp); return gameAPI.setAutoBattle(auto); }, [PACE, SPEAKER, !MANUAL_BATTLE]);
+  const r = await pg.evaluate(([pace, sp, auto, speed]) => { gameAPI.setPace(pace); gameAPI.setSpeaker(sp); gameAPI.setSpeed?.(speed); return gameAPI.setAutoBattle(auto); }, [PACE, SPEAKER, !MANUAL_BATTLE, SPEED]);
   if (!r.ok) err(r.message);
 }
 async function openGame() {
@@ -204,6 +207,7 @@ function buildServer() {
     const t = await recStart.rec.start().catch(() => null);
     return { ok: true, recording: true, name: recStart.name, t0: t ?? recStart.t0, lag: t ? 0 : OLD_LAG_MS };
   });
+  tool("get_next", "いまの資金で払える内政と、まだ動かしていない艦隊（操作の返り値の「のこりの手」と同じもの）を短く返す。", {}, () => call("nextMoves"));
   tool("dismiss_dialog", "開いている通信ウィンドウを閉じる（「了解」を押す）。通信は次の操作をすれば自動で閉じるので、ふつうは呼ばなくてよい。", {}, () => call("dismissDialog"));
 
   // 作戦卓

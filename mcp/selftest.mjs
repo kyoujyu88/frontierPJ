@@ -81,6 +81,9 @@ const rules = await call("get_rules"); console.log("rules:", rules.length, "char
   if (typeof ghost !== "string" || !/第9艦隊 という自軍艦隊はいません。自軍艦隊：第1艦隊=ID\d/.test(ghost)) fail(`いない艦隊の名前の案内が返らない：${JSON.stringify(ghost).slice(0, 160)}`);
   const dup = await call("build_facility", { planet_id: 0, facility: "採掘所" }, { reject: true }); // 既にある施設。建てられるものを返す
   if (!/建てられるのは：/.test(dup.message ?? "")) fail(`断るときに建てられる施設が付かない：${dup.message}`);
+  // のこりの手：費用は「費用N」、艦隊・星はIDつきの呼び出しの形（「新艦隊(32)」の 32 を艦隊IDと読んだことがあった）
+  const nx = await call("get_next");
+  if (typeof nx !== "string" || !/^のこりの手：資金\d+/.test(nx) || !/新艦隊 new_fleet\(planet_id=\d+\) 費用\d+/.test(nx) || /新艦隊\(\d+\)/.test(nx)) fail(`get_next の「のこりの手」の書き方が違う：${String(nx).slice(0, 200)}`);
 }
 await call("say", { text: "テストを始めるよ！" });
 await call("build_facility", { planet_id: 6, facility: "mine" }, { reject: true }); // 敵の星には建てられない
@@ -89,6 +92,12 @@ for (let t = 0; t < MAX_TURNS; t++) {
   let s = await clearDialogs();
   if (s.over) { console.log("終了:", s.over); break; }
   console.log(`ターン${s.turn} 資金${s.funds} 研究${s.research.next ? s.research.next.progress + "/" + s.research.next.need : "-"} 自軍艦隊${s.myFleets.length}`);
+  {
+    // 状況テキスト：艦隊戦の相手には勝ち目（有利・互角・不利）、特性に合う施設が建っている星にはそう書く
+    const sm = await call("get_summary");
+    if (/=艦隊戦（/.test(sm) && !/対 こちら\d+（(有利|互角|不利)/.test(sm)) fail(`艦隊戦の移動先に勝ち目が出ていない：${sm.match(/=艦隊戦（[^\n]*/)?.[0]}`);
+    if (t >= 2 && /施設：リュネ（/.test(sm) && !/施設：リュネ（鉱物・空き\d+・採掘所は建設済み）/.test(sm)) fail(`採掘所が建っている鉱物惑星に「建設済み」と出ない：${sm.match(/施設：リュネ[^\n]*/)?.[0]}`);
+  }
   if (s.research.next && s.funds >= 120) { await call("invest_research", { amount: 60 }); s = await clearDialogs(); } // 開発完了の通信が出ることがある
   if (t === 1) {
     const r = await call("build_facility", { planet_id: 1, facility: "mine" });

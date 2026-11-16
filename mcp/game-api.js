@@ -28,11 +28,44 @@ function since(n){return events.filter(e=>e.seq>n).map(e=>e.kind==="battle"?`［
 const DIR_NAME=["右","下","左","上"];
 const FAC_KEYS=Object.keys(FAC);
 const STAT_KEYS=STATS.map(s=>s[0]);
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+/* このファイルの待ち（配信の間・通信や結果を見せる時間）と字幕・行動表示の時間は、演出の倍速（setSpeed）の影響を受けない元の setTimeout で数える */
+const realTimeout=window.setTimeout.bind(window);
+const sleep=ms=>new Promise(r=>realTimeout(r,ms));
 let pace=700;          // 配信用の「間」(ms)。0で即時
 let turnTask=null;     // 実行中の endTurn() の Promise
 let autoBattle=false;  // 戦術戦闘をオートで片付ける（MCPサーバーの既定。--manual-battle で手動）
 const autoResults=[];  // オートで片付けた戦闘の結果
+
+/* ---------- 演出の倍速（setSpeed） ----------
+ * 戦闘・ターン処理（敵の移動）・艦隊の移動の演出だけを speed 倍の速さで流す。ゲームの中身（乱数・オートの判断・結果）は変わらず、待ち時間だけが縮む。
+ * 本体の演出は wait()（setTimeout）・tween()（requestAnimationFrame）・banner()（帯の CSS アニメ）で時間を数えるので、
+ * 倍速の場面のあいだだけ、setTimeout の時間と tween・帯の長さを 1/speed にする。作戦卓の操作や通信の表示は今までどおり */
+let speed=1,moving=false;
+const sped=()=>speed>1&&!window.FAST&&(!!B||!!turnTask||moving);
+window.setTimeout=function(fn,ms,...a){return realTimeout(fn,sped()?Math.max(0,Number(ms)||0)/speed:ms,...a)};
+if(typeof tween==="function"){
+  const orig=tween;
+  // 本体の tween と同じ動き（進み具合は requestAnimationFrame の時刻で数え、画面が隠れていても止まらないよう時間切れでも終える）を、長さ 1/speed で
+  window.tween=function(ms,frame){
+    if(!sped())return orig(ms,frame);
+    if(reduceMotion||ANIM.fast){frame(1);return Promise.resolve()}
+    const d=Math.max(1,ms/speed);
+    return new Promise(res=>{const t0=performance.now();let done=false;
+      const fin=()=>{if(done)return;done=true;frame(1);res()};
+      const tick=t=>{if(done)return;const k=Math.min(1,(t-t0)/d);if(k>=1||ANIM.fast)return fin();frame(k);requestAnimationFrame(tick)};
+      requestAnimationFrame(tick);realTimeout(fin,d+300);
+    });
+  };
+}
+if(typeof banner==="function"){
+  const orig=banner;
+  // 帯を消すタイマーは上の setTimeout で縮むので、帯の CSS アニメの長さ（--bn-ms）も同じだけ縮める
+  window.banner=function(main,sub,side,ms){
+    const on=sped(),p=orig(main,sub,side,ms);
+    if(on){const m=Math.min(ms||1100,ANIM.fast?350:Infinity),inn=$("banner")?.firstElementChild;if(inn)inn.style.setProperty("--bn-ms",`${m/speed}ms`)}
+    return p;
+  };
+}
 
 class GameError extends Error{}
 const fail=m=>{throw new GameError(m)};
@@ -151,7 +184,7 @@ async function closeAutoBattle(){
   push("log",text);autoResults.push({seq,title,result:res,rounds:round,lost,ships:mine.length,downed,foes:foes.length});
   if(autoResults.length>50)autoResults.shift();
   showAction(`${title}：${res}`);
-  await sleep(Math.max(pace,window.FAST?0:600));
+  await sleep(Math.max(pace,window.FAST?0:600)/(speed>1?speed:1)); // 結果を見せる間も演出の倍速に合わせる
   if(B&&B.ended)closeBattle();
   await sleep(80);
 }
@@ -202,9 +235,11 @@ function formHint(pf,ef){
   return`陣形の目安：${ks.map(k=>`${k}=${FORM[k].name}`).join("か")}${ks.includes(cur)?"（今の陣形でよい）":`（今は${FORM[cur].name}。set_formation で変えられる）`}`;
 }
 /* 相手の艦隊の短い紹介：ドクトリンか異生体の弱点・戦力の比べ */
+/* 戦力の比べ：こちらが相手の1.3倍以上なら有利、0.9倍未満なら不利（2026-11-16 のプレイログでは、こちらが1.3倍未満の艦隊戦8回のうち4回負けた） */
+function odds(pf,ef){const a=fleetPower(pf),b=fleetPower(ef);return a>=b*1.3?"有利":a>=b*.9?"互角":"不利＝見送るか戦力を足してから"}
 function foeNote(pf,ef){
   const tag=ef.side==="M"?`異生体${S.evolved?"・進化後は正面が弱点":"・側面が弱点"}`:typeof docOf==="function"?docOf(ef).tag:"";
-  return`${ef.name}〈${tag}〉・${ef.ships.length}隻・戦力${Math.round(fleetPower(ef))} 対 こちら${Math.round(fleetPower(pf))}・${formHint(pf,ef)}`;
+  return`${ef.name}〈${tag}〉・${ef.ships.length}隻・戦力${Math.round(fleetPower(ef))} 対 こちら${Math.round(fleetPower(pf))}（${odds(pf,ef)}）・${formHint(pf,ef)}`;
 }
 function moveOptions(f){
   if(f.moved)return[];
@@ -353,17 +388,19 @@ function devSummary(st){
     if(free>0){
       const ks=FAC_KEYS.filter(k=>!hasF(p,k)),ok=ks.filter(k=>FAC[k].cost<=funds),ng=ks.filter(k=>FAC[k].cost>funds);
       const show=k=>BEST[p.trait]===k?`◎${k}=${FAC[k].name}${FAC[k].cost}（${FAC[k].desc(p)}）`:`${k}=${FAC[k].name}${FAC[k].cost}`;
-      if(ok.length)L.push(` 施設：${p.name}（${p.trait}・空き${free}）build_facility(planet_id=${p.id}, facility=…) ${ok.map(show).join("／")}${ng.length?`（資金不足：${ng.map(k=>`${k}${FAC[k].cost}`).join("・")}）`:""}`);
+      // 特性に合う施設がもうあるときは、そう書く（鉱物惑星＝採掘所と思い込んで、建設済みの星に何ターンも建てようとしたことがあった）
+      const has=BEST[p.trait]&&hasF(p,BEST[p.trait])?`・${FAC[BEST[p.trait]].name}は建設済み`:"";
+      if(ok.length)L.push(` 施設：${p.name}（${p.trait}・空き${free}${has}）build_facility(planet_id=${p.id}, facility=…) ${ok.map(show).join("／")}${ng.length?`（資金不足：${ng.map(k=>`${k}${FAC[k].cost}`).join("・")}）`:""}`);
       else if(ks.length)no.push(`${p.name}の施設${Math.min(...ks.map(k=>FAC[k].cost))}〜`);
     }
-    if(p.survey>0)add(40,` 探査：${p.name} survey(planet_id=${p.id}) 40 → 45%で収入+15（残り${p.survey}回）`,`${p.name}の探査`);
-    if(p.def<p.maxDef)add(30,` 防衛修復：${p.name} 防衛${p.def}/${p.maxDef} fortify(planet_id=${p.id}) 30で+15`,`${p.name}の防衛修復`);
+    if(p.survey>0)add(40,` 探査：${p.name} survey(planet_id=${p.id}) 費用40 → 45%で収入+15（残り${p.survey}回）`,`${p.name}の探査`);
+    if(p.def<p.maxDef)add(30,` 防衛修復：${p.name} 防衛${p.def}/${p.maxDef} fortify(planet_id=${p.id}) 費用30で+15`,`${p.name}の防衛修復`);
   }
   for(const f of st.myFleets){
-    if(f.repairCost)add(f.repairCost,` 修理：${f.name} repair_fleet(fleet_id=${f.id}) ${f.repairCost}`,`${f.name}の修理`);
+    if(f.repairCost)add(f.repairCost,` 修理：${f.name} repair_fleet(fleet_id=${f.id}) 費用${f.repairCost}`,`${f.name}の修理`);
     if(f.atShipyard){
       const yp=planet(f.at),cc=bcost(S.tier,yp),rp=replaceOf(S.fleets.find(x=>x.id===f.id),S.tier,yp);
-      if(f.ships.length<4)add(cc,` 造船：${f.name}（${f.ships.length}/4隻）build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${CLASSES[S.tier].name}を追加 ${cc}`,`${f.name}に${CLASSES[S.tier].name}を追加`);
+      if(f.ships.length<4)add(cc,` 造船：${f.name}（${f.ships.length}/4隻）build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${CLASSES[S.tier].name}を追加 費用${cc}`,`${f.name}に${CLASSES[S.tier].name}を追加`);
       else if(rp)add(rp.net,` 造船：${f.name} build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で旧艦を${CLASSES[S.tier].name}に置換 実費${rp.net}`,`${f.name}の旧艦を置換`);
     }
     const bo=f.ships.reduce((s,x)=>s+(x.alloc?.bo||0),0);
@@ -374,7 +411,7 @@ function devSummary(st){
     }
   }
   const yards=S.planets.filter(p=>p.owner==="P"&&p.yard);
-  if(st.myFleets.length<3&&yards.length)add(bcost(0,yards[0]),` 新艦隊：new_fleet(planet_id=${yards[0].id}) ${bcost(0,yards[0])}（ラーク級1隻の艦隊が増える）`,"新艦隊");
+  if(st.myFleets.length<3&&yards.length)add(bcost(0,yards[0]),` 新艦隊：new_fleet(planet_id=${yards[0].id}) 費用${bcost(0,yards[0])}（ラーク級1隻の艦隊が増える。編成したターンは動けない）`,"新艦隊");
   if(no.length)L.push(` 資金不足でいまは打てない（呼ばない）：${no.join("、")}`);
   return L.length?`■内政の候補（資金${funds}・収入+${st.incomePerTurn}/ターン。いま払えるものだけ。◎はその星の特性に合う施設）\n${L.join("\n")}`:"";
 }
@@ -382,30 +419,31 @@ function devSummary(st){
  * 状況テキストはターンの最初のものなので、資金を使ったあと・艦隊を動かしたあとの手はここで知らせる */
 function fleetNext(f){
   const opts=moveOptions(f).filter(o=>!o.kind.startsWith("不可"));
-  const near=opts.filter(o=>o.kind!=="亜空間移動").map(o=>`${o.to}${o.name}=${shortKind(o.kind)}${/爆装なし/.test(o.kind)?"・爆装なし":""}`);
+  const near=opts.filter(o=>o.kind!=="亜空間移動").map(o=>{const od=o.kind.match(/（(有利|互角|不利)/);return`${o.to}${o.name}=${shortKind(o.kind)}${od?`・${od[1]}`:""}${/爆装なし/.test(o.kind)?"・爆装なし":""}`});
   if(opts.some(o=>o.kind==="亜空間移動"))near.push("ほか自国の星へ亜空間移動");
   return`${f.name} ID${f.id}@${f.node}${planet(f.node).name}${intruder(f)?"（迎撃可）":""} → ${near.join("、")||"行ける星なし"}`;
 }
 let idleTold=null;
+/* 費用は「費用N」と書き、艦隊・星はIDつきの呼び出しの形で書く（「新艦隊(32)」の 32 を艦隊IDと読んで build_ship(fleet_id=32) を呼んだことがあった） */
 function nextHint(){
   if(!S||S.over||B)return null;
   const funds=S.funds,pay=[],own=S.planets.filter(p=>p.owner==="P"),mine=myFleets();
-  if(researchOpen()&&investMax()>=30)pay.push(`研究 invest_research(${investMax()>30?`30〜${investMax()}`:"30"})`);
+  if(researchOpen()&&investMax()>=30)pay.push(`研究 invest_research(amount=${investMax()>30?`30〜${investMax()}`:"30"})`);
   const sites=own.map(p=>({p,ks:p.fac.length<p.slots?FAC_KEYS.filter(k=>!hasF(p,k)&&FAC[k].cost<=funds):[]})).filter(x=>x.ks.length);
-  if(sites.length)pay.push(`施設 ${sites.slice(0,5).map(x=>`${x.p.id}${x.p.name}(${x.ks.join("/")})`).join(" ")}${sites.length>5?` ほか${sites.length-5}星`:""}`);
-  const sv=own.filter(p=>p.survey>0);if(funds>=40&&sv.length)pay.push(`探査40 ${sv.map(p=>`${p.id}${p.name}`).join("・")}`);
-  const ft=own.filter(p=>p.def<p.maxDef);if(funds>=30&&ft.length)pay.push(`防衛修復30 ${ft.map(p=>`${p.id}${p.name}`).join("・")}`);
+  if(sites.length)pay.push(`施設 build_facility(planet_id=…, facility=…)：${sites.slice(0,5).map(x=>`${x.p.id}${x.p.name}に${x.ks.join("/")}`).join("、")}${sites.length>5?` ほか${sites.length-5}星`:""}`);
+  const sv=own.filter(p=>p.survey>0);if(funds>=40&&sv.length)pay.push(`探査 survey(planet_id=${sv.map(p=>p.id).join("か")}) 費用40`);
+  const ft=own.filter(p=>p.def<p.maxDef);if(funds>=30&&ft.length)pay.push(`防衛修復 fortify(planet_id=${ft.map(p=>p.id).join("か")}) 費用30`);
   for(const f of mine){
     const p=planet(f.node);if(p.owner!=="P")continue;
-    if(fleetDamage(f)&&repairCost(f)<=funds)pay.push(`修理 ${f.name}(${repairCost(f)})`);
+    if(fleetDamage(f)&&repairCost(f)<=funds)pay.push(`修理 repair_fleet(fleet_id=${f.id}) 費用${repairCost(f)}`);
     if(p.yard){
       const cc=bcost(S.tier,p),rp=replaceOf(f,S.tier,p);
-      if(f.ships.length<4){if(cc<=funds)pay.push(`造船 ${f.name}に${CLASSES[S.tier].name}を追加(${cc})`)}
-      else if(rp&&rp.net<=funds)pay.push(`造船 ${f.name}の旧艦を置換(replace=true・実費${rp.net})`);
+      if(f.ships.length<4){if(cc<=funds)pay.push(`造船 build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${f.name}に${CLASSES[S.tier].name}を追加 費用${cc}`)}
+      else if(rp&&rp.net<=funds)pay.push(`造船 build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で${f.name}の旧艦を置換 実費${rp.net}`);
     }
   }
   const yards=own.filter(p=>p.yard);
-  if(mine.length<3&&yards.length&&bcost(0,yards[0])<=funds)pay.push(`新艦隊(${bcost(0,yards[0])}) ${yards[0].id}${yards[0].name}`);
+  if(mine.length<3&&yards.length&&bcost(0,yards[0])<=funds)pay.push(`新艦隊 new_fleet(planet_id=${yards[0].id}) 費用${bcost(0,yards[0])}`);
   const idle=mine.filter(f=>!f.moved),full=idle.map(fleetNext).join("／"),key=`${S.turn}|${full}`;
   const L=[`のこりの手：資金${funds}。払える内政：${pay.join("、")||"なし"}`];
   // 行き先は、前に知らせたときから変わっていなければ繰り返さない（返り値を短く保つ）
@@ -469,11 +507,11 @@ function say(text,who,ms){
   el.replaceChildren(Object.assign(document.createElement("span"),{className:"who",textContent:who||speaker}),document.createTextNode(String(text)));
   el.hidden=false;clearTimeout(capTimer);
   const dur=ms??Math.min(15000,2500+String(text).length*120);
-  capTimer=setTimeout(()=>{el.hidden=true},dur);
+  capTimer=realTimeout(()=>{el.hidden=true},dur);
   return{ok:true,message:"表示しました",durationMs:dur};
 }
 let actTimer=null,speaker="のあ";
-function showAction(t){ensureOverlay();const el=$("gapi-act");el.textContent=`${speaker}：${t}`;el.hidden=false;clearTimeout(actTimer);actTimer=setTimeout(()=>{el.hidden=true},4000)}
+function showAction(t){ensureOverlay();const el=$("gapi-act");el.textContent=`${speaker}：${t}`;el.hidden=false;clearTimeout(actTimer);actTimer=realTimeout(()=>{el.hidden=true},4000)}
 
 /* ---------- 戦略コマンド ---------- */
 function movedMsg(f){
@@ -495,6 +533,10 @@ const api={
   getSummary,
   getEvents:(after=0)=>events.filter(e=>e.seq>after),
   setPace(ms){pace=Math.max(0,Number(ms)||0);window.FAST=pace===0;return{ok:true,pace}}, // 0なら戦闘・移動の演出も省く
+  // 戦闘・ターン処理・艦隊の移動の演出を何倍の速さで流すか（1〜4。1で今までどおり）
+  setSpeed(x){const v=Number(x);speed=Number.isFinite(v)?Math.min(4,Math.max(1,v)):1;return{ok:true,speed}},
+  // いまの「のこりの手」（行き先も省かずに）。ai-player が、LLM が手を選べずにいるときに見せる
+  nextMoves(){idleTold=null;return nextHint()??(B?"戦闘中です":S&&S.over?"ゲームは終わっています":"")},
   setSpeaker(n){speaker=String(n||"のあ");return{ok:true,speaker}},
   // オート戦闘：true なら戦術戦闘は本体のオートで決着させ、作戦卓に戻ってから結果を返す（battle_* の操作は要らない）
   setAutoBattle(on){
@@ -523,7 +565,8 @@ const api={
     if(opt.kind.startsWith("不可"))fail(`${p.name} へは進めません：${opt.kind}。${can}`);
     showAction(`${f.name} → ${p.name}（${opt.kind}）`);
     S.sel=f.node;S.selFleet=f.id;S.mode="move";render();await sleep(pace);
-    S.mode=null;await orderMove(f,p.id,p.id!==f.node&&!neighbors(f.node).includes(p.id));
+    S.mode=null;moving=true;
+    try{await orderMove(f,p.id,p.id!==f.node&&!neighbors(f.node).includes(p.id))}finally{moving=false}
     return`${f.name} を ${p.name} へ：${opt.kind}`;
   }),
   intercept:(fleetId)=>act("intercept",async()=>{

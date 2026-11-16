@@ -4,6 +4,7 @@
  *   dismiss_dialog()　move_fleet(fleet_id=1, to=2)　say(text="…")          … 関数呼び出しの形
  *   <|tool_call>call:battle_move{unit_id:30,x:3,y:2}<tool_call|>              … Gemma 系の特殊トークン（文字列は <|"|> で囲む）
  *   say{text:「…」} say{text:「…」}                                          … call: も特殊トークンも付かない形（gemma4 で実際に出た）
+ *   say "…"　say「…」　say: "…"                                              … 行の頭の say のあとに引用符でセリフ（2026-11-16 のプレイログで出た）
  * say の呼び出しはセリフとして1件ずつ字幕にし、ほかの呼び出しは実行する候補として返す。どちらも字幕には生の記法を出さない。
  *
  * 括弧の付かないツール名だけを書くこともある（2026-11 の録画で字幕に「end_turn」とだけ出た）：
@@ -163,6 +164,25 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
   }
   const clean = (s, bare) => dropNames(tidy(s, name), bare);
 
+  /* 行の頭の say のあとに引用符でセリフを書いた形（say "…"）。括弧の形（say(…)・say{…}）は HEAD で拾う */
+  const SAY_LINE = /(^|\n)([ \t>*・-]*)say[ \t]*[:：]?[ \t]*(["“「『＂])/g;
+  function sayLines(src, out) {
+    const found = [];
+    SAY_LINE.lastIndex = 0;
+    for (let m; (m = SAY_LINE.exec(src));) {
+      const start = m.index + m[1].length, open = m.index + m[0].length - 1, close = OPEN[m[3]];
+      if (out.some(c => start < c.end && c.start < open + 1)) continue; // 括弧の呼び出しの中
+      let k = open + 1, text = "";
+      for (; k < src.length && src[k] !== close && src[k] !== "\n"; k++) {
+        if (m[3] === '"' && src[k] === "\\" && k + 1 < src.length) { k++; text += src[k] === "n" ? "\n" : src[k]; } else text += src[k];
+      }
+      const end = src[k] === close ? k + 1 : k; // 閉じ引用符がなければ行の終わりまで
+      found.push({ name: "say", args: { text }, start, end, src });
+      SAY_LINE.lastIndex = end;
+    }
+    return found;
+  }
+
   /* 文字で書かれた呼び出しを、書かれた順に { name, args, start, end } で返す（args が読めないものは null） */
   function findCalls(text) {
     const src = (text || "").replace(/<\|"\|>/g, '"');
@@ -187,7 +207,7 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
       out.push({ name: m[1], args, start: m.index, end, src });
       HEAD.lastIndex = end;
     }
-    return out;
+    return NAME_SET.has("say") ? [...out, ...sayLines(src, out)].sort((a, b) => a.start - b.start) : out;
   }
 
   /* 呼び出しの記法をすべて外して字幕向けに整える */
@@ -233,7 +253,7 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
  * ツール名だけのセリフ（end_turn など）は空の配列になる（字幕に出さない） */
 const RECORDED = new Map();
 // 直すのは say の記法か、_ を含むツール名があるときだけ（say・survey などの英単語だけなら、ふつうのセリフとしてそのまま返す）
-const NAME_HINT = new RegExp(`\\bsay\\s*[({]|\\b(${Object.keys(LABELS).filter(n => n.includes("_")).map(esc).join("|")})\\b`);
+const NAME_HINT = new RegExp(`\\bsay\\s*[({]|(^|\\n)[ \\t>*・-]*say[ \\t]*[:：]?[ \\t]*["“「『＂]|\\b(${Object.keys(LABELS).filter(n => n.includes("_")).map(esc).join("|")})\\b`);
 export function splitRecordedTalk(text, who = "") {
   if (!NAME_HINT.test(text || "")) return [text];
   if (!RECORDED.has(who)) RECORDED.set(who, makeTalk({ toolNames: Object.keys(LABELS), name: who }));
