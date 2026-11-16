@@ -13,6 +13,8 @@
  *   battle … 戦闘の結果                              auto  … 自動進行に切り替えたとき
  *   error  … エラー                                  reflect … 反省メモの振り返り（項目・感想・返事の全文）
  *   over   … 勝敗がついた                            end   … 試行の終わり（結果・ターン・動画）
+ *   model  … 使っている LLM の詳細（系統・パラメータ数・量子化・最大コンテキスト長・num_ctx・Ollama の版・GPU の名前）
+ *   loaded … 読み込まれたあとの状態（実際のコンテキスト長・メモリの量と GPU／メインメモリの割合）  ctx … 会話を続けるのに使う長さ
  *
  * コマンド（mcp フォルダで）
  *   node playlog.mjs                         … ログの一覧（新しい順。番号つき）
@@ -26,6 +28,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { splitRecordedTalk } from "./talk.mjs";
+import { describeModel, describeLoaded } from "./llm-info.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const LOG_DIR = path.join(HERE, "logs");
@@ -173,6 +176,9 @@ export function describe(e, { all = false } = {}) {
   const j = (v) => JSON.stringify(v ?? {});
   switch (e.type) {
     case "start": return { kind: "sys", text: `${e.name}（${e.model} @ ${e.baseUrl}）がプレイを始めます${e.think ? `　考える量 ${e.think}` : ""}　temperature ${e.temperature}` };
+    case "model": return { kind: "sys", text: `LLM：${e.ollama === false ? `${e.model}（Ollama ではないので詳細は分かりません）` : describeModel(e.model, e)}${e.gpu ? `\n  GPU：${e.gpu}${e.gpuFrom ? `（${e.gpuFrom === "--gpu" ? "--gpu の指定" : e.gpuFrom === "nvidia-smi" ? "この PC の nvidia-smi" : e.gpuFrom}）` : ""}` : ""}` };
+    case "loaded": return e.found === false ? { kind: "sys", text: "読み込み状態：Ollama の /api/ps にこのモデルが見つかりませんでした" } : { kind: "sys", text: `読み込み状態：${describeLoaded(e, { gpu: e.gpu })}${e.warnings?.length ? `\n  ⚠ ${e.warnings.join("\n  ⚠ ")}` : ""}` };
+    case "ctx": return { kind: "sys", text: e.ctx ? `コンテキスト長 ${e.ctx}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します" };
     case "video": return { kind: "sys", text: `録画を始めました${e.name ? `：${e.name}` : ""}` };
     case "turn": return { kind: "turn", text: `── ターン${e.turn}　資金${e.funds} ──` };
     case "talk": {
