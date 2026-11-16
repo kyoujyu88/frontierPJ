@@ -57,6 +57,8 @@ button.danger { border-color: #7a3640; color: #ffb3b3; }
 #log .op { color: var(--muted); }
 #log .err { color: #8f97ad; }
 #log .talk { color: #bfe0ff; }
+#log .llm { color: #b9a6e8; }
+#histBody .sub { display: block; color: var(--muted); font-size: 11px; }
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px 0 12px; }
 .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 12px; }
 .tabs button[aria-selected="true"] { color: var(--gold); border-bottom-color: var(--gold); }
@@ -185,7 +187,9 @@ a { color: var(--blue); }
           </div>
           <label for="persona">人格ファイル（任意。mcp フォルダからの相対パス）</label>
           <input id="persona" name="persona" placeholder="noa.txt">
-          <p class="hint">演出の間を 0 にすると最速で回ります（録画には向きません）。演出の速さは戦闘・敵の移動・艦隊の移動だけに効き、結果は変わりません。「会話を続ける」はターンをまたいで会話を続け、毎ターン最初の返事を速くします（Ollama ならコンテキスト長を自動で調べ、収まる間だけ続けます）。</p>
+          <label for="gpu">GPU の名前（任意。ログに出すだけ）</label>
+          <input id="gpu" name="gpu" placeholder="RTX 4090 24GB" maxlength="80">
+          <p class="hint">演出の間を 0 にすると最速で回ります（録画には向きません）。演出の速さは戦闘・敵の移動・艦隊の移動だけに効き、結果は変わりません。「GPU の名前」は Ollama の API では分からないので、ログに残したいときに書きます（Ollama がこの PC なら空でも nvidia-smi で調べます）。「会話を続ける」はターンをまたいで会話を続け、毎ターン最初の返事を速くします（Ollama ならコンテキスト長を自動で調べ、収まる間だけ続けます）。</p>
         </details>
         <div class="actions">
           <button type="submit" class="primary" id="start">連続プレイを開始</button>
@@ -267,7 +271,7 @@ a { color: var(--blue); }
 
 <script>
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["baseUrl", "model", "name", "think", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona"];
+const FIELDS = ["baseUrl", "model", "name", "think", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
 let status = {}, history = [], tick = null;
 
 async function api(path, body) {
@@ -328,7 +332,7 @@ async function loadHistory() {
   const rows = [...(status.current ? [status.current] : []), ...history];
   $("histBody").innerHTML = rows.map(r => `<tr>
     <td>${esc(new Date(r.startedAt).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</td>
-    <td class="num">${r.n}/${r.of}</td><td>${esc(r.name)}</td><td>${esc(r.model)}</td>
+    <td class="num">${r.n}/${r.of}</td><td>${esc(r.name)}</td><td>${esc(r.model)}${r.llm ? `<span class="sub">${esc(r.llm)}</span>` : ""}</td>
     <td><span class="tag ${cls(r.outcome)}">${esc(r.outcome)}</span></td>
     <td class="num">${r.turn || "–"}</td><td class="num">${r.autoTurns ?? 0}</td><td class="num">${r.failures ?? 0}</td>
     <td>${r.video ? `<a href="#" data-video="${esc(r.video)}">再生</a>` : "–"}</td>

@@ -44,6 +44,8 @@ const DEFAULTS = {
   battleSpeed: 2,
   // ターンをまたいで会話を続ける（コンテキスト長が分かるときだけ。毎ターン最初の読み直し 約11秒を省く）
   keepContext: true,
+  // Ollama が使う GPU の名前（ログに出すだけ。Ollama の API では機種名が分からない）
+  gpu: "",
 };
 async function readJson(file, def) { try { return JSON.parse(await fs.readFile(file, "utf8")); } catch { return def; } }
 async function writeJson(file, v) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(v, null, 1) + "\n"); }
@@ -71,6 +73,7 @@ function clean(input) {
   s.keepContext = s.keepContext !== false && s.keepContext !== "false";
   s.size = /^\d{3,4}x\d{3,4}$/.test(s.size) ? s.size : "1280x720";
   s.persona = String(s.persona || "").trim();
+  s.gpu = String(s.gpu || "").replace(/[\r\n]/g, " ").trim().slice(0, 80);
   return s;
 }
 const recordDir = () => path.resolve(HERE, settings.recordDir);
@@ -97,6 +100,7 @@ function playerArgs(s, n) {
   if (s.think) a.push("--think", s.think);
   if (s.turns) a.push("--turns", String(s.turns));
   if (s.persona) a.push("--persona", path.resolve(HERE, s.persona));
+  if (s.gpu) a.push("--gpu", s.gpu);
   if (s.notesMode === "readonly") a.push("--notes-readonly");
   if (s.notesMode === "off") a.push("--no-notes");
   if (!s.keepContext) a.push("--no-keep-context");
@@ -133,7 +137,10 @@ function runTrial(s, n) {
       else if ((m = line.match(/ローカルLLMに接続できないため止めます|LLMのエラーで止めます/))) { llmDown = true; llmWhy = m[0].startsWith("ローカル") ? "LLM接続エラー" : "LLMエラー"; }
       else if (/止めます。反省メモを書いてから/.test(line)) stopped = run.childStopping = true;
       else if ((m = line.match(/\[frontier-war-mcp\] recorded: (.+)$/))) { rec.video = path.basename(m[1].trim()); push({ type: "videos" }); }
-      addLog(line, err ? "err" : /^[\d:]+\s+(→|  )/.test(line) ? "op" : "");
+      else if ((m = line.match(/読み込み状態：(コンテキスト長.+)$/))) { rec.llm = m[1]; pushState(); }
+      // 使っている LLM の詳細（ai-player の始めと最初の返事のあと）は色を分ける
+      const info = /^[\d:]+\s+(LLM：|読み込み状態：|  GPU：|  コンテキスト長：|  ⚠ )/.test(line);
+      addLog(line, err ? "err" : info ? "llm" : /^[\d:]+\s+(→|  )/.test(line) ? "op" : "");
     };
     const lines = (stream, err) => { let buf = ""; stream.setEncoding("utf8"); stream.on("data", d => { buf += d; const parts = buf.split(/\r?\n/); buf = parts.pop(); parts.forEach(l => onLine(l, err)); }); stream.on("end", () => buf && onLine(buf, err)); };
     lines(child.stdout, false); lines(child.stderr, true);

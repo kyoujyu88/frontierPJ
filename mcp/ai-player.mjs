@@ -28,6 +28,7 @@
  *   --notes-readonly   反省メモを読むだけで書き換えない（腕前を固定して見せたいとき）
  *   --no-notes         反省メモを使わない（毎回はじめて遊ぶ状態）
  *   --ctx <n>          LLM のコンテキスト長（トークン）。省くと Ollama に聞く（/api/ps）。分かれば、ターンをまたいで会話を続ける  LLM_CTX
+ *   --gpu <名前>       Ollama が使う GPU の名前（ログに出すだけ。Ollama の API では機種名が分からないため。例 "RTX 4090 24GB"）  LLM_GPU
  *   --keep-turns <n>   会話を続ける最大のターン数（既定 4。ここで作り直す）                  NOA_KEEP_TURNS
  *   --no-keep-context  ターンごとに会話を作り直す（以前の動き。毎ターンの最初にプロンプト全体の読み直しが入る）
  *   --log-name <名前>  プレイログ（logs/<名前>.jsonl）の名前（既定 <名前>_<日時>）。セリフ・LLMの返事・操作・戦闘を時刻つきで残す（playlog.mjs）  NOA_LOG_NAME
@@ -44,6 +45,7 @@ import { fileURLToPath } from "node:url";
 import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName } from "./notes.mjs";
 import { PlayLog, LOG_DIR, subtitlesBeside } from "./playlog.mjs";
 import { makeTalk, stripThink } from "./talk.mjs";
+import { modelInfo, loadedInfo, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
 
 const sep = process.argv.indexOf("--");
 const argv = sep >= 0 ? process.argv.slice(2, sep) : process.argv.slice(2);
@@ -63,6 +65,7 @@ const LOOP = argv.includes("--loop");
  * 続けるとコンテキストが伸びるので、長さが分かるとき（--ctx か Ollama の /api/ps）だけ、収まる間だけ続ける */
 let CTX = Number(opt("ctx", "LLM_CTX", 0)) || 0;
 const KEEP = !argv.includes("--no-keep-context");
+const GPU_LABEL = String(opt("gpu", "LLM_GPU", "") || "").trim() || null;
 const KEEP_TURNS = Math.max(1, Number(opt("keep-turns", "NOA_KEEP_TURNS", 4)) || 4);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /* プレイヤー名：--name がなければ起動時に聞く（Enter で前回の名前。初回は のあ）。ここで選んだ名前は次回の既定になる */
@@ -103,6 +106,26 @@ const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathn
 plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
   notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
 if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
+
+/* ---------- 使っている LLM の詳細（llm-info.mjs）。Ollama なら系統・パラメータ数・量子化・コンテキスト長、
+ * 最初の返事のあと（モデルが読み込まれてから）実際のコンテキスト長とメモリの載り方（GPU／メインメモリ）を出す ---------- */
+const llm = { info: null, loaded: null, gpu: GPU_LABEL, gpuFrom: GPU_LABEL ? "--gpu" : null, loadedAsked: false };
+llm.info = await modelInfo(BASE, MODEL).catch(() => null);
+if (!llm.gpu && isLocalHost(BASE)) { const g = gpuText(await localGpus().catch(() => null)); if (g) { llm.gpu = g; llm.gpuFrom = "nvidia-smi"; } }
+log(`LLM：${describeModel(MODEL, llm.info) ?? `${MODEL}（Ollama ではないので、モデルの詳細は分かりません）`}`);
+if (llm.gpu) log(`  GPU：${llm.gpu}（${llm.gpuFrom === "--gpu" ? "--gpu の指定" : "この PC の nvidia-smi"}）`);
+plog.write("model", { model: MODEL, ...(llm.info ?? { ollama: false }), gpu: llm.gpu, gpuFrom: llm.gpuFrom });
+/* 読み込まれたあとの状態。最初の返事のあとに1回だけ聞く（モデルはその返事で読み込まれる） */
+async function checkLoaded() {
+  if (llm.loadedAsked) return llm.loaded;
+  llm.loadedAsked = true;
+  llm.loaded = await loadedInfo(BASE, MODEL).catch(() => null);
+  if (!llm.loaded) { if (llm.info) log("読み込み状態：Ollama の /api/ps にこのモデルが見つかりませんでした"); return null; }
+  log(`読み込み状態：${describeLoaded(llm.loaded, { gpu: llm.gpu })}`);
+  for (const w of loadWarnings(llm.loaded, llm.info)) log(`  ⚠ ${w}`);
+  plog.write("loaded", { ...llm.loaded, gpu: llm.gpu, warnings: loadWarnings(llm.loaded, llm.info) });
+  return llm.loaded;
+}
 
 /* ---------- MCPサーバーにつなぐ ---------- */
 const mcp = new Client({ name: "ai-player", version: "1.0.0" });
@@ -217,19 +240,14 @@ let ctxAsked = false;
 async function detectCtx() {
   if (ctxAsked || !KEEP || MANUAL_BATTLE) return;
   ctxAsked = true;
-  if (CTX) { log(`コンテキスト長 ${CTX}（--ctx）：収まる間はターンをまたいで会話を続けます`); plog.write("ctx", { ctx: CTX }); return; }
-  const root = BASE.replace(/\/v1$/, "");
-  const want = (n) => { const a = String(n ?? ""); return a === MODEL || a === `${MODEL}:latest` || `${a}:latest` === MODEL; };
-  try {
-    const ps = await (await fetch(`${root}/api/ps`, { signal: AbortSignal.timeout(3000) })).json();
-    const m = (ps.models ?? []).find(x => want(x.name) || want(x.model));
-    if (m?.context_length > 0) CTX = m.context_length;
-  } catch { /* Ollama ではない */ }
-  if (!CTX) try {
-    const sh = await (await fetch(`${root}/api/show`, { method: "POST", body: JSON.stringify({ model: MODEL }), signal: AbortSignal.timeout(3000) })).json();
-    const n = Number(String(sh.parameters ?? "").match(/num_ctx\s+(\d+)/)?.[1]);
-    if (n > 0) CTX = n;
-  } catch { /* Ollama ではない */ }
+  if (CTX) {
+    log(`コンテキスト長 ${CTX}（--ctx）：収まる間はターンをまたいで会話を続けます`);
+    const real = llm.loaded?.ctx;
+    if (real && real < CTX) log(`  ⚠ Ollama が実際に確保したコンテキスト長は ${real} で、--ctx ${CTX} より短いので、あふれた分は古い会話から切り捨てられます`);
+    plog.write("ctx", { ctx: CTX, ...(real ? { loaded: real } : {}) }); return;
+  }
+  // 読み込み中のモデルの実際の長さ（/api/ps）。古い Ollama で分からなければ Modelfile の num_ctx（/api/show）
+  CTX = (await checkLoaded())?.ctx || llm.info?.numCtx || 0;
   log(CTX ? `コンテキスト長 ${CTX}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します（--ctx <トークン数> で指定すると続けられます）");
   plog.write("ctx", { ctx: CTX || null });
 }
@@ -452,7 +470,7 @@ async function playTurn(turn) {
     messages = await compactIfLong(messages);
     plog.sentMessages(messages);
     const msg = await chat(slim(messages));
-    if (step === 1) await detectCtx().catch(() => {}); // 最初の返事でモデルが読み込まれてから聞く
+    if (step === 1) { await checkLoaded().catch(() => {}); await detectCtx().catch(() => {}); } // 最初の返事でモデルが読み込まれてから聞く
     // 地の文は1行、文字で書かれた say{text:「…」}・say "…" は1件ずつ字幕にする（生の記法や、end_turn だけの行のようなツール名は出さない）
     const { lines, calls: written } = splitReply(stripThink(msg.content));
     const talk = lines.join("\n");

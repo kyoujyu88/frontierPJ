@@ -10,7 +10,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { loadNotes } from "./notes.mjs";
-import { readLog, toSrt, toChapters, listLogs } from "./playlog.mjs";
+import { readLog, toSrt, toChapters, listLogs, toText } from "./playlog.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LESSON = "爆装を2以上積んだ艦隊で惑星を攻める";
@@ -20,6 +20,8 @@ let prompts = [], reflections = 0;
 let mode = "normal", emptySent = false, etStart = "", etN = 0;
 // Ollama の /api/ps に見せるコンテキスト長（0 なら /api/ps は 404。ai-player はコンテキスト長が分からず、毎ターン会話を作り直す）
 let psCtx = 0;
+// /api/ps に見せるメモリの量（全体と、そのうち GPU の VRAM に載った分）
+const psSize = 20e9; let psVram = psSize;
 // 送られてきた問い合わせ（keep のテスト用。ターンをまたいで会話を続けたかを見る）
 let sentAll = [];
 // 会話の書き換えの見張り：同じターンの中で、前に送ったメッセージが次の問い合わせで変わっていたら数える（変わるとローカルLLMがプロンプト全体を読み直す）
@@ -31,8 +33,17 @@ const llm = http.createServer(async (req, res) => {
   let body = ""; for await (const c of req) body += c;
   if (req.url === "/api/ps") {
     if (!psCtx) { res.writeHead(404); return res.end(); }
-    res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ models: [{ name: "mock:latest", model: "mock:latest", context_length: psCtx }] }));
+    res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ models: [{ name: "mock:latest", model: "mock:latest", context_length: psCtx, size: psSize, size_vram: psVram,
+      details: { family: "gemma3", parameter_size: "25.8B", quantization_level: "Q4_K_M" } }] }));
   }
+  // Ollama のふり（psCtx があるときだけ）：モデルの詳細と版
+  if (req.url === "/api/show" && psCtx) {
+    res.writeHead(200, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ parameters: "stop                           \"<end_of_turn>\"\nnum_ctx                        16384",
+      details: { parent_model: "", format: "gguf", family: "gemma3", families: ["gemma3"], parameter_size: "25.8B", quantization_level: "Q4_K_M" },
+      model_info: { "general.architecture": "gemma3", "general.parameter_count": 25805037056, "gemma3.context_length": 131072 }, capabilities: ["completion", "tools", "thinking"] }));
+  }
+  if (req.url === "/api/version" && psCtx) { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ version: "0.13.0" })); }
   if (req.url.startsWith("/api/")) { res.writeHead(404); return res.end(); }
   const b = JSON.parse(body);
   if (b.tools) sentAll.push(b.messages);
@@ -252,6 +263,28 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   await run(2, ["--no-notes"]);
   check(sentAll.filter(m => m.length === 2 && starts(m) === 1).length === 2, "コンテキスト長が分からなければ、毎ターン作り直す");
   mode = "normal";
+}
+
+// 使っている LLM の詳細：Ollama なら始めにモデルの詳細、最初の返事のあとに実際のコンテキスト長とメモリの載り方を出す
+{
+  psCtx = 24576; psVram = 15e9;
+  let out = await run(1, ["--no-notes", "--gpu", "RTX 4090 24GB"]);
+  let ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const m = ev.find(e => e.type === "model"), ld = ev.find(e => e.type === "loaded");
+  check(m?.maxCtx === 131072 && m.numCtx === 16384 && m.quantization === "Q4_K_M" && m.parameterSize === "25.8B" && m.version === "0.13.0" && m.gpu === "RTX 4090 24GB"
+    && /LLM：mock（gemma3・25\.8Bパラメータ・量子化 Q4_K_M・ツール・考える対応）　Ollama 0\.13\.0\n.*コンテキスト長：モデル本来の上限 131,072／Modelfile の num_ctx 16,384/.test(out) && /GPU：RTX 4090 24GB（--gpu の指定）/.test(out),
+    "始めにモデルの詳細（系統・パラメータ数・量子化・対応機能・本来の最大コンテキスト長・num_ctx・Ollama の版・GPU の名前）を出す");
+  check(ld?.ctx === 24576 && ld.gpuPct === 75 && ld.cpuPct === 25 && ld.warnings?.length === 1 && ev.some(e => e.type === "ctx" && e.ctx === 24576)
+    && /読み込み状態：コンテキスト長 24,576・メモリ 20\.0 GB：GPU（VRAM）15\.0 GB 75%／メインメモリ 5\.0 GB 25%・GPU RTX 4090 24GB/.test(out) && /⚠ モデルの 25% がメインメモリ/.test(out),
+    "最初の返事のあと、実際のコンテキスト長（num_ctx より /api/ps を使う）とメモリの載り方を出し、メインメモリにはみ出していれば注意する");
+  check(/LLM：mock（gemma3/.test(toText(ev)) && /読み込み状態：コンテキスト長 24,576/.test(toText(ev)), "台本（txt）にもモデルの詳細と読み込み状態が出る");
+  psVram = psSize;
+  out = await run(1, ["--no-notes"]);
+  check(/メモリ 20\.0 GB すべて GPU（VRAM）/.test(out) && !/⚠/.test(out), "すべて GPU に載っていれば注意を出さない");
+  psCtx = 0;
+  out = await run(1, ["--no-notes"]);
+  ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(/Ollama ではないので、モデルの詳細は分かりません/.test(out) && ev.find(e => e.type === "model")?.ollama === false && !ev.some(e => e.type === "loaded"), "Ollama でなければ詳細なしで、そのまま遊ぶ");
 }
 
 // 6回目以降：LLM のエラーの扱い（反省メモは使わない）
