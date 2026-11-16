@@ -40,6 +40,10 @@ const DEFAULTS = {
   baseUrl: "http://127.0.0.1:11434/v1", model: "", name: "のあ", think: "none",
   trials: 3, turns: "", record: true, recordDir: "recordings", headless: false,
   notesMode: "grow", maxSteps: 40, reflectEvery: 10, temperature: 0.6, pace: 300, size: "1280x720", persona: "",
+  // 戦闘・ターン処理の演出の速さ（倍）。AIプレイの時間の6〜7割は戦闘の演出なので、既定は2倍
+  battleSpeed: 2,
+  // ターンをまたいで会話を続ける（コンテキスト長が分かるときだけ。毎ターン最初の読み直し 約11秒を省く）
+  keepContext: true,
 };
 async function readJson(file, def) { try { return JSON.parse(await fs.readFile(file, "utf8")); } catch { return def; } }
 async function writeJson(file, v) { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, JSON.stringify(v, null, 1) + "\n"); }
@@ -63,6 +67,8 @@ function clean(input) {
   s.reflectEvery = int(s.reflectEvery, 0, 999, 10);
   s.temperature = Number.isFinite(Number(s.temperature)) ? Math.min(2, Math.max(0, Number(s.temperature))) : 0.6;
   s.pace = int(s.pace, 0, 5000, 300);
+  s.battleSpeed = [1, 1.5, 2, 3, 4].includes(Number(s.battleSpeed)) ? Number(s.battleSpeed) : 2;
+  s.keepContext = s.keepContext !== false && s.keepContext !== "false";
   s.size = /^\d{3,4}x\d{3,4}$/.test(s.size) ? s.size : "1280x720";
   s.persona = String(s.persona || "").trim();
   return s;
@@ -93,10 +99,11 @@ function playerArgs(s, n) {
   if (s.persona) a.push("--persona", path.resolve(HERE, s.persona));
   if (s.notesMode === "readonly") a.push("--notes-readonly");
   if (s.notesMode === "off") a.push("--no-notes");
+  if (!s.keepContext) a.push("--no-keep-context");
   // プレイログと録画は同じ名前にそろえる（ログ：logs/<名前>.jsonl、録画：recordings/<名前>.webm）
   const base = trialName(s, n);
   a.push("--log-name", base);
-  a.push("--", "--pace", String(s.pace), "--size", s.size);
+  a.push("--", "--pace", String(s.pace), "--battle-speed", String(s.battleSpeed), "--size", s.size);
   if (s.headless) a.push("--headless");
   if (s.record) a.push("--record", recordDir(), "--record-name", base);
   return a;

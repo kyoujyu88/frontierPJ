@@ -73,4 +73,14 @@ eq(calls("thought\nI should call end_turn() now"), [], "考える部分に書か
 eq(lines("thought\nplan...<channel|>研究を進めるよ！"), ["研究を進めるよ！"], "閉じトークンのあとの本文は字幕に出す");
 eq(lines("thoughtful な一手だね"), ["thoughtful な一手だね"], "thought で始まるふつうの文は触らない");
 
+// 行の頭の say のあとに引用符でセリフを書いた形（2026-11-16 のプレイログ：字幕に say "…" がそのまま出た。移動は実行された）
+const sayQ = 'say "異生体が進化したって！正面が弱点なら、今の陣形で大丈夫そうだね。"\nmove_fleet(fleet_id=140, to=9)';
+eq(lines(sayQ), ["異生体が進化したって！正面が弱点なら、今の陣形で大丈夫そうだね。"], 'say "…" はセリフだけを字幕にする');
+eq(calls(sayQ), [["move_fleet", { fleet_id: 140, to: 9 }]], 'say "…" の次の行の呼び出しは実行する');
+eq(lines("say「研究を進めるよ！」\nsay: \"次は造船！\""), ["研究を進めるよ！", "次は造船！"], "say「…」・say: \"…\" も1件ずつのセリフ");
+eq(lines('say "閉じ忘れ\nend_turn()'), ["閉じ忘れ"], "閉じ引用符がなければ行の終わりまで");
+eq(lines('みんなに say "hello" って言いたい'), ['みんなに say "hello" って言いたい'], "文の途中の say は触らない");
+eq(T.cleanTalk('say "ターン終了！"'), "", "cleanTalk も say \"…\" の記法を外す");
+eq(splitRecordedTalk('say "記録済み"', "のあ"), ["記録済み"], '記録済みのセリフの say "…" も直す');
+
 process.exit(failed ? 1 : 0);

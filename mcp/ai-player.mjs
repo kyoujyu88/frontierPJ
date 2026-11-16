@@ -27,6 +27,9 @@
  *   --reflect-every <n> 何ターンごとにゲームの途中でも振り返るか（既定 10、0で終了時だけ） NOA_REFLECT_EVERY
  *   --notes-readonly   反省メモを読むだけで書き換えない（腕前を固定して見せたいとき）
  *   --no-notes         反省メモを使わない（毎回はじめて遊ぶ状態）
+ *   --ctx <n>          LLM のコンテキスト長（トークン）。省くと Ollama に聞く（/api/ps）。分かれば、ターンをまたいで会話を続ける  LLM_CTX
+ *   --keep-turns <n>   会話を続ける最大のターン数（既定 4。ここで作り直す）                  NOA_KEEP_TURNS
+ *   --no-keep-context  ターンごとに会話を作り直す（以前の動き。毎ターンの最初にプロンプト全体の読み直しが入る）
  *   --log-name <名前>  プレイログ（logs/<名前>.jsonl）の名前（既定 <名前>_<日時>）。セリフ・LLMの返事・操作・戦闘を時刻つきで残す（playlog.mjs）  NOA_LOG_NAME
  *   --log-dir <dir>    プレイログの置き場所（既定 logs）                             NOA_LOG_DIR
  *   --no-log           プレイログを残さない
@@ -55,6 +58,12 @@ const TURNS = Number(opt("turns", "NOA_TURNS", Infinity));
 const TEMP = Number(opt("temperature", "LLM_TEMPERATURE", 0.6));
 const THINK = opt("think", "LLM_THINK", null);
 const LOOP = argv.includes("--loop");
+/* ターンをまたいで会話を続ける（B2）。ローカルLLM（Ollama の Gemma 系など）は、前に送ったプロンプトの「後ろに足した」ときだけ読み直しを省ける。
+ * ターンごとに会話を作り直すと、毎ターン最初の返事でプロンプト全体（約7千トークン）を読み直して 約11秒かかっていた（2026-11-16 のログ、36ターン×11秒）。
+ * 続けるとコンテキストが伸びるので、長さが分かるとき（--ctx か Ollama の /api/ps）だけ、収まる間だけ続ける */
+let CTX = Number(opt("ctx", "LLM_CTX", 0)) || 0;
+const KEEP = !argv.includes("--no-keep-context");
+const KEEP_TURNS = Math.max(1, Number(opt("keep-turns", "NOA_KEEP_TURNS", 4)) || 4);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /* プレイヤー名：--name がなければ起動時に聞く（Enter で前回の名前。初回は のあ）。ここで選んだ名前は次回の既定になる */
 const LAST_FILE = path.join(HERE, "notes", ".last-player.json");
@@ -183,6 +192,48 @@ ${MANUAL_BATTLE ? `- 戦闘中は、攻撃候補（予測ダメージつき）�
 ${rules}
 ${USE_NOTES ? `\n${notesPrompt(notes, NOTES_CHARS)}` : ""}`.trimEnd();
 
+/* ---------- 会話の長さの見積もり（ターンをまたいで続けるか、作り直すかを決める） ----------
+ * 最後の返事の usage（prompt_tokens + completion_tokens）に、そのあと足したメッセージの字数×（トークン/字）を足す。
+ * トークン/字は、送った字数（ツールの定義も含む）と prompt_tokens から測り、少し多めに見る。usage が無いサーバーでは 1字=1トークンで数える */
+const TOOLS_CHARS = JSON.stringify(tools).length;
+const charsOf = (ms) => ms.reduce((t, m) => t + (typeof m.content === "string" ? m.content.length : 0) + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0);
+const sizeOf = {
+  last: null, perChar: null, // perChar：トークン/字（まだ測っていなければ null で、1字=1トークンとして数える）
+  seen(messages, usage) {
+    if (!usage?.prompt_tokens) { this.last = null; return; }
+    this.last = { messages, count: messages.length, tokens: usage.prompt_tokens + (usage.completion_tokens ?? 0) };
+    const r = usage.prompt_tokens / (charsOf(messages) + TOOLS_CHARS);
+    if (r > 0.2 && r < 3) this.perChar = Math.max(this.perChar ?? 0, r * 1.1);
+  },
+  // messages を送ったときのトークン数の見積もり
+  of(messages) {
+    const l = this.last;
+    if (l && messages.length >= l.count && l.messages.every((m, i) => messages[i] === m)) return l.tokens + Math.ceil(charsOf(messages.slice(l.count)) * (this.perChar ?? 1));
+    return Math.ceil((charsOf(messages) + TOOLS_CHARS) * (this.perChar ?? 1));
+  },
+};
+/* コンテキスト長：--ctx がなければ Ollama に聞く（読み込み中のモデルの context_length。古い Ollama ならモデルの num_ctx）。分からなければ 0 */
+let ctxAsked = false;
+async function detectCtx() {
+  if (ctxAsked || !KEEP || MANUAL_BATTLE) return;
+  ctxAsked = true;
+  if (CTX) { log(`コンテキスト長 ${CTX}（--ctx）：収まる間はターンをまたいで会話を続けます`); plog.write("ctx", { ctx: CTX }); return; }
+  const root = BASE.replace(/\/v1$/, "");
+  const want = (n) => { const a = String(n ?? ""); return a === MODEL || a === `${MODEL}:latest` || `${a}:latest` === MODEL; };
+  try {
+    const ps = await (await fetch(`${root}/api/ps`, { signal: AbortSignal.timeout(3000) })).json();
+    const m = (ps.models ?? []).find(x => want(x.name) || want(x.model));
+    if (m?.context_length > 0) CTX = m.context_length;
+  } catch { /* Ollama ではない */ }
+  if (!CTX) try {
+    const sh = await (await fetch(`${root}/api/show`, { method: "POST", body: JSON.stringify({ model: MODEL }), signal: AbortSignal.timeout(3000) })).json();
+    const n = Number(String(sh.parameters ?? "").match(/num_ctx\s+(\d+)/)?.[1]);
+    if (n > 0) CTX = n;
+  } catch { /* Ollama ではない */ }
+  log(CTX ? `コンテキスト長 ${CTX}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します（--ctx <トークン数> で指定すると続けられます）");
+  plog.write("ctx", { ctx: CTX || null });
+}
+
 /* ---------- LLM 呼び出し ---------- */
 async function chat(messages, { withTools = true } = {}) {
   const body = { model: MODEL, messages, temperature: TEMP };
@@ -217,6 +268,8 @@ async function chat(messages, { withTools = true } = {}) {
   const data = await res.json().catch(e => ({ error: e.message }));
   const msg = data?.choices?.[0]?.message;
   if (!msg) throw llmError(`LLM API の返事が読めません：${JSON.stringify(data).slice(0, 200)}`, false);
+  if (withTools) sizeOf.seen(messages, data.usage);
+  msg.usage = data.usage ?? null;
   // content を配列で返すサーバーもある
   if (Array.isArray(msg.content)) msg.content = msg.content.map(c => c.text ?? "").join("");
   // 返事は加工する前の全文を残す（考えた部分を別の欄で返すサーバーもある）
@@ -250,13 +303,15 @@ async function digest(name, r) {
   else if (j.ok && j.funds != null) lines.push(`資金${j.funds}`);
   return { content: lines.join("\n"), short: null };
 }
-/* 手動戦闘では盤面のテキストが貯まっていくので、最新の1つだけ全文で送り、古いものは縮める（オート戦闘では縮めるものがなく、会話は後ろに足すだけ） */
+/* 手動戦闘では盤面のテキストが貯まっていくので、最新の1つだけ全文で送り、古いものは縮める（オート戦闘では縮めるものがなく、会話は後ろに足すだけ）。
+ * 前のターンから続けている会話（keepFrom より前）は縮めない：送るプロンプトの先頭が変わると、Ollama が全部を読み直すため */
 const OLD_NOTE = "（このときの状況テキストは省略。最新の状況は後ろのメッセージにあります）";
 const shortOf = new WeakMap();
+let keepFrom = 0;
 function slim(messages) {
   let last = -1;
   messages.forEach((m, i) => { if (shortOf.has(m)) last = i; });
-  return messages.map((m, i) => i < last && shortOf.has(m) ? { ...m, content: shortOf.get(m) } : m);
+  return messages.map((m, i) => i >= keepFrom && i < last && shortOf.has(m) ? { ...m, content: shortOf.get(m) } : m);
 }
 
 /* ---------- 自動進行（のあが詰まったときの保険） ---------- */
@@ -319,15 +374,66 @@ async function checkEndPhase() {
 const fixName = (n) => String(n ?? "").replace(/^[^A-Za-z_]+|[^A-Za-z0-9_]+$/g, "");
 const ALIAS = { replace_ship: ["build_ship", { replace: true }] };
 
+/* ---------- 前のターンにしたこと ----------
+ * 次のターンの最初に「前のターンにしたこと」を渡す（会話を作り直すとき）。以前は前のターンの最初のセリフを渡していたが、
+ * 小さなモデルはそれをそのまま繰り返し、採掘所のある星に3ターン続けて採掘所を建てようとした（2026-11-16 のログ）。
+ * 意図ではなく、実際に成功した操作と戦闘の結果だけを書く */
+let recap = "", done = [];
+function noteDone(name, args, j) {
+  if (!j?.ok || QUIET.has(name)) return;
+  const bs = (j.battles ?? []).map(b => `${b.title}：${b.result}`);
+  if (name === "end_turn") { if (bs.length) done.push(`ターン終了後の戦闘（${bs.join("、")}）`); return; }
+  const m = String(j.message ?? "").split(/[。：（]/)[0].trim();
+  if (m) done.push(`${name === "invest_research" ? "研究に" : ""}${m}${bs.length ? `（${bs.join("、")}）` : ""}`);
+}
+function takeRecap(turn, auto) {
+  const t = done.length ? done.join("、") : "なし";
+  done = [];
+  const s = `前のターン（ターン${turn}）にしたこと：${t.length > 400 ? t.slice(0, 400) + "…" : t}${auto ? "（途中から自動で進めました）" : ""}`;
+  return s;
+}
+
+/* ---------- 会話（ターンをまたいで続ける） ---------- */
+let convo = null, convoTurns = 0;
+const RESERVE = 3000; // 1ターンのあいだに会話が伸びる分（2026-11-16 のログで最大 約2,500トークン）
+const START = "今の状況です。操作を始めてください。";
+function freshTurn(text) {
+  const first = { role: "user", content: text };
+  shortOf.set(first, `${text.split(START)[0]}${START}\n${OLD_NOTE}`);
+  convoTurns = 1; keepFrom = 0;
+  return [{ role: "system", content: SYSTEM() }, first];
+}
+async function startTurn(turn) {
+  const sum = await summary();
+  // 続ける：前のターンの会話の後ろに、新しい状況を足すだけ（前のメッセージは書き換えない）
+  if (KEEP && CTX && convo && !MANUAL_BATTLE && convoTurns < KEEP_TURNS && convo[0].content === SYSTEM()) {
+    const add = { role: "user", content: `【ターン${turn}】前のターンが終わりました。ここまでの状況テキストと「のこりの手」は古くなっています（資金・艦隊・星が変わっています）。下の新しい状況を見てください。\n${START}\n\n${sum}` };
+    const est = sizeOf.of([...convo, add]);
+    if (est + RESERVE <= CTX * 0.9) {
+      keepFrom = convo.length; convo.push(add); convoTurns++;
+      plog.write("context", { keep: true, turns: convoTurns, est });
+      return convo;
+    }
+    plog.write("context", { keep: false, est, ctx: CTX });
+  }
+  return freshTurn(`${recap ? `${recap}\n\n` : ""}${START}\n\n${sum}`);
+}
+/* ターンの途中でコンテキストがあふれそうになったら、いまの状況で作り直す（会話を続けると長くなるので、その保険） */
+async function compactIfLong(messages) {
+  if (!CTX || sizeOf.of(messages) <= CTX * 0.9) return messages;
+  log("会話が長くなったので、いまの状況で作り直します");
+  plog.write("context", { compact: true, est: sizeOf.of(messages), ctx: CTX });
+  const head = done.length ? `このターンにしたこと：${done.join("、")}\n\n` : "";
+  return freshTurn(`${head}（会話が長くなったので、まとめ直しました。このターンの続きです）\n${START}\n\n${await summary()}`);
+}
+
 /* ---------- 1ターン ---------- */
-let memo = "", turnTalk = "";
-async function playTurn() {
+let turnTalk = "";
+async function playTurn(turn) {
   turnTalk = "";
-  const intro = `${memo ? `前のターンのあなたの発言：${memo}\n\n` : ""}今の状況です。操作を始めてください。`;
-  const first = { role: "user", content: `${intro}\n\n${await summary()}` };
-  shortOf.set(first, `${intro}\n${OLD_NOTE}`);
-  const messages = [{ role: "system", content: SYSTEM() }, first];
-  let ended = false, over = false, idle = 0, wasted = 0, lastName = "", auto = false;
+  let messages = await startTurn(turn);
+  convo = null; // 最後まで普通に終わったターンだけ、次のターンに続ける
+  let ended = false, over = false, idle = 0, empty = 0, wasted = 0, lastName = "", auto = false;
   // 考える回数は、作戦卓ではこのターンの合計、戦闘では1戦ごとに数える（攻める戦闘と防衛戦が重なっても途中で自動進行にならないように）
   let step = 0, mapSteps = 0, battleSteps = 0, inBattle = false;
   while (mapSteps < MAX_STEPS && wasted < 6) {
@@ -343,20 +449,37 @@ async function playTurn() {
     }
     if (inBattle) battleSteps++; else mapSteps++;
     step++;
+    messages = await compactIfLong(messages);
     plog.sentMessages(messages);
     const msg = await chat(slim(messages));
-    // 地の文は1行、文字で書かれた say{text:「…」} は1件ずつ字幕にする（生の記法や、end_turn だけの行のようなツール名は出さない）
+    if (step === 1) await detectCtx().catch(() => {}); // 最初の返事でモデルが読み込まれてから聞く
+    // 地の文は1行、文字で書かれた say{text:「…」}・say "…" は1件ずつ字幕にする（生の記法や、end_turn だけの行のようなツール名は出さない）
     const { lines, calls: written } = splitReply(stripThink(msg.content));
     const talk = lines.join("\n");
-    if (talk) memo = turnTalk = talk.slice(0, 200);
+    if (talk && !turnTalk) turnTalk = talk.slice(0, 200);
     for (const line of lines) { log(`${NAME}：` + line); await say(line.slice(0, 160)); }
     let calls = msg.tool_calls ?? [];
     if (!calls.length && (calls = written).length) log(`  （文字で書かれたツール呼び出しを実行します：${calls.map(c => c.function.name).join(", ")}）`);
+    if (!calls.length && !talk) {
+      /* 中身が空の返事（話さず、ツールも呼ばない）。2026-11-16 のログでは 約50トークン出したのに中身が空、が4回続いてターンが自動で終わった。
+       * 空の返事は会話に積まない（積むと、空の返事を続けやすくなる）。1回目はそのまま聞き直し（会話が同じなので読み直しはない）、
+       * 2回目は「のこりの手」を見せて手を選ばせ、3回目で自動進行に切り替える */
+      empty++;
+      plog.write("empty", { n: empty, tokens: msg.usage?.completion_tokens ?? null });
+      if (empty >= 3) break;
+      if (empty === 2) {
+        const nx = (await tool("get_next").catch(() => null))?.text || "";
+        messages.push({ role: "user", content: `返事が空でした。次の手をツールで1つ呼んでください（セリフはそのツールの say 引数に）。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
+      } else log("  （空の返事だったので、もう一度聞きます）");
+      continue;
+    }
+    empty = 0; // 「空の返事が3回続いたら」なので、話した返事でも数え直す
     // content は必ず文字列にする（null だと Ollama が「invalid message content type: <nil>」の 400 で断る）
     messages.push({ role: "assistant", content: talk, ...(calls.length ? { tool_calls: calls } : {}) });
     if (!calls.length) {
       if (++idle >= 3) break;
-      messages.push({ role: "user", content: ended ? "状況を見て、残りの戦闘や通信を片付けてください。" : "ツールで操作を続けてください。やることが終わったら end_turn。" });
+      const nx = ended ? "" : (await tool("get_next").catch(() => null))?.text || "";
+      messages.push({ role: "user", content: ended ? "状況を見て、残りの戦闘や通信を片付けてください。" : `ツールで操作を続けてください。やることが終わったら end_turn。${nx ? `\n${nx}` : ""}` });
       continue;
     }
     idle = 0;
@@ -381,20 +504,22 @@ async function playTurn() {
       if (c.function.name === "say") {
         // say ツールを直接呼んだとき：地の文と同じく整えて字幕に出し、プレイログのセリフにも残す
         const r = args?.text ? await say(args.text, args.seconds ? { seconds: args.seconds } : {}) : null;
-        if (r && !turnTalk) memo = turnTalk = cleanTalk(args.text).slice(0, 200);
-        messages.push({ role: "tool", tool_call_id: c.id, name: "say", content: r?.text ?? "失敗：text が空です。" });
+        if (r && !turnTalk) turnTalk = cleanTalk(args.text).slice(0, 200);
+        // 結果には、次は操作と一緒に話すよう添える（say だけの返事が1ゲーム41回・LLM の時間の2割あった。2026-11-16 のログ）
+        messages.push({ role: "tool", tool_call_id: c.id, name: "say", content: r ? "表示しました。続けて操作のツールを呼んでください（話しながら操作するときは、その操作の say 引数にセリフを書くと1回で済みます）" : "失敗：text が空です。" });
         continue;
       }
       // 操作ツールの say 引数（ひとこと）：地の文と同じく整えて字幕に出し、プレイログのセリフにも残す。サーバーには渡さない（二重に出さない）
       if (typeof args.say === "string") {
         const line = args.say; delete args.say;
-        if (await say(line.slice(0, 160)) && !turnTalk) memo = turnTalk = cleanTalk(line).slice(0, 200);
+        if (await say(line.slice(0, 160)) && !turnTalk) turnTalk = cleanTalk(line).slice(0, 200);
       } else delete args.say;
       if (c.function.name === "battle_end_phase") {
         const stop = await checkEndPhase();
         if (stop) { log("  ✗ まだ動ける艦があるので、フェイズ終了を止めました"); plog.write("refuse", { name: c.function.name, args, reason: "まだ動ける艦があるので、フェイズ終了を止めました" }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: stop }); continue; }
       } else if (c.function.name.startsWith("battle_")) endPhaseNagged = false;
       const r = await tool(c.function.name, args);
+      noteDone(c.function.name, args, r.json);
       if (c.function.name === "end_turn" && r.json?.ok) ended = true;
       if (r.json?.mode === "over") { over = true; break; } // 勝敗がついた（結果の画面は配信用に出したまま、振り返りへ）
       if (r.json?.mode) { const b = r.json.mode === "battle" || r.json.mode === "battle_ended"; if (b && !inBattle) battleSteps = 0; inBattle = b; }
@@ -408,12 +533,12 @@ async function playTurn() {
     if (ended) {
       // 通信が開いていても次のターンへ進む（次のターンの状況テキストに出て、最初の操作で自動的に閉じる）
       const s = (await tool("get_state")).json;
-      if (!s.battle) return { st: s, auto };
+      if (!s.battle) { if (!auto) convo = messages; return { st: s, auto }; }
     }
   }
   // 上限まで来た・黙った：残りを自動で片付けてターンを終える
-  let s = await autopilot(mapSteps >= MAX_STEPS ? `このターンで ${MAX_STEPS} 回考えた` : wasted >= 6 ? "使えない操作や読み直しが続いた" : "操作をしなくなった");
-  if (!ended && !s.over) { autoBy = true; await tool("end_turn").finally(() => { autoBy = false; }); s = await autopilot("ターン終了のあとの戦闘や通信"); }
+  let s = await autopilot(mapSteps >= MAX_STEPS ? `このターンで ${MAX_STEPS} 回考えた` : wasted >= 6 ? "使えない操作や読み直しが続いた" : empty >= 3 ? "空の返事が続いた" : "操作をしなくなった");
+  if (!ended && !s.over) { autoBy = true; await tool("end_turn").then(r => noteDone("end_turn", {}, r.json)).finally(() => { autoBy = false; }); s = await autopilot("ターン終了のあとの戦闘や通信"); }
   return { st: s, auto: true };
 }
 
@@ -469,7 +594,7 @@ for (let n = 0; n < TURNS; n++) {
     if (reflectedAt !== -1) await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over));
     reflectedAt = -1;
     if (!LOOP) break;
-    await tool("new_game", { confirm: true }); memo = "";
+    await tool("new_game", { confirm: true }); recap = ""; done = []; convo = null;
     journal = new Journal(); reflectedAt = 0;
     st = (await tool("get_state")).json; journal.begin(st);
     plog.write("newgame", {});
@@ -479,7 +604,7 @@ for (let n = 0; n < TURNS; n++) {
   log(`=== ターン${turn} 資金${st.funds} ===`);
   plog.write("turn", { turn, funds: st.funds }); lastTurn = turn;
   let auto = false;
-  try { ({ st, auto } = await playTurn()); llmErrors = 0; }
+  try { ({ st, auto } = await playTurn(turn)); llmErrors = 0; }
   catch (e) {
     if (stopping) await new Promise(() => {});
     log("エラー：" + e.message);
@@ -490,9 +615,11 @@ for (let n = 0; n < TURNS; n++) {
       if (++llmErrors >= 3) { log("LLMのエラーで止めます：3ターン続けて失敗しました（モデルとコンテキストの長さを確認）"); llmDown = true; break; }
       log("その場かぎりのエラーとみなして、このターンは自動で進めます");
     }
-    st = await autopilot("エラーのあと"); if (!st.over) { autoBy = true; await tool("end_turn").finally(() => { autoBy = false; }); st = await autopilot("ターン終了のあとの戦闘や通信"); }
+    convo = null; // 途中で止まった会話は続けない
+    st = await autopilot("エラーのあと"); if (!st.over) { autoBy = true; await tool("end_turn").then(r => noteDone("end_turn", {}, r.json)).finally(() => { autoBy = false; }); st = await autopilot("ターン終了のあとの戦闘や通信"); }
     auto = true;
   }
+  recap = takeRecap(turn, auto);
   journal.endTurn(turn, st, { talk: turnTalk, auto });
   if (!st.over && REFLECT_EVERY > 0 && journal.turns.length - reflectedAt >= REFLECT_EVERY)
     await writeNotes(`ゲームの途中（ターン${turn}まで）`, null);

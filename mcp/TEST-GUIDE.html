@@ -334,6 +334,8 @@ node ai-player.mjs --model qwen3:14b --turns 3</code></pre></div>
             <tr><td><code>--persona noa.txt</code></td><td>のあの人格・口調を書いたテキスト（UTF-8で保存）をプロンプトの先頭に入れる</td></tr>
             <tr><td><code>--temperature 0.6</code></td><td>発言のばらつき（既定 0.6）</td></tr>
             <tr><td><code>-- --pace 900</code></td><td><code>--</code> の後ろはゲーム側の設定。行動ごとの間を 900ms にする（既定 300）</td></tr>
+            <tr><td><code>-- --battle-speed 2</code></td><td>戦闘・敵の移動・艦隊の移動の演出を2倍の速さにする（1〜4。結果は変わらない。既定 1、操作盤からは 2）</td></tr>
+            <tr><td><code>--no-keep-context</code></td><td>ターンごとに会話を作り直す（既定は、コンテキスト長が分かれば収まる間だけ続けて、毎ターン最初の読み直しを省く）</td></tr>
             <tr><td><code>-- --size 1920x1080</code></td><td>ゲーム画面の大きさ（OBS の解像度に合わせる。既定 1280x720）</td></tr>
           </tbody>
         </table></div>

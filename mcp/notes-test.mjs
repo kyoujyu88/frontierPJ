@@ -16,8 +16,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LESSON = "爆装を2以上積んだ艦隊で惑星を攻める";
 let prompts = [], reflections = 0;
 // LLM のふるまい：normal／empty（黙った返事を返す）／flaky（2ターン目の最初だけ 400）／notools（ツール非対応の 400）／always400（毎回 400）
-// ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）
-let mode = "normal", emptySent = false;
+// ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）／emptytalk（空と地の文だけの返事を交互に返す）
+let mode = "normal", emptySent = false, etStart = "", etN = 0;
+// Ollama の /api/ps に見せるコンテキスト長（0 なら /api/ps は 404。ai-player はコンテキスト長が分からず、毎ターン会話を作り直す）
+let psCtx = 0;
+// 送られてきた問い合わせ（keep のテスト用。ターンをまたいで会話を続けたかを見る）
+let sentAll = [];
 // 会話の書き換えの見張り：同じターンの中で、前に送ったメッセージが次の問い合わせで変わっていたら数える（変わるとローカルLLMがプロンプト全体を読み直す）
 let lastMsgs = null, rewrites = 0, toolSeen = [], firstUser = [];
 const callOf = (id, name, args) => ({ id, type: "function", function: { name, arguments: JSON.stringify(args) } });
@@ -25,7 +29,13 @@ const callOf = (id, name, args) => ({ id, type: "function", function: { name, ar
 const reply = (message) => ({ choices: [{ index: 0, message: { role: "assistant", ...message }, finish_reason: "stop" }] });
 const llm = http.createServer(async (req, res) => {
   let body = ""; for await (const c of req) body += c;
+  if (req.url === "/api/ps") {
+    if (!psCtx) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ models: [{ name: "mock:latest", model: "mock:latest", context_length: psCtx }] }));
+  }
+  if (req.url.startsWith("/api/")) { res.writeHead(404); return res.end(); }
   const b = JSON.parse(body);
+  if (b.tools) sentAll.push(b.messages);
   const fail = (message) => { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message, type: "invalid_request_error" } })); };
   // Ollama と同じく、content が文字列でも配列でもないメッセージ（ツール呼び出しなし）は断る
   if (b.messages.some(m => typeof m.content !== "string" && !Array.isArray(m.content) && !m.tool_calls)) return fail("invalid message content type: <nil>");
@@ -62,7 +72,21 @@ const llm = http.createServer(async (req, res) => {
         // ツール名だけを地の文に書く（2026-11 の録画で字幕に「end_turn」と出た形）。ツール呼び出しは付けない
         : mode === "bare" ? reply({ content: "内政はおしまい！\nend_turn" })
         : reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
-    } else out = mode === "empty" || mode === "play" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] }) : reply({ content: "様子を見るね" });
+    } else out = mode === "empty" || mode === "play" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
+      : mode === "keep" ? reply({ content: "", tool_calls: [callOf(`k${sentAll.length}`, "end_turn", { say: "ターン終了！" })] })
+      : reply({ content: "様子を見るね" });
+    // keep：ターンの最初は研究に投資してから（「前のターンにしたこと」に出るか見る）。usage も返す（2字=1トークンとして）
+    if (mode === "keep") {
+      if (starts) out = reply({ content: "", tool_calls: [callOf(`r${sentAll.length}`, "invest_research", { amount: 30, say: "研究に少し投資するよ！" })] });
+      out.usage = { prompt_tokens: Math.ceil(JSON.stringify(b.messages).length / 2), completion_tokens: 20 };
+    }
+    // emptytalk：ターンごとに 空→地の文だけ→空→地の文だけ→空→end_turn（空は3回だが続いてはいない）
+    if (mode === "emptytalk") {
+      if (starts && last.content !== etStart) { etStart = last.content; etN = 0; }
+      etN++;
+      out = etN >= 6 ? reply({ content: "", tool_calls: [callOf(`t${sentAll.length}`, "end_turn", {})] })
+        : reply({ content: etN % 2 ? "" : "うーん、どうしようかな" });
+    }
   }
   res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(out));
 });
@@ -75,7 +99,7 @@ let logNo = 0;
 function run(turns, extra = [], serverExtra = []) {
   return new Promise((ok, ng) => {
     const p = spawn(process.execPath, [path.join(HERE, "ai-player.mjs"), "--model", "mock", "--base-url", BASE, "--name", "テスト",
-      "--notes", notesFile, "--turns", String(turns), "--max-steps", "4", "--log-dir", logDir, "--log-name", `run${++logNo}`, ...extra, "--", "--headless", "--pace", "0", ...serverExtra], { stdio: ["ignore", "pipe", "inherit"] });
+      "--notes", notesFile, "--turns", String(turns), ...(extra.includes("--max-steps") ? [] : ["--max-steps", "4"]), "--log-dir", logDir, "--log-name", `run${++logNo}`, ...extra, "--", "--headless", "--pace", "0", ...serverExtra], { stdio: ["ignore", "pipe", "inherit"] });
     let log = ""; p.stdout.on("data", d => { log += d; });
     p.on("exit", code => code === 0 ? ok(log) : ng(new Error(`exit ${code}\n${log}`)));
   });
@@ -201,12 +225,55 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   mode = "normal";
 }
 
+// ターンをまたいで会話を続ける（B2）：コンテキスト長が分かれば、前のターンの会話の後ろに新しい状況を足すだけにする
+{
+  const starts = (ms) => ms.filter(m => m.role === "user" && String(m.content).includes("今の状況です")).length;
+  const prefixOk = (a, b) => a.length <= b.length && a.every((m, i) => JSON.stringify(m) === JSON.stringify(b[i]));
+  mode = "keep"; psCtx = 1000000; sentAll = [];
+  await run(3, ["--no-notes"]);
+  let ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const kept = sentAll.every((m, i) => i === 0 || prefixOk(sentAll[i - 1], m));
+  check(kept && starts(sentAll.at(-1)) === 3 && ev.some(e => e.type === "ctx" && e.ctx === 1000000),
+    `Ollama の /api/ps でコンテキスト長を知り、3ターンとも前の会話を書き換えずに後ろに足す（最後の問い合わせの「今の状況です」${starts(sentAll.at(-1))} 回）`);
+  check(/^【ターン2】前のターンが終わりました/.test(sentAll.find(m => starts(m) === 2)?.findLast(m => m.role === "user").content ?? ""), "続けるターンの最初には、前の状況が古くなったことを書いて新しい状況を足す");
+  // 続けるターン数の上限（--keep-turns 2）：3ターン目は作り直し、前のターンにしたことを渡す（セリフではなく、成功した操作）
+  sentAll = [];
+  await run(3, ["--no-notes", "--keep-turns", "2"]);
+  const fresh = sentAll.filter(m => m.length === 2 && starts(m) === 1).map(m => m[1].content);
+  check(fresh.length === 2 && /^前のターン（ターン2）にしたこと：研究に30 投資/.test(fresh[1]) && !fresh[1].includes("研究に少し投資するよ"),
+    `作り直したターンには、前のターンのセリフではなく成功した操作を渡す（${fresh[1]?.split("\n")[0]}）`);
+  // コンテキストに収まらないときは毎ターン作り直す
+  psCtx = 6000; sentAll = [];
+  await run(2, ["--no-notes"]);
+  ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(sentAll.filter(m => m.length === 2 && starts(m) === 1).length === 2 && ev.some(e => e.type === "context" && e.keep === false), "コンテキストに収まらなければ、毎ターン作り直す");
+  // コンテキスト長が分からないとき（Ollama 以外）は、今までどおり毎ターン作り直す
+  psCtx = 0; sentAll = [];
+  await run(2, ["--no-notes"]);
+  check(sentAll.filter(m => m.length === 2 && starts(m) === 1).length === 2, "コンテキスト長が分からなければ、毎ターン作り直す");
+  mode = "normal";
+}
+
 // 6回目以降：LLM のエラーの扱い（反省メモは使わない）
 const stopLine = /LLMのエラーで止めます|接続できないため止めます/;
 const turns = (log) => (log.match(/=== ターン\d+ /g) || []).length;
-mode = "empty"; prompts = [];
+mode = "empty"; prompts = []; emptySent = false;
 let l = await run(3, ["--no-notes"]);
-check(emptySent && !stopLine.test(l) && turns(l) === 3, "黙った返事のあとも 400 にならずに続く");
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const nudge = ev.filter(e => e.type === "send" && e.role === "user" && /^返事が空でした/.test(e.content));
+  check(!emptySent && !stopLine.test(l) && turns(l) === 3, "黙った（中身が空の）返事は会話に積まず、400 にならずに続く");
+  check(ev.filter(e => e.type === "empty").length === 6 && nudge.length === 3 && nudge.every(e => /のこりの手：資金\d+/.test(e.content)),
+    `空の返事は1回目は聞き直し、2回目は「のこりの手」を見せる（空 ${ev.filter(e => e.type === "empty").length} 回・のこりの手 ${nudge.length} 回）`);
+  check(ev.filter(e => e.type === "tool" && e.name === "end_turn").every(e => e.by === "ai") && !ev.some(e => e.type === "auto"), "空の返事のあと、自動進行にならずに本人が手を打つ");
+}
+mode = "emptytalk"; prompts = [];
+l = await run(2, ["--no-notes", "--max-steps", "8"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(ev.filter(e => e.type === "empty").length === 6 && !ev.some(e => e.type === "auto") && ev.filter(e => e.type === "tool" && e.name === "end_turn").every(e => e.by === "ai"),
+    `空の返事が話した返事をはさんで3回あっても、続いていなければ自動進行にしない（空 ${ev.filter(e => e.type === "empty").length} 回）`);
+}
 mode = "flaky"; prompts = [];
 l = await run(3, ["--no-notes"]);
 check(/エラー：LLM API 400/.test(l) && /このターンは自動で進めます/.test(l) && !stopLine.test(l) && turns(l) === 3, "その場かぎりの 400 はそのターンだけ自動で進めて続ける");

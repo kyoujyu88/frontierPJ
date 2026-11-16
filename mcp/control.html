@@ -171,6 +171,11 @@ a { color: var(--blue); }
               <select id="size" name="size"><option>1280x720</option><option>1600x900</option><option>1920x1080</option></select></div>
           </div>
           <div class="row">
+            <div><label for="battleSpeed">戦闘の演出の速さ</label>
+              <select id="battleSpeed" name="battleSpeed"><option value="1">ふつう（1倍）</option><option value="1.5">1.5倍</option><option value="2">2倍</option><option value="3">3倍</option><option value="4">4倍</option></select></div>
+            <div><label class="check" style="margin-top:22px"><input type="checkbox" id="keepContext" name="keepContext"> 会話を続ける</label></div>
+          </div>
+          <div class="row">
             <div><label for="maxSteps">操作の上限（1ターン・1戦ごと）</label><input id="maxSteps" name="maxSteps" type="number" min="5" max="200"></div>
             <div><label for="reflectEvery">途中の振り返り（ターンごと）</label><input id="reflectEvery" name="reflectEvery" type="number" min="0" max="999"></div>
           </div>
@@ -180,7 +185,7 @@ a { color: var(--blue); }
           </div>
           <label for="persona">人格ファイル（任意。mcp フォルダからの相対パス）</label>
           <input id="persona" name="persona" placeholder="noa.txt">
-          <p class="hint">演出の間を 0 にすると最速で回ります（録画には向きません）。</p>
+          <p class="hint">演出の間を 0 にすると最速で回ります（録画には向きません）。演出の速さは戦闘・敵の移動・艦隊の移動だけに効き、結果は変わりません。「会話を続ける」はターンをまたいで会話を続け、毎ターン最初の返事を速くします（Ollama ならコンテキスト長を自動で調べ、収まる間だけ続けます）。</p>
         </details>
         <div class="actions">
           <button type="submit" class="primary" id="start">連続プレイを開始</button>
@@ -262,7 +267,7 @@ a { color: var(--blue); }
 
 <script>
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["baseUrl", "model", "name", "think", "trials", "turns", "notesMode", "record", "headless", "pace", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona"];
+const FIELDS = ["baseUrl", "model", "name", "think", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona"];
 let status = {}, history = [], tick = null;
 
 async function api(path, body) {
