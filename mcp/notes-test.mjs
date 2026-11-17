@@ -17,7 +17,8 @@ const LESSON = "爆装を2以上積んだ艦隊で惑星を攻める";
 let prompts = [], reflections = 0;
 // LLM のふるまい：normal／empty（黙った返事を返す）／flaky（2ターン目の最初だけ 400）／notools（ツール非対応の 400）／always400（毎回 400）
 // ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）／emptytalk（空と地の文だけの返事を交互に返す）
-let mode = "normal", emptySent = false, etStart = "", etN = 0;
+// ／emptyall（ツールを渡されると必ず空を返す。ツールなしで手を文字で頼まれたら、文字で end_turn() を書く）
+let mode = "normal", emptySent = false, etStart = "", etN = 0, textAsks = 0;
 // Ollama の /api/ps に見せるコンテキスト長（0 なら /api/ps は 404。ai-player はコンテキスト長が分からず、毎ターン会話を作り直す）
 let psCtx = 0;
 // /api/ps に見せるメモリの量（全体と、そのうち GPU の VRAM に載った分）
@@ -59,7 +60,11 @@ const llm = http.createServer(async (req, res) => {
   // flaky：2ターン目の最初の問い合わせだけ断る（prompts には1ターン目の分だけが入っている）
   if (b.tools && mode === "flaky" && String(b.messages.at(-1).content).includes("今の状況です") && prompts.length === 1) { prompts.push("(400)"); return fail("the request exceeds the available context size"); }
   let out;
-  if (!b.tools) {
+  if (!b.tools && /^返事がまた空でした/.test(b.messages.at(-1).content)) {
+    // 空の返事が続いたときの、ツールを渡さない問い合わせ：手を文字で書く
+    textAsks++;
+    out = reply({ content: mode === "emptyall" ? "えっと、ターンを終えるね！\nend_turn()" : "うーん" });
+  } else if (!b.tools) {
     // 振り返り：考える部分つき・余計な前置きつきで返して、箇条書きだけ拾えるか見る
     reflections++;
     if (process.env.SHOW_REFLECT) console.log(b.messages.at(-1).content);
@@ -95,6 +100,7 @@ const llm = http.createServer(async (req, res) => {
       out.usage = { prompt_tokens: Math.ceil(JSON.stringify(b.messages).length / 2), completion_tokens: 20 };
     }
     // emptytalk：ターンごとに 空→地の文だけ→空→地の文だけ→空→end_turn（空は3回だが続いてはいない）
+    if (mode === "emptyall") out = reply({ content: "" });
     if (mode === "emptytalk") {
       if (starts && last.content !== etStart) { etStart = last.content; etN = 0; }
       etN++;
@@ -249,13 +255,21 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   const kept = sentAll.every((m, i) => i === 0 || prefixOk(sentAll[i - 1], m));
   check(kept && starts(sentAll.at(-1)) === 3 && ev.some(e => e.type === "ctx" && e.ctx === 1000000),
     `Ollama の /api/ps でコンテキスト長を知り、3ターンとも前の会話を書き換えずに後ろに足す（最後の問い合わせの「今の状況です」${starts(sentAll.at(-1))} 回）`);
-  check(/^【ターン2】前のターンが終わりました/.test(sentAll.find(m => starts(m) === 2)?.findLast(m => m.role === "user").content ?? ""), "続けるターンの最初には、前の状況が古くなったことを書いて新しい状況を足す");
+  const t2 = sentAll.find(m => starts(m) === 2)?.findLast(m => m.role === "user").content ?? "";
+  check(/^【ターン2】前のターンが終わりました/.test(t2), "続けるターンの最初には、前の状況が古くなったことを書いて新しい状況を足す");
+  // 続けるターンの状況テキストは、惑星と出来事を変わった行だけにする（内政の候補・自軍艦隊・他勢力の艦隊は全部）
+  const first = sentAll[0][1].content, planetsOf = (t) => (t.split(/^■惑星.*$/m)[1] ?? "").split(/^■/m)[0].split("\n").filter(l => l.trim());
+  const ctxEv = ev.filter(e => e.type === "context" && e.keep);
+  check(/^■惑星（前のターンから変わった星だけ。ほかは前の状況テキストと同じ）$/m.test(t2) && planetsOf(t2).length < planetsOf(first).length && /^■内政の候補/m.test(t2) && /^■自軍艦隊/m.test(t2) && /^■他勢力の艦隊/m.test(t2)
+    && ctxEv.length === 2 && ctxEv.every(e => e.delta && e.chars < e.full),
+    `続けるターンの状況テキストは、惑星と出来事を変わった行だけにする（惑星 ${planetsOf(first).length}行 → ${planetsOf(t2).length}行・${ctxEv.map(e => `${e.full}→${e.chars}字`).join("、")}）`);
+  check(ctxEv.length && ctxEv.every(e => e.reserve === 1000), `1ターンで伸びる分の見込みは、決め打ちの3000ではなく、前のターンで実際に伸びた分から決める（${ctxEv.map(e => e.reserve).join(" → ")}）`);
   // 続けるターン数の上限（--keep-turns 2）：3ターン目は作り直し、前のターンにしたことを渡す（セリフではなく、成功した操作）
   sentAll = [];
   await run(3, ["--no-notes", "--keep-turns", "2"]);
   const fresh = sentAll.filter(m => m.length === 2 && starts(m) === 1).map(m => m[1].content);
-  check(fresh.length === 2 && /^前のターン（ターン2）にしたこと：研究に30 投資/.test(fresh[1]) && !fresh[1].includes("研究に少し投資するよ"),
-    `作り直したターンには、前のターンのセリフではなく成功した操作を渡す（${fresh[1]?.split("\n")[0]}）`);
+  check(fresh.length === 2 && /^前のターンまでにしたこと（成功した操作と戦闘の結果）：\n- ターン1にしたこと：研究に30 投資.*\n- ターン2にしたこと：研究に30 投資/.test(fresh[1]) && !fresh[1].includes("研究に少し投資するよ"),
+    `作り直したターンには、前の2ターンのセリフではなく成功した操作を1行ずつ渡す（${fresh[1]?.split("\n").slice(0, 3).join(" / ")}）`);
   // コンテキストに収まらないときは毎ターン作り直す
   psCtx = 6000; sentAll = [];
   await run(2, ["--no-notes"]);
@@ -310,9 +324,19 @@ let l = await run(3, ["--no-notes"]);
   const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
   const nudge = ev.filter(e => e.type === "send" && e.role === "user" && /^返事が空でした/.test(e.content));
   check(!emptySent && !stopLine.test(l) && turns(l) === 3, "黙った（中身が空の）返事は会話に積まず、400 にならずに続く");
-  check(ev.filter(e => e.type === "empty").length === 6 && nudge.length === 3 && nudge.every(e => /のこりの手：資金\d+/.test(e.content)),
-    `空の返事は1回目は聞き直し、2回目は「のこりの手」を見せる（空 ${ev.filter(e => e.type === "empty").length} 回・のこりの手 ${nudge.length} 回）`);
+  check(ev.filter(e => e.type === "empty").length === 3 && nudge.length === 3 && nudge.every(e => /のこりの手：資金\d+/.test(e.content) && /未行動の艦隊：(なし|第\d艦隊 ID\d+@\d+.+ → )/.test(e.content)),
+    `空の返事の1回目は、行き先も全部書いた「のこりの手」を見せて聞き直す（空 ${ev.filter(e => e.type === "empty").length} 回・のこりの手 ${nudge.length} 回）`);
   check(ev.filter(e => e.type === "tool" && e.name === "end_turn").every(e => e.by === "ai") && !ev.some(e => e.type === "auto"), "空の返事のあと、自動進行にならずに本人が手を打つ");
+}
+// 空の返事が続いたら、ツールを渡さずに手を文字で書いてもらい、それを実行する（Ollama がツール呼び出しを読み取れずに捨てたときの逃げ道）
+mode = "emptyall"; prompts = []; textAsks = 0;
+l = await run(2, ["--no-notes"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const ends = ev.filter(e => e.type === "tool" && e.name === "end_turn");
+  check(textAsks === 2 && ev.filter(e => e.type === "empty").length === 4 && ends.length === 2 && ends.every(e => e.by === "ai" && e.ok) && !ev.some(e => e.type === "auto")
+    && ev.some(e => e.type === "llm" && e.kind === "text") && ev.some(e => e.type === "talk" && e.text === "えっと、ターンを終えるね！"),
+    `空の返事が2回続いたら、ツールなしで聞いて文字の手を実行する（文字で頼んだ ${textAsks} 回・空 ${ev.filter(e => e.type === "empty").length} 回・自動進行 ${ev.filter(e => e.type === "auto").length} 回）`);
 }
 mode = "emptytalk"; prompts = [];
 l = await run(2, ["--no-notes", "--max-steps", "8"]);

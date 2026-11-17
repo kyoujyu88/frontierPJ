@@ -386,6 +386,7 @@ function devSummary(st){
     else if(m>=30)L.push(` 研究：invest_research(amount=${m>30?`30〜${m}`:"30"}) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1。30刻み、投資は1ターン${investCap()}まで）`);
     else no.push("研究30");
   }else L.push(` 研究：いまは投資できない（${r.note}）。invest_research は呼ばない`);
+  const sv=[],ft=[];
   for(const p of S.planets.filter(p=>p.owner==="P")){
     const free=p.slots-p.fac.length;
     if(free>0){
@@ -396,9 +397,12 @@ function devSummary(st){
       if(ok.length)L.push(` 施設：${p.name}（${p.trait}・空き${free}${has}）build_facility(planet_id=${p.id}, facility=…) ${ok.map(show).join("／")}${ng.length?`（資金不足：${ng.map(k=>`${k}${FAC[k].cost}`).join("・")}）`:""}`);
       else if(ks.length)no.push(`${p.name}の施設${Math.min(...ks.map(k=>FAC[k].cost))}〜`);
     }
-    if(p.survey>0)add(40,` 探査：${p.name} survey(planet_id=${p.id}) 費用40 → 45%で収入+15（残り${p.survey}回）`,`${p.name}の探査`);
-    if(p.def<p.maxDef)add(30,` 防衛修復：${p.name} 防衛${p.def}/${p.maxDef} fortify(planet_id=${p.id}) 費用30で+15`,`${p.name}の防衛修復`);
+    if(p.survey>0)sv.push(p);
+    if(p.def<p.maxDef)ft.push(p);
   }
+  // 探査と防衛修復は星ごとに1行ずつだと長くなる（自国の星が増えると10行近く）ので、1行にまとめる
+  if(sv.length)add(40,` 探査：survey(planet_id=${sv.map(p=>p.id).join("か")}) 費用40 → 45%で収入+15（星ごとの残り回数は■惑星の「探査余地」）`,"探査");
+  if(ft.length)add(30,` 防衛修復：fortify(planet_id=${ft.map(p=>p.id).join("か")}) 費用30で防衛+15（${ft.map(p=>`${p.name}${p.def}/${p.maxDef}`).join("・")}）`,"防衛修復");
   for(const f of st.myFleets){
     if(f.repairCost)add(f.repairCost,` 修理：${f.name} repair_fleet(fleet_id=${f.id}) 費用${f.repairCost}`,`${f.name}の修理`);
     if(f.atShipyard){
@@ -426,14 +430,27 @@ function fleetNext(f){
   if(opts.some(o=>o.kind==="亜空間移動"))near.push("ほか自国の星へ亜空間移動");
   return`${f.name} ID${f.id}@${f.node}${planet(f.node).name}${intruder(f)?"（迎撃可）":""} → ${near.join("、")||"行ける星なし"}`;
 }
-let idleTold=null;
-/* 費用は「費用N」と書き、艦隊・星はIDつきの呼び出しの形で書く（「新艦隊(32)」の 32 を艦隊IDと読んで build_ship(fleet_id=32) を呼んだことがあった） */
+/* 行き先が前に知らせたときと同じ艦隊は、行き先の説明（艦隊戦・有利など）を省いて、呼び出しの形だけ書く。
+ * 以前は「第2艦隊 ID6（行き先は前と同じ）」と名前だけにしていたが、手を選ぶのに前のメッセージを探す必要があり、
+ * その直後に中身が空の返事が続いた（2026-11-16・17 のログ） */
+function fleetBrief(f){
+  const opts=moveOptions(f).filter(o=>!o.kind.startsWith("不可")),near=opts.filter(o=>o.kind!=="亜空間移動").map(o=>o.to);
+  if(!opts.length)return`${f.name} ID${f.id}（行ける星なし）`;
+  return`move_fleet(fleet_id=${f.id}, to=${near.length?near.join("か"):"自国の星"})${intruder(f)?"（迎撃可）":""}`;
+}
+// 艦隊ごとに、このターンに知らせた行き先（fleetNext の文）。同じなら次からは呼び出しの形だけにする
+let idleTold={turn:null,told:new Map()};
+const toldOf=()=>{if(idleTold.turn!==S.turn)idleTold={turn:S.turn,told:new Map()};return idleTold.told};
+/* 費用は「費用N」と書き、艦隊・星はIDつきの呼び出しの形で書く（「新艦隊(32)」の 32 を艦隊IDと読んで build_ship(fleet_id=32) を呼んだことがあった）。
+ * 操作のたびに付くので短く保つ（1ターンに8回ほど付き、会話を続けるとそのぶんコンテキストが伸びる） */
 function nextHint(){
   if(!S||S.over||B)return null;
   const funds=S.funds,pay=[],own=S.planets.filter(p=>p.owner==="P"),mine=myFleets();
   if(researchOpen()&&investMax()>=30)pay.push(`研究 invest_research(amount=${investMax()>30?`30〜${investMax()}`:"30"})`);
-  const sites=own.map(p=>({p,ks:p.fac.length<p.slots?FAC_KEYS.filter(k=>!hasF(p,k)&&FAC[k].cost<=funds):[]})).filter(x=>x.ks.length);
-  if(sites.length)pay.push(`施設 build_facility(planet_id=…, facility=…)：${sites.slice(0,5).map(x=>`${x.p.id}${x.p.name}に${x.ks.join("/")}`).join("、")}${sites.length>5?` ほか${sites.length-5}星`:""}`);
+  // 施設は「建てられる星のID」ごとにまとめる（星ごとに書くより半分ほどの長さ。例：mineは星2、sats/lab/flakは星0/1/2）
+  const free=own.filter(p=>p.fac.length<p.slots),byIds=new Map();
+  for(const k of FAC_KEYS.filter(k=>FAC[k].cost<=funds)){const ids=free.filter(p=>!hasF(p,k)).map(p=>p.id).join("/");if(ids)byIds.set(ids,[...(byIds.get(ids)??[]),k])}
+  if(byIds.size)pay.push(`施設 build_facility(planet_id=…, facility=…)：${[...byIds].map(([ids,ks])=>`${ks.join("/")}は星${ids}`).join("、")}`);
   const sv=own.filter(p=>p.survey>0);if(funds>=40&&sv.length)pay.push(`探査 survey(planet_id=${sv.map(p=>p.id).join("か")}) 費用40`);
   const ft=own.filter(p=>p.def<p.maxDef);if(funds>=30&&ft.length)pay.push(`防衛修復 fortify(planet_id=${ft.map(p=>p.id).join("か")}) 費用30`);
   for(const f of mine){
@@ -447,11 +464,13 @@ function nextHint(){
   }
   const yards=own.filter(p=>p.yard);
   if(mine.length<3&&yards.length&&bcost(0,yards[0])<=funds)pay.push(`新艦隊 new_fleet(planet_id=${yards[0].id}) 費用${bcost(0,yards[0])}`);
-  const idle=mine.filter(f=>!f.moved),full=idle.map(fleetNext).join("／"),key=`${S.turn}|${full}`;
+  const idle=mine.filter(f=>!f.moved),told=toldOf();
   const L=[`のこりの手：資金${funds}。払える内政：${pay.join("、")||"なし"}`];
-  // 行き先は、前に知らせたときから変わっていなければ繰り返さない（返り値を短く保つ）
-  L.push(`未行動の艦隊：${!idle.length?"なし":key===idleTold?`${idle.map(f=>`${f.name} ID${f.id}`).join("・")}（行き先は前と同じ）`:full}`);
-  idleTold=key;
+  // 行き先が前に知らせたときから変わっていない艦隊は、説明を省いて呼び出しの形だけ書く（返り値を短く保つ）。
+  // 艦隊ごとに見るので、1艦隊を動かしたあとも、ほかの艦隊の行き先は繰り返さない
+  let brief=0;
+  const fl=idle.map(f=>{const t=fleetNext(f);if(told.get(f.id)===t){brief++;return fleetBrief(f)}told.set(f.id,t);return t});
+  L.push(`未行動の艦隊：${!idle.length?"なし":fl.join("／")}${brief?"（行き先の様子は前と同じ）":""}`);
   if(!pay.length&&!idle.length)L.push("→ 打てる手はもうありません。end_turn でターンを終えてください");
   return L.join("\n");
 }
@@ -482,7 +501,7 @@ function getSummary(){
   if(!st.otherFleets.length)L.push(" なし");
   for(const f of st.otherFleets)L.push(` ${f.name} ID${f.id} ${f.sideLabel}${f.doctrine?`〈${f.doctrine.split("：")[0]}〉`:""} @${f.at}${f.atName} 戦力${f.power} ${f.ships.map(shipShort).join(" ")}`);
   L.push("■最近の出来事\n "+st.recentLog.slice(0,6).join("\n "));
-  idleTold=`${S.turn}|${myFleets().filter(f=>!f.moved).map(fleetNext).join("／")}`; // 行き先は上の「移動先」で知らせた
+  {const told=toldOf();told.clear();for(const f of myFleets().filter(f=>!f.moved))told.set(f.id,fleetNext(f))} // 行き先は上の「移動先」で知らせた
   return L.join("\n");
 }
 
@@ -539,7 +558,7 @@ const api={
   // 戦闘・ターン処理・艦隊の移動の演出を何倍の速さで流すか（1〜4。1で今までどおり）
   setSpeed(x){const v=Number(x);speed=Number.isFinite(v)?Math.min(4,Math.max(1,v)):1;return{ok:true,speed}},
   // いまの「のこりの手」（行き先も省かずに）。ai-player が、LLM が手を選べずにいるときに見せる
-  nextMoves(){idleTold=null;return nextHint()??(B?"戦闘中です":S&&S.over?"ゲームは終わっています":"")},
+  nextMoves(){if(S)toldOf().clear();return nextHint()??(B?"戦闘中です":S&&S.over?"ゲームは終わっています":"")},
   setSpeaker(n){speaker=String(n||"のあ");return{ok:true,speaker}},
   // オート戦闘：true なら戦術戦闘は本体のオートで決着させ、作戦卓に戻ってから結果を返す（battle_* の操作は要らない）
   setAutoBattle(on){
