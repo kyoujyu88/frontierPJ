@@ -18,7 +18,10 @@ let prompts = [], reflections = 0;
 // LLM のふるまい：normal／empty（黙った返事を返す）／flaky（2ターン目の最初だけ 400）／notools（ツール非対応の 400）／always400（毎回 400）
 // ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）／emptytalk（空と地の文だけの返事を交互に返す）
 // ／emptyall（ツールを渡されると必ず空を返す。ツールなしで手を文字で頼まれたら、文字で end_turn() を書く）
+// ／json（ターンの最初に、手をツール名をキーにした JSON の配列でコードブロックに書く）／cut（ターンの最初に、最後の呼び出しの引数が途中で切れた返事を finish=length で返す）
 let mode = "normal", emptySent = false, etStart = "", etN = 0, textAsks = 0;
+// 送られてきた max_tokens（ツールつき・なし）
+let maxTok = [];
 // Ollama の /api/ps に見せるコンテキスト長（0 なら /api/ps は 404。ai-player はコンテキスト長が分からず、毎ターン会話を作り直す）
 let psCtx = 0;
 // /api/ps に見せるメモリの量（全体と、そのうち GPU の VRAM に載った分）
@@ -43,7 +46,7 @@ const llm = http.createServer(async (req, res) => {
   // Ollama のふり（psCtx があるときだけ）：モデルの詳細と版
   if (req.url === "/api/show" && psCtx) {
     res.writeHead(200, { "content-type": "application/json" });
-    return res.end(JSON.stringify({ parameters: "stop                           \"<end_of_turn>\"\nnum_ctx                        16384",
+    return res.end(JSON.stringify({ parameters: "stop                           \"<end_of_turn>\"\nnum_ctx                        16384\nnum_predict                    200",
       details: { parent_model: "", format: "gguf", family: "gemma3", families: ["gemma3"], parameter_size: "25.8B", quantization_level: "Q4_K_M" },
       model_info: { "general.architecture": "gemma3", "general.parameter_count": 25805037056, "gemma3.context_length": 131072 }, capabilities: ["completion", "tools", "thinking"] }));
   }
@@ -51,6 +54,7 @@ const llm = http.createServer(async (req, res) => {
   if (req.url.startsWith("/api/")) { res.writeHead(404); return res.end(); }
   const b = JSON.parse(body);
   if (b.tools) sentAll.push(b.messages);
+  maxTok.push({ tools: !!b.tools, max: b.max_tokens ?? null });
   const fail = (message) => { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message, type: "invalid_request_error" } })); };
   // Ollama と同じく、content が文字列でも配列でもないメッセージ（ツール呼び出しなし）は断る
   if (b.messages.some(m => typeof m.content !== "string" && !Array.isArray(m.content) && !m.tool_calls)) return fail("invalid message content type: <nil>");
@@ -90,8 +94,12 @@ const llm = http.createServer(async (req, res) => {
           { id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] })
         // ツール名だけを地の文に書く（2026-11 の録画で字幕に「end_turn」と出た形）。ツール呼び出しは付けない
         : mode === "bare" ? reply({ content: "内政はおしまい！\nend_turn" })
+        // 2026-11-17 のプレイログで出た形：ツール呼び出しを使わずに、手を JSON の配列で書く
+        : mode === "json" ? reply({ content: '```json\n[\n  {"say": "さあ、新しいターン！"},\n  {"invest_research": {"amount": 30}, "say": "研究に少しだけ！"},\n  {"end_turn": {}}\n]\n```' })
+        : mode === "cut" ? { choices: [{ index: 0, message: { role: "assistant", content: "", tool_calls: [callOf(`r${prompts.length}`, "invest_research", { amount: 30, say: "研究するよ！" }),
+          { id: `x${prompts.length}`, type: "function", function: { name: "move_fleet", arguments: '{"fleet_id":1,"' } }] }, finish_reason: "length" }] }
         : reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
-    } else out = mode === "empty" || mode === "play" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
+    } else out = mode === "empty" || mode === "play" || mode === "cut" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
       : mode === "keep" ? reply({ content: "", tool_calls: [callOf(`k${sentAll.length}`, "end_turn", { say: "ターン終了！" })] })
       : reply({ content: "様子を見るね" });
     // keep：ターンの最初は研究に投資してから（「前のターンにしたこと」に出るか見る）。usage も返す（2字=1トークンとして）
@@ -291,6 +299,7 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   check(m?.maxCtx === 131072 && m.numCtx === 16384 && m.quantization === "Q4_K_M" && m.parameterSize === "25.8B" && m.version === "0.13.0" && m.gpu === "RTX 4090 24GB"
     && /LLM：mock（gemma3・25\.8Bパラメータ・量子化 Q4_K_M・ツール・考える対応）　Ollama 0\.13\.0\n.*コンテキスト長：モデル本来の上限 131,072／Modelfile の num_ctx 16,384/.test(out) && /GPU：RTX 4090 24GB（--gpu の指定）/.test(out),
     "始めにモデルの詳細（系統・パラメータ数・量子化・対応機能・本来の最大コンテキスト長・num_ctx・Ollama の版・GPU の名前）を出す");
+  check(m?.numPredict === 200 && /返事の上限：512（--max-tokens。Modelfile の num_predict 200 より優先）/.test(out), "Modelfile の num_predict と、それより優先して送る返事の上限を出す");
   check(ld?.ctx === 24576 && ld.gpuPct === 75 && ld.cpuPct === 25 && ld.warnings?.length === 1 && ev.some(e => e.type === "ctx" && e.ctx === 24576)
     && /読み込み状態：コンテキスト長 24,576・メモリ 20\.0 GB：GPU（VRAM）15\.0 GB 75%／メインメモリ 5\.0 GB 25%・GPU RTX 4090 24GB/.test(out) && /⚠ モデルの 25% がメインメモリ/.test(out),
     "最初の返事のあと、実際のコンテキスト長（num_ctx より /api/ps を使う）とメモリの載り方を出し、メインメモリにはみ出していれば注意する");
@@ -337,6 +346,33 @@ l = await run(2, ["--no-notes"]);
   check(textAsks === 2 && ev.filter(e => e.type === "empty").length === 4 && ends.length === 2 && ends.every(e => e.by === "ai" && e.ok) && !ev.some(e => e.type === "auto")
     && ev.some(e => e.type === "llm" && e.kind === "text") && ev.some(e => e.type === "talk" && e.text === "えっと、ターンを終えるね！"),
     `空の返事が2回続いたら、ツールなしで聞いて文字の手を実行する（文字で頼んだ ${textAsks} 回・空 ${ev.filter(e => e.type === "empty").length} 回・自動進行 ${ev.filter(e => e.type === "auto").length} 回）`);
+}
+// 返事の上限：ふだんは 512、振り返りは 1024 以上を送る（Modelfile の num_predict 200 で返事が途中で切れていた）。--max-tokens 0 なら送らない
+{
+  check(maxTok.length > 0 && maxTok.filter(x => x.tools).every(x => x.max === 512) && maxTok.some(x => !x.tools && x.max === 1024),
+    `max_tokens を送る（ツールつき ${[...new Set(maxTok.filter(x => x.tools).map(x => x.max))].join("/")}・振り返り ${[...new Set(maxTok.filter(x => !x.tools).map(x => x.max))].join("/")}）`);
+  mode = "normal"; maxTok = [];
+  await run(1, ["--no-notes", "--max-tokens", "0"]);
+  check(maxTok.length > 0 && maxTok.every(x => x.max === null), "--max-tokens 0 なら max_tokens を送らない（サーバーの設定のまま）");
+}
+// 手を JSON の配列で書いた返事（2026-11-17 のプレイログで空の返事と数えられた）は、文字の手として実行する
+mode = "json"; prompts = [];
+l = await run(1, ["--no-notes"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const inv = ev.find(e => e.type === "tool" && e.name === "invest_research"), end = ev.find(e => e.type === "tool" && e.name === "end_turn");
+  check(!ev.some(e => e.type === "empty") && inv?.by === "ai" && inv.ok && end?.by === "ai" && end.ok
+    && ev.some(e => e.type === "talk" && e.text === "さあ、新しいターン！") && ev.some(e => e.type === "talk" && e.text === "研究に少しだけ！") && !ev.some(e => e.type === "talk" && /[{}\[\]`]/.test(e.text)),
+    "手を JSON の配列で書いた返事は空と数えずに実行し、say はセリフにする（記号は字幕に出さない）");
+}
+// 上限で切れた返事：引数が途中で終わった最後の呼び出しは実行しない（そろっている呼び出しは実行する）
+mode = "cut"; prompts = [];
+l = await run(1, ["--no-notes"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(ev.some(e => e.type === "tool" && e.name === "invest_research" && e.ok) && !ev.some(e => e.type === "tool" && e.name === "move_fleet") && ev.some(e => e.type === "cut" && e.names?.[0] === "move_fleet")
+    && /途中で終わった呼び出しは実行しません：move_fleet/.test(l),
+    "上限で切れた返事の、引数が途中で終わった呼び出しは実行しない");
 }
 mode = "emptytalk"; prompts = [];
 l = await run(2, ["--no-notes", "--max-steps", "8"]);

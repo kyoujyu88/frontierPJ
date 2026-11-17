@@ -21,6 +21,7 @@
  *   --turns <n>        何ターン遊んだら止めるか（既定 無制限）                        NOA_TURNS
  *   --temperature <t>  （既定 0.6）                                                   LLM_TEMPERATURE
  *   --think <none|low|medium|high>  考える量（reasoning_effort）。none で考えずに即答（Ollama の thinking 対応モデル向け）  LLM_THINK
+ *   --max-tokens <n>   1回の返事の上限トークン数（既定 512。振り返りは 1024 以上。0 でサーバーの設定のまま）。Modelfile の num_predict より優先  LLM_MAX_TOKENS
  *   --loop             ゲームが終わったら新しいゲームを始める
  *   --notes <file>     反省メモのファイル（既定 notes/<名前>.md）                    NOA_NOTES
  *   --notes-chars <n>  プロンプトに入れる反省メモの上限文字数（既定 1200）           NOA_NOTES_CHARS
@@ -60,6 +61,10 @@ const MAX_STEPS = Number(opt("max-steps", "NOA_MAX_STEPS", 40));
 const TURNS = Number(opt("turns", "NOA_TURNS", Infinity));
 const TEMP = Number(opt("temperature", "LLM_TEMPERATURE", 0.6));
 const THINK = opt("think", "LLM_THINK", null);
+/* 返事の上限。送らないとサーバーの設定（Ollama なら Modelfile の num_predict）になる。のあのモデルでは 200 トークンちょうどで切れていて、
+ * 操作を4〜5個 say つきでまとめた返事や、手を JSON で書いた返事が途中で終わっていた（2026-11-17 のログで2回、finish=length）。
+ * ふだんの返事は 40〜120 トークンなので、上限を上げても速さは変わらない */
+const MAX_TOKENS = Math.max(0, Number(opt("max-tokens", "LLM_MAX_TOKENS", 512)) || 0);
 const LOOP = argv.includes("--loop");
 /* ターンをまたいで会話を続ける（B2）。ローカルLLM（Ollama の Gemma 系など）は、前に送ったプロンプトの「後ろに足した」ときだけ読み直しを省ける。
  * ターンごとに会話を作り直すと、毎ターン最初の返事でプロンプト全体（約7千トークン）を読み直して 約11秒かかっていた（2026-11-16 のログ、36ターン×11秒）。
@@ -105,7 +110,7 @@ const plog = new PlayLog(LOG_FILE);
 let lastTurn = null;
 // URL は「プロトコル・ホスト・パス」だけ残す（ユーザー名・パスワードやクエリに載せたキーをログと操作盤に出さないように）
 const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathname; } catch { return "(URLを読めません)"; } })();
-plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
+plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxTokens: MAX_TOKENS || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
   notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
 if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
 
@@ -116,7 +121,7 @@ const LOADED_TRIES = 3; // 見つからなければ、次のターンの最初�
 llm.info = await modelInfo(BASE, MODEL).catch(() => null);
 if (!llm.gpu && isLocalHost(BASE)) { const g = gpuText(await localGpus().catch(() => null)); if (g) { llm.gpu = g; llm.gpuFrom = "nvidia-smi"; } }
 // 複数行は1行ずつ log する（操作盤は行頭の時刻で行を見分けるので、2行目以降にも時刻を付ける）
-for (const line of `LLM：${describeModel(MODEL, llm.info) ?? `${MODEL}（Ollama ではないので、モデルの詳細は分かりません）`}`.split("\n")) log(line);
+for (const line of `LLM：${describeModel(MODEL, llm.info, { maxTokens: MAX_TOKENS }) ?? `${MODEL}（Ollama ではないので、モデルの詳細は分かりません）`}`.split("\n")) log(line);
 if (llm.gpu) log(`  GPU：${llm.gpu}（${llm.gpuFrom === "--gpu" ? "--gpu の指定" : "この PC の nvidia-smi"}）`);
 plog.write("model", { model: MODEL, ...(llm.info ?? { ollama: false }), gpu: llm.gpu, gpuFrom: llm.gpuFrom });
 /* 読み込まれたあとの状態。ターンの最初の返事のあとに聞く（モデルはその返事で読み込まれる）。
@@ -271,6 +276,8 @@ async function detectCtx() {
 async function chat(messages, { withTools = true, kind = withTools ? "play" : "reflect" } = {}) {
   const body = { model: MODEL, messages, temperature: TEMP };
   if (THINK) body.reasoning_effort = THINK;
+  // 振り返り（反省メモ）は箇条書きで長くなる（上限 1200字）ので、少なくとも 1024
+  if (MAX_TOKENS) body.max_tokens = kind === "reflect" ? Math.max(MAX_TOKENS, 1024) : MAX_TOKENS;
   if (withTools) Object.assign(body, { tools, tool_choice: "auto" });
   else body.temperature = Math.min(TEMP, 0.4);
   const t0 = Date.now();
@@ -566,6 +573,17 @@ async function playTurn(turn) {
       continue;
     }
     idle = 0;
+    if (msg.finish === "length") {
+      // 返事が上限で切れたときは、引数の JSON が途中で終わった最後の呼び出しを実行しない（引数なしで実行すると、たいてい失敗する）
+      const cut = calls.filter(c => typeof c.function.arguments === "string" && c.function.arguments.trim() && (() => { try { JSON.parse(c.function.arguments); return false; } catch { return true; } })());
+      if (cut.length) {
+        log(`  （返事が上限で切れたので、途中で終わった呼び出しは実行しません：${cut.map(c => c.function.name).join(", ")}）`);
+        plog.write("cut", { names: cut.map(c => c.function.name) });
+        calls = calls.filter(c => !cut.includes(c));
+        if (calls.length) messages.at(-1).tool_calls = calls;
+        else { delete messages.at(-1).tool_calls; messages.push({ role: "user", content: "返事が途中で切れました。手は1回に1〜3個までにして、もう一度ツールで呼んでください。" }); continue; }
+      }
+    }
     for (const c of calls) {
       c.id ||= `call_${step}_${Math.random().toString(36).slice(2, 8)}`;
       let args = c.function.arguments;

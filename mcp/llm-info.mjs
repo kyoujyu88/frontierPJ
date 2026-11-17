@@ -3,7 +3,7 @@
  * Ollama の API で分かること
  *   /api/version … Ollama の版
  *   /api/show    … モデルの系統・パラメータ数・量子化・対応機能（ツール・考える・画像）、
- *                  モデル本来の最大コンテキスト長（model_info の <系統>.context_length）、Modelfile の num_ctx
+ *                  モデル本来の最大コンテキスト長（model_info の <系統>.context_length）、Modelfile の num_ctx・num_predict（返事の上限）
  *   /api/ps      … 読み込まれたモデルの実際のコンテキスト長（context_length）と、
  *                  メモリの使い方（size：全体、size_vram：そのうち GPU のメモリ＝VRAM に載った分。残りはメインメモリで CPU が計算）
  * GPU の機種名は Ollama の API にない。--gpu <名前> で書けばログに出す。
@@ -36,13 +36,15 @@ export async function modelInfo(baseUrl, model) {
   const d = sh.details ?? {}, mi = sh.model_info ?? {};
   const arch = mi["general.architecture"] || d.family || null;
   const maxCtx = Number(mi[`${arch}.context_length`]) || Number(d.context_length) || null;
-  const numCtx = Number(String(sh.parameters ?? "").match(/(?:^|\n)\s*num_ctx\s+(\d+)/)?.[1]) || null;
+  const param = (k) => String(sh.parameters ?? "").match(new RegExp(`(?:^|\\n)\\s*${k}\\s+(-?\\d+)`))?.[1];
+  const numCtx = Number(param("num_ctx")) || null;
+  const numPredict = param("num_predict") != null ? Number(param("num_predict")) : null; // -1 は上限なし
   return {
     version, family: d.family || arch, arch,
     parameterSize: d.parameter_size || null, parameterCount: Number(mi["general.parameter_count"]) || null,
     quantization: d.quantization_level || null, format: d.format || null, parent: d.parent_model || null,
     capabilities: Array.isArray(sh.capabilities) ? sh.capabilities : null,
-    maxCtx, numCtx,
+    maxCtx, numCtx, numPredict,
   };
 }
 
@@ -77,13 +79,16 @@ export const gpuText = (gpus) => gpus?.length ? gpus.map(g => `${g.name}${g.tota
 
 const CAPS = { tools: "ツール", thinking: "考える", vision: "画像", completion: null, embedding: "埋め込み", insert: null };
 /* 画面とログ用の1〜2行 */
-export function describeModel(model, info) {
+/* maxTokens：ai-player が送る返事の上限（max_tokens。0 は送らない）。Modelfile の num_predict より優先される */
+export function describeModel(model, info, { maxTokens = 0 } = {}) {
   if (!info) return null;
   const caps = (info.capabilities ?? []).map(c => c in CAPS ? CAPS[c] : c).filter(Boolean);
   const size = info.parameterSize || (info.parameterCount ? `${(info.parameterCount / 1e9).toFixed(1)}B` : null);
   const head = [info.family, size && `${size}パラメータ`, info.quantization && `量子化 ${info.quantization}`, caps.length && `${caps.join("・")}対応`].filter(Boolean).join("・");
   const ctx = [info.maxCtx && `モデル本来の上限 ${num(info.maxCtx)}`, info.numCtx && `Modelfile の num_ctx ${num(info.numCtx)}`].filter(Boolean).join("／");
-  return `${model}（${head || "詳細なし"}）${info.version ? `　Ollama ${info.version}` : ""}${ctx ? `\n  コンテキスト長：${ctx}` : ""}`;
+  const np = info.numPredict != null && info.numPredict >= 0 ? `Modelfile の num_predict ${num(info.numPredict)}` : null;
+  const out = maxTokens ? `${num(maxTokens)}（--max-tokens${np ? `。${np} より優先` : ""}）` : np ? `${np}（--max-tokens で変えられます）` : null;
+  return `${model}（${head || "詳細なし"}）${info.version ? `　Ollama ${info.version}` : ""}${ctx ? `\n  コンテキスト長：${ctx}` : ""}${out ? `\n  返事の上限：${out}` : ""}`;
 }
 export function describeLoaded(l, { gpu } = {}) {
   if (!l) return null;

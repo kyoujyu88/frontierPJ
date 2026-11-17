@@ -84,6 +84,22 @@ eq(lines('みんなに say "hello" って言いたい'), ['みんなに say "hel
 eq(T.cleanTalk('say "ターン終了！"'), "", "cleanTalk も say \"…\" の記法を外す");
 eq(splitRecordedTalk('say "記録済み"', "のあ"), ["記録済み"], '記録済みのセリフの say "…" も直す');
 
+// ツール名をキーにした JSON で手を書いた形（2026-11-17 のプレイログ：コードブロックの中の配列。空の返事と数えられ、2回目は 200 トークンで切れた）
+{
+  const arr = '```json\n[\n  {"say": "さあ、新しいターン！"},\n  {"build": {"fleet_id": 1}},\n  {"move_fleet": {"fleet_id": 23, "to": 4}, "say": "第3艦隊、出撃！"},\n  {"end_turn": {}}\n]\n```';
+  eq(lines(arr), ["さあ、新しいターン！"], "JSON の say はセリフにし、コードブロックの残り（[ , ]）は字幕に出さない");
+  eq(calls(arr), [["build", { fleet_id: 1 }], ["move_fleet", { fleet_id: 23, to: 4, say: "第3艦隊、出撃！" }], ["end_turn", {}]], "JSON の手は書かれた順に実行し、同じ要素の say はその手のひとことにする");
+  const cut = '```json\n[\n  {"say": "研究するよ"},\n  {"build": {"fleet_id": 1}},\n  {"move_fleet": {"fleet_id": 23, "';
+  eq(lines(cut), ["研究するよ"], "途中で切れた JSON の残りは字幕に出さない");
+  eq(calls(cut), [["build", { fleet_id: 1 }]], "途中で切れた最後の要素は実行しない（そろっている要素だけ）");
+  eq(calls('{"name": "move_fleet", "arguments": {"fleet_id": 6, "to": 7}}'), [["move_fleet", { fleet_id: 6, to: 7 }]], "OpenAI 形式の JSON（name・arguments）も拾う");
+  eq(calls('{"name": "move_fleet", "parameters": "{\\"fleet_id\\": 6, \\"to\\": 7}"}'), [["move_fleet", { fleet_id: 6, to: 7 }]], "parameters・文字列の JSON でもよい");
+  eq(lines('{"name": "のあ"} こんにちは'), ['{"name": "のあ"} こんにちは'], "ツール名でない name の JSON は触らない");
+  eq(lines('{"say": {"text": "やるよ"}}'), ["やるよ"], '{"say": {"text": …}} もセリフ');
+  eq(calls('move_fleet(fleet_id=1, to=2) {"end_turn": {}}'), [["move_fleet", { fleet_id: 1, to: 2 }], ["end_turn", {}]], "関数の形と JSON が混ざっていても順に拾う");
+  eq(calls('{"say": "move_fleet(fleet_id=1, to=2) するよ"}'), [], "JSON のセリフの中に書いた関数の形は実行しない");
+}
+
 // 続けるターンの状況テキストの差分（sumdiff.mjs）。出来事は新しい順なので、前の一覧の続きより前を新しい出来事とする
 eq(newEvents(["[4001] c", "[4001] b"], ["[4002] e", "[4002] d", "[4001] c", "[4001] b"]), ["[4002] e", "[4002] d"], "出来事：前の一覧の続きより前が新しい");
 eq(newEvents(["[4002] 改装", "[4002] 改装"], ["[4002] 改装", "[4002] 改装", "[4002] 改装"]), ["[4002] 改装"], "出来事：同じ文面が続けて起きても落とさない");

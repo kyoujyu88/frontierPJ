@@ -5,6 +5,8 @@
  *   <|tool_call>call:battle_move{unit_id:30,x:3,y:2}<tool_call|>              … Gemma 系の特殊トークン（文字列は <|"|> で囲む）
  *   say{text:「…」} say{text:「…」}                                          … call: も特殊トークンも付かない形（gemma4 で実際に出た）
  *   say "…"　say「…」　say: "…"                                              … 行の頭の say のあとに引用符でセリフ（2026-11-16 のプレイログで出た）
+ *   [{"say": "…"}, {"build_ship": {"fleet_id": 1}, "say": "…"}]              … ツール名をキーにした JSON（2026-11-17 のプレイログで出た。コードブロックの中の配列）
+ *   {"name": "move_fleet", "arguments": {"fleet_id": 1, "to": 2}}             … OpenAI 形式の呼び出しを JSON で書いたもの
  * say の呼び出しはセリフとして1件ずつ字幕にし、ほかの呼び出しは実行する候補として返す。どちらも字幕には生の記法を出さない。
  *
  * 括弧の付かないツール名だけを書くこともある（2026-11 の録画で字幕に「end_turn」とだけ出た）：
@@ -134,6 +136,8 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
   const MENTION = snake ? new RegExp(`[ \\t]*\`?\\b(${snake})\\b\`?(?:[ \\t]*（([^（）\\n]{1,20})）)?[ \\t]*`, "g") : null;
   const NAME_SET = new Set(toolNames);
   const WORD = /[A-Za-z0-9]/;
+  // JSON で書いた呼び出しの頭：{"ツール名": …} か {"name": …}
+  const JSON_HEAD = new RegExp(`\\{\\s*"(name|${names})"\\s*:`, "g");
 
   /* 行がツール名だけ（飾りの記号を除いて）なら、その名前の並びを返す。そうでなければ null */
   function bareNames(line) {
@@ -183,12 +187,51 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
     return found;
   }
 
+  /* JSON で書いた呼び出しを { name, args } の並びにする。
+   *   {"name": "move_fleet", "arguments": {…}}（arguments は parameters・args でも、文字列の JSON でもよい）
+   *   {"build_ship": {…}, "say": "…"} … ツール名のキー。say はその操作のひとこと（say 引数）にする
+   *   {"say": "…"} / {"say": {"text": "…"}} … セリフだけ */
+  function jsonCalls(o) {
+    if (!o || typeof o !== "object" || Array.isArray(o)) return [];
+    const obj = (a) => { if (typeof a === "string") { try { a = JSON.parse(a); } catch { a = null; } } return a && typeof a === "object" && !Array.isArray(a) ? { ...a } : {}; };
+    if (typeof o.name === "string") return NAME_SET.has(o.name) ? [{ name: o.name, args: obj(o.arguments ?? o.parameters ?? o.args) }] : [];
+    const sayText = typeof o.say === "string" ? o.say : typeof o.say?.text === "string" ? o.say.text : null;
+    const out = Object.keys(o).filter(k => k !== "say" && NAME_SET.has(k)).map(k => ({ name: k, args: obj(o[k]) }));
+    if (sayText == null) return out;
+    if (!out.length) return NAME_SET.has("say") ? [{ name: "say", args: { text: sayText } }] : [];
+    if (out[0].args.say == null) out[0].args.say = sayText;
+    return out;
+  }
+  function findJson(src) {
+    const out = [];
+    JSON_HEAD.lastIndex = 0;
+    for (let m; (m = JSON_HEAD.exec(src));) {
+      const close = matchClose(src, m.index);
+      if (close < 0) {
+        // 閉じていない（返事が途中で切れた）。引数がそろっているか分からないので実行はせず、字幕からだけ外す
+        out.push({ name: m[1], args: null, start: m.index, end: src.length, src });
+        break;
+      }
+      let o = null;
+      try { o = JSON.parse(src.slice(m.index, close)); } catch { /* JSON ではない */ }
+      const cs = jsonCalls(o);
+      if (o && !cs.length && m[1] === "name") { JSON_HEAD.lastIndex = m.index + 1; continue; } // {"name": "のあ"} のような、呼び出しではない JSON
+      if (!cs.length) out.push({ name: m[1], args: null, start: m.index, end: close, src });
+      for (const c of cs) out.push({ ...c, start: m.index, end: close, src });
+      JSON_HEAD.lastIndex = close;
+    }
+    return out;
+  }
+
   /* 文字で書かれた呼び出しを、書かれた順に { name, args, start, end } で返す（args が読めないものは null） */
   function findCalls(text) {
     const src = (text || "").replace(/<\|"\|>/g, '"');
+    const json = findJson(src);
+    const inJson = (i) => json.some(c => c.start <= i && i < c.end);
     const out = [];
     HEAD.lastIndex = 0;
     for (let m; (m = HEAD.exec(src));) {
+      if (inJson(m.index)) continue;
       const open = m.index + m[0].length - 1;
       const close = matchClose(src, open);
       let bodyEnd, end;
@@ -207,7 +250,8 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
       out.push({ name: m[1], args, start: m.index, end, src });
       HEAD.lastIndex = end;
     }
-    return NAME_SET.has("say") ? [...out, ...sayLines(src, out)].sort((a, b) => a.start - b.start) : out;
+    const all = [...out, ...json];
+    return (NAME_SET.has("say") ? [...all, ...sayLines(src, all)] : all).sort((a, b) => a.start - b.start);
   }
 
   /* 呼び出しの記法をすべて外して字幕向けに整える */

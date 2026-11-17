@@ -89,6 +89,21 @@ const rules = await call("get_rules"); console.log("rules:", rules.length, "char
   const again = await call("build_facility", { planet_id: 0, facility: "採掘所" }, { reject: true });
   if (!/未行動の艦隊：move_fleet\(fleet_id=\d+, to=\d+(か\d+)*(（亜空間移動なら[\d/]+も）|（亜空間移動）)?\).*（行き先の様子は前と同じ）/.test(again.next ?? "")) fail(`行き先が前と同じときの書き方が違う：${String(again.next).slice(0, 300)}`);
 }
+// 資金を使って、前に「払える」と見せた手が払えなくなったら、一度だけ「資金が足りなくなった手」として書く
+// （前に見た一覧の手を資金が減ったあとに呼んで断られた。2026-11-17 のログで5回）
+{
+  const sum = await call("get_summary"); // 状況テキストで見せた手も覚える
+  const s0 = await call("get_state");
+  const sv = s0.planets.find(p => p.owner === "P" && p.surveyLeft > 0);
+  if (s0.funds >= 40 && s0.funds < 100 && sv && /施設：/.test(typeof sum === "string" ? sum : "")) {
+    const r = await call("survey", { planet_id: sv.id });
+    const lost = (r.next ?? "").match(/資金が足りなくなった手（呼ばない）：(.+)/)?.[1] ?? "";
+    if (r.ok === false || !/(施設 [a-z]+\d+|費用\d+)/.test(lost)) fail(`探査で資金が減ったのに「資金が足りなくなった手」が無い（資金${s0.funds}→${r.funds ?? "?"}）：${String(r.next).slice(0, 300)}`);
+    const again = await call("get_next");
+    if (/資金が足りなくなった手/.test(again)) fail("「資金が足りなくなった手」を2回書いている");
+    console.log(`資金が足りなくなった手：${lost}`);
+  } else console.log(`（資金${s0.funds}なので「資金が足りなくなった手」の確認は飛ばします）`);
+}
 await call("say", { text: "テストを始めるよ！" });
 await call("build_facility", { planet_id: 6, facility: "mine" }, { reject: true }); // 敵の星には建てられない
 await call("move_fleet", { fleet_id: 9999, to: 1 }, { reject: true }); // 無い艦隊は動かせない
