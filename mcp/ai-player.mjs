@@ -45,6 +45,7 @@ import { fileURLToPath } from "node:url";
 import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName } from "./notes.mjs";
 import { PlayLog, LOG_DIR, subtitlesBeside } from "./playlog.mjs";
 import { makeTalk, stripThink } from "./talk.mjs";
+import { summaryDelta } from "./sumdiff.mjs";
 import { modelInfo, loadedInfo, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
 
 const sep = process.argv.indexOf("--");
@@ -267,7 +268,7 @@ async function detectCtx() {
 }
 
 /* ---------- LLM 呼び出し ---------- */
-async function chat(messages, { withTools = true } = {}) {
+async function chat(messages, { withTools = true, kind = withTools ? "play" : "reflect" } = {}) {
   const body = { model: MODEL, messages, temperature: TEMP };
   if (THINK) body.reasoning_effort = THINK;
   if (withTools) Object.assign(body, { tools, tool_choice: "auto" });
@@ -302,10 +303,11 @@ async function chat(messages, { withTools = true } = {}) {
   if (!msg) throw llmError(`LLM API の返事が読めません：${JSON.stringify(data).slice(0, 200)}`, false);
   if (withTools) sizeOf.seen(messages, data.usage);
   msg.usage = data.usage ?? null;
+  msg.finish = data.choices[0].finish_reason ?? null;
   // content を配列で返すサーバーもある
   if (Array.isArray(msg.content)) msg.content = msg.content.map(c => c.text ?? "").join("");
   // 返事は加工する前の全文を残す（考えた部分を別の欄で返すサーバーもある）
-  plog.write("llm", { kind: withTools ? "play" : "reflect", sec: Math.round(sec * 10) / 10, content: msg.content ?? "",
+  plog.write("llm", { kind, sec: Math.round(sec * 10) / 10, content: msg.content ?? "",
     ...(msg.reasoning_content || msg.reasoning ? { reasoning: msg.reasoning_content || msg.reasoning } : {}),
     ...(msg.tool_calls?.length ? { calls: msg.tool_calls.map(c => ({ name: c.function?.name, arguments: c.function?.arguments })) } : {}),
     ...(data.usage ? { usage: data.usage } : {}), finish: data.choices[0].finish_reason ?? null });
@@ -410,7 +412,7 @@ const ALIAS = { replace_ship: ["build_ship", { replace: true }] };
  * 次のターンの最初に「前のターンにしたこと」を渡す（会話を作り直すとき）。以前は前のターンの最初のセリフを渡していたが、
  * 小さなモデルはそれをそのまま繰り返し、採掘所のある星に3ターン続けて採掘所を建てようとした（2026-11-16 のログ）。
  * 意図ではなく、実際に成功した操作と戦闘の結果だけを書く */
-let recap = "", done = [];
+let recaps = [], done = [];
 function noteDone(name, args, j) {
   if (!j?.ok || QUIET.has(name)) return;
   const bs = (j.battles ?? []).map(b => `${b.title}：${b.result}`);
@@ -421,42 +423,68 @@ function noteDone(name, args, j) {
 function takeRecap(turn, auto) {
   const t = done.length ? done.join("、") : "なし";
   done = [];
-  const s = `前のターン（ターン${turn}）にしたこと：${t.length > 400 ? t.slice(0, 400) + "…" : t}${auto ? "（途中から自動で進めました）" : ""}`;
+  const s = `ターン${turn}にしたこと：${t.length > 400 ? t.slice(0, 400) + "…" : t}${auto ? "（途中から自動で進めました）" : ""}`;
   return s;
 }
+/* 会話を作り直すときに渡す、前のターンまでの記録（1ターン1行、新しい2ターン分）。
+ * 会話を続けたターンの操作の結果は、作り直すと消えるので、ここで1行ずつに縮めて引き継ぐ */
+const recapText = () => recaps.length ? `前のターンまでにしたこと（成功した操作と戦闘の結果）：\n${recaps.map(r => `- ${r}`).join("\n")}` : "";
 
 /* ---------- 会話（ターンをまたいで続ける） ---------- */
 let convo = null, convoTurns = 0;
-const RESERVE = 3000; // 1ターンのあいだに会話が伸びる分（2026-11-16 のログで最大 約2,500トークン）
+/* 1ターンのあいだに会話が伸びる分の見込み。最近3ターンで実際に伸びた分の平均の1.1倍にする（測るまでは 3000。2026-11-16 のログで最大 約2,500トークン）。
+ * 多めに見ると、続けられるターンでも作り直して読み直しが増える。少なく見すぎてあふれそうになったら compactIfLong がターンの途中で作り直すが、
+ * 読み直しは1回で、ターンの最初に作り直すのと変わらないので、平均で見る */
+const RESERVE0 = 3000, grew = [];
+const reserve = () => { const r = grew.slice(-3); return r.length ? Math.min(4500, Math.max(1000, Math.ceil(r.reduce((a, b) => a + b, 0) / r.length * 1.1))) : RESERVE0; };
+let turnStartTokens = null;
 const START = "今の状況です。操作を始めてください。";
-function freshTurn(text) {
-  const first = { role: "user", content: text };
-  shortOf.set(first, `${text.split(START)[0]}${START}\n${OLD_NOTE}`);
-  convoTurns = 1; keepFrom = 0;
+let lastSum = ""; // 最後に渡した状況テキスト（全文）。次のターンに会話を続けるとき、ここからの差分だけを渡す
+function freshTurn(text, sum) {
+  const first = { role: "user", content: `${text}\n\n${sum}` };
+  shortOf.set(first, `${text}\n${OLD_NOTE}`);
+  convoTurns = 1; keepFrom = 0; lastSum = sum;
   return [{ role: "system", content: SYSTEM() }, first];
 }
 async function startTurn(turn) {
   const sum = await summary();
-  // 続ける：前のターンの会話の後ろに、新しい状況を足すだけ（前のメッセージは書き換えない）
+  // 続ける：前のターンの会話の後ろに、新しい状況を足すだけ（前のメッセージは書き換えない）。
+  // 状況テキストは、惑星と出来事を前から変わった行だけにする（会話の前のほうに前の状況テキストがある）
   if (KEEP && CTX && convo && !MANUAL_BATTLE && convoTurns < KEEP_TURNS && convo[0].content === SYSTEM()) {
-    const add = { role: "user", content: `【ターン${turn}】前のターンが終わりました。ここまでの状況テキストと「のこりの手」は古くなっています（資金・艦隊・星が変わっています）。下の新しい状況を見てください。\n${START}\n\n${sum}` };
-    const est = sizeOf.of([...convo, add]);
-    if (est + RESERVE <= CTX * 0.9) {
-      keepFrom = convo.length; convo.push(add); convoTurns++;
-      plog.write("context", { keep: true, turns: convoTurns, est });
+    const delta = summaryDelta(lastSum, sum);
+    const add = { role: "user", content: `【ターン${turn}】前のターンが終わりました。ここまでの「のこりの手」は古くなっています（資金・艦隊・星が変わっています）。下の新しい状況を見てください。\n${START}\n\n${delta ?? sum}` };
+    const est = sizeOf.of([...convo, add]), res = reserve();
+    if (est + res <= CTX * 0.9) {
+      keepFrom = convo.length; convo.push(add); convoTurns++; lastSum = sum; turnStartTokens = est;
+      plog.write("context", { keep: true, turns: convoTurns, est, reserve: res, ...(delta ? { delta: true, chars: delta.length, full: sum.length } : {}) });
       return convo;
     }
-    plog.write("context", { keep: false, est, ctx: CTX });
+    plog.write("context", { keep: false, est, reserve: res, ctx: CTX });
   }
-  return freshTurn(`${recap ? `${recap}\n\n` : ""}${START}\n\n${sum}`);
+  const r = recapText();
+  const msgs = freshTurn(`${r ? `${r}\n\n` : ""}${START}`, sum);
+  turnStartTokens = sizeOf.of(msgs); // 最初の返事の prompt_tokens（実測）で置き換える
+  return msgs;
+}
+/* ターンの終わりに、このターンで会話が何トークン伸びたかを覚える（次に続けるかどうかの見込みに使う）。
+ * 始まりは最初の返事の prompt_tokens、終わりは sizeOf.of（最後にツールつきで送ったときの usage に、そのあと足した字数×トークン/字）で、
+ * どちらも実測を土台にしている。ツールなしの問い合わせは usage にツールの定義が入らず土台にできないので、そのぶんは字数から見積もる */
+function noteGrowth(messages) {
+  if (turnStartTokens == null || !CTX) return;
+  const g = sizeOf.of(messages) - turnStartTokens;
+  if (g > 0) grew.push(g);
+  if (grew.length > 10) grew.shift();
+  turnStartTokens = null;
 }
 /* ターンの途中でコンテキストがあふれそうになったら、いまの状況で作り直す（会話を続けると長くなるので、その保険） */
 async function compactIfLong(messages) {
   if (!CTX || sizeOf.of(messages) <= CTX * 0.9) return messages;
   log("会話が長くなったので、いまの状況で作り直します");
   plog.write("context", { compact: true, est: sizeOf.of(messages), ctx: CTX });
-  const head = done.length ? `このターンにしたこと：${done.join("、")}\n\n` : "";
-  return freshTurn(`${head}（会話が長くなったので、まとめ直しました。このターンの続きです）\n${START}\n\n${await summary()}`);
+  turnStartTokens = null; // このターンの伸びは測れなくなった
+  const r = recapText();
+  const head = `${r ? `${r}\n` : ""}${done.length ? `このターンにしたこと：${done.join("、")}\n` : ""}`;
+  return freshTurn(`${head ? `${head}\n` : ""}（会話が長くなったので、まとめ直しました。このターンの続きです）\n${START}`, await summary());
 }
 
 /* ---------- 1ターン ---------- */
@@ -474,7 +502,8 @@ async function playTurn(turn) {
       log(`この戦闘で ${MAX_STEPS} 回考えたので、残りの戦闘を自動で片付けます`);
       const s = await autopilot(`この戦闘で ${MAX_STEPS} 回考えた`); auto = true; inBattle = false;
       if (s.over || ended) return { st: s, auto };
-      const back = { role: "user", content: `残りの戦闘は自動で片付けました。作戦卓の操作を続けてください。\n\n${await summary()}` };
+      const sum = await summary(); lastSum = sum;
+      const back = { role: "user", content: `残りの戦闘は自動で片付けました。作戦卓の操作を続けてください。\n\n${sum}` };
       shortOf.set(back, `残りの戦闘は自動で片付けました。\n${OLD_NOTE}`);
       messages.push(back);
       continue;
@@ -483,28 +512,50 @@ async function playTurn(turn) {
     step++;
     messages = await compactIfLong(messages);
     plog.sentMessages(messages);
-    const msg = await chat(slim(messages));
-    if (step === 1) { await checkLoaded().catch(() => {}); await detectCtx().catch(() => {}); } // 最初の返事でモデルが読み込まれてから聞く
+    let msg = await chat(slim(messages));
+    if (step === 1) {
+      await checkLoaded().catch(() => {}); await detectCtx().catch(() => {}); // 最初の返事でモデルが読み込まれてから聞く
+      if (turnStartTokens != null && msg.usage?.prompt_tokens) turnStartTokens = msg.usage.prompt_tokens; // ターンの始まりの長さ（実測）
+    }
     // 地の文は1行、文字で書かれた say{text:「…」}・say "…" は1件ずつ字幕にする（生の記法や、end_turn だけの行のようなツール名は出さない）
-    const { lines, calls: written } = splitReply(stripThink(msg.content));
+    let { lines, calls: written } = splitReply(stripThink(msg.content));
+    if (!msg.tool_calls?.length && !written.length && !lines.length) {
+      /* 中身が空の返事（話さず、ツールも呼ばない）。2026-11-16 のログでは 約50トークン出したのに中身が空、が4回続いてターンが自動で終わり、
+       * 2026-11-17 のログでは1ゲーム13回、ターン8で3回続いて3艦隊が動かないままになった。トークンは出ているので、
+       * ツール呼び出しを書こうとして Ollama が読み取れずに捨てたと見ている（2回目に「のこりの手」を見せても空のままだった）。
+       * 空の返事は会話に積まない（積むと、空の返事を続けやすくなる）。
+       * 1回目は「のこりの手」（行き先も全部）を見せて、ツールを1つだけ呼ぶよう頼む。
+       * 2回目はツールを渡さずに聞き、手を文字で書いてもらう（Ollama のツール呼び出しの読み取りを通らない。文字の呼び出しはこちらで拾う）。
+       * それでも空なら自動進行に切り替える。
+       * 2回目は1ステップの中で LLM を2回呼ぶ（step・--max-steps には1回と数える。空の返事は3回で必ず抜けるので、増えても1ステップ1回まで） */
+      empty++;
+      plog.write("empty", { n: empty, tokens: msg.usage?.completion_tokens ?? null, finish: msg.finish ?? null });
+      if (empty >= 3) break;
+      const nx = (await tool("get_next").catch(() => null))?.text || "";
+      if (empty === 1) {
+        log("  （空の返事だったので、のこりの手を見せてもう一度聞きます）");
+        messages.push({ role: "user", content: `返事が空でした。次の手をツールで1つだけ呼んでください（セリフは短く、そのツールの say 引数に）。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
+        continue;
+      }
+      log("  （空の返事が続いたので、ツールを渡さずに手を文字で書いてもらいます）");
+      messages.push({ role: "user", content: `返事がまた空でした（ツールの呼び出しがこちらに届いていません）。次の手を1つだけ、関数の形で1行に書いてください。例：move_fleet(fleet_id=6, to=7) / build_facility(planet_id=3, facility="lab") / end_turn()${nx ? `\n${nx}` : ""}` });
+      msg = await chat(slim(messages), { withTools: false, kind: "text" });
+      ({ lines, calls: written } = splitReply(stripThink(msg.content)));
+      if (!written.length) {
+        // 手は書かずに話しただけ：セリフは字幕に出し、空の返事と同じに数える（話すだけで進まない返事が続いたら自動進行にする）
+        for (const line of lines) { log(`${NAME}：` + line); await say(line.slice(0, 160)); }
+        empty++;
+        plog.write("empty", { n: empty, tokens: msg.usage?.completion_tokens ?? null, finish: msg.finish ?? null, text: true });
+        if (empty >= 3) break;
+        continue;
+      }
+      log(`  （文字で書いてもらった手：${written.map(c => c.function.name).join(", ")}）`);
+    }
     const talk = lines.join("\n");
     if (talk && !turnTalk) turnTalk = talk.slice(0, 200);
     for (const line of lines) { log(`${NAME}：` + line); await say(line.slice(0, 160)); }
     let calls = msg.tool_calls ?? [];
     if (!calls.length && (calls = written).length) log(`  （文字で書かれたツール呼び出しを実行します：${calls.map(c => c.function.name).join(", ")}）`);
-    if (!calls.length && !talk) {
-      /* 中身が空の返事（話さず、ツールも呼ばない）。2026-11-16 のログでは 約50トークン出したのに中身が空、が4回続いてターンが自動で終わった。
-       * 空の返事は会話に積まない（積むと、空の返事を続けやすくなる）。1回目はそのまま聞き直し（会話が同じなので読み直しはない）、
-       * 2回目は「のこりの手」を見せて手を選ばせ、3回目で自動進行に切り替える */
-      empty++;
-      plog.write("empty", { n: empty, tokens: msg.usage?.completion_tokens ?? null });
-      if (empty >= 3) break;
-      if (empty === 2) {
-        const nx = (await tool("get_next").catch(() => null))?.text || "";
-        messages.push({ role: "user", content: `返事が空でした。次の手をツールで1つ呼んでください（セリフはそのツールの say 引数に）。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
-      } else log("  （空の返事だったので、もう一度聞きます）");
-      continue;
-    }
     empty = 0; // 「空の返事が3回続いたら」なので、話した返事でも数え直す
     // content は必ず文字列にする（null だと Ollama が「invalid message content type: <nil>」の 400 で断る）
     messages.push({ role: "assistant", content: talk, ...(calls.length ? { tool_calls: calls } : {}) });
@@ -565,7 +616,7 @@ async function playTurn(turn) {
     if (ended) {
       // 通信が開いていても次のターンへ進む（次のターンの状況テキストに出て、最初の操作で自動的に閉じる）
       const s = (await tool("get_state")).json;
-      if (!s.battle) { if (!auto) convo = messages; return { st: s, auto }; }
+      if (!s.battle) { if (!auto) { convo = messages; noteGrowth(messages); } return { st: s, auto }; }
     }
   }
   // 上限まで来た・黙った：残りを自動で片付けてターンを終える
@@ -626,7 +677,7 @@ for (let n = 0; n < TURNS; n++) {
     if (reflectedAt !== -1) await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over));
     reflectedAt = -1;
     if (!LOOP) break;
-    await tool("new_game", { confirm: true }); recap = ""; done = []; convo = null;
+    await tool("new_game", { confirm: true }); recaps = []; done = []; convo = null; lastSum = "";
     journal = new Journal(); reflectedAt = 0;
     st = (await tool("get_state")).json; journal.begin(st);
     plog.write("newgame", {});
@@ -651,7 +702,7 @@ for (let n = 0; n < TURNS; n++) {
     st = await autopilot("エラーのあと"); if (!st.over) { autoBy = true; await tool("end_turn").then(r => noteDone("end_turn", {}, r.json)).finally(() => { autoBy = false; }); st = await autopilot("ターン終了のあとの戦闘や通信"); }
     auto = true;
   }
-  recap = takeRecap(turn, auto);
+  recaps = [...recaps, takeRecap(turn, auto)].slice(-2);
   journal.endTurn(turn, st, { talk: turnTalk, auto });
   if (!st.over && REFLECT_EVERY > 0 && journal.turns.length - reflectedAt >= REFLECT_EVERY)
     await writeNotes(`ゲームの途中（ターン${turn}まで）`, null);
