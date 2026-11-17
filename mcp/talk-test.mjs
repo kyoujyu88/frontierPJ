@@ -96,6 +96,7 @@ eq(splitRecordedTalk('say "記録済み"', "のあ"), ["記録済み"], '記録�
   eq(calls('{"name": "move_fleet", "parameters": "{\\"fleet_id\\": 6, \\"to\\": 7}"}'), [["move_fleet", { fleet_id: 6, to: 7 }]], "parameters・文字列の JSON でもよい");
   eq(lines('{"name": "のあ"} こんにちは'), ['{"name": "のあ"} こんにちは'], "ツール名でない name の JSON は触らない");
   eq(lines('{"say": {"text": "やるよ"}}'), ["やるよ"], '{"say": {"text": …}} もセリフ');
+  eq(lines('設定は {"name": "のあ", と書くよ'), ['設定は {"name": "のあ", と書くよ'], '閉じていない {"name": … は字幕から消さない');
   eq(calls('move_fleet(fleet_id=1, to=2) {"end_turn": {}}'), [["move_fleet", { fleet_id: 1, to: 2 }], ["end_turn", {}]], "関数の形と JSON が混ざっていても順に拾う");
   eq(calls('{"say": "move_fleet(fleet_id=1, to=2) するよ"}'), [], "JSON のセリフの中に書いた関数の形は実行しない");
 }

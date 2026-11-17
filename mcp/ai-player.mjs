@@ -64,7 +64,9 @@ const THINK = opt("think", "LLM_THINK", null);
 /* 返事の上限。送らないとサーバーの設定（Ollama なら Modelfile の num_predict）になる。のあのモデルでは 200 トークンちょうどで切れていて、
  * 操作を4〜5個 say つきでまとめた返事や、手を JSON で書いた返事が途中で終わっていた（2026-11-17 のログで2回、finish=length）。
  * ふだんの返事は 40〜120 トークンなので、上限を上げても速さは変わらない */
-const MAX_TOKENS = Math.max(0, Number(opt("max-tokens", "LLM_MAX_TOKENS", 512)) || 0);
+const MAX_TOKENS_RAW = opt("max-tokens", "LLM_MAX_TOKENS", "512");
+// 数でない値（打ち間違い）で黙って「送らない」にすると、200 で切れる元の状態に戻るので、既定の 512 にして知らせる
+const MAX_TOKENS = /^\s*\d+(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW)) ? Math.floor(Number(MAX_TOKENS_RAW)) : 512;
 const LOOP = argv.includes("--loop");
 /* ターンをまたいで会話を続ける（B2）。ローカルLLM（Ollama の Gemma 系など）は、前に送ったプロンプトの「後ろに足した」ときだけ読み直しを省ける。
  * ターンごとに会話を作り直すと、毎ターン最初の返事でプロンプト全体（約7千トークン）を読み直して 約11秒かかっていた（2026-11-16 のログ、36ターン×11秒）。
@@ -109,6 +111,7 @@ const LOG_FILE = argv.includes("--no-log") ? null : path.resolve(HERE, opt("log-
 const plog = new PlayLog(LOG_FILE);
 let lastTurn = null;
 // URL は「プロトコル・ホスト・パス」だけ残す（ユーザー名・パスワードやクエリに載せたキーをログと操作盤に出さないように）
+if (MAX_TOKENS === 512 && !/^\s*512(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW))) log(`--max-tokens の値「${MAX_TOKENS_RAW}」が数ではないので、512 にします（送らないときは 0）`);
 const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathname; } catch { return "(URLを読めません)"; } })();
 plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxTokens: MAX_TOKENS || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
   notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
@@ -574,7 +577,8 @@ async function playTurn(turn) {
     }
     idle = 0;
     if (msg.finish === "length") {
-      // 返事が上限で切れたときは、引数の JSON が途中で終わった最後の呼び出しを実行しない（引数なしで実行すると、たいてい失敗する）
+      // 返事が上限で切れたときは、引数の JSON が途中で終わった呼び出し（切れるのはふつう最後の1つ）を実行しない。
+      // 引数なしで実行すると、たいてい失敗する。JSON として読めない呼び出しは位置にかかわらず外す
       const cut = calls.filter(c => typeof c.function.arguments === "string" && c.function.arguments.trim() && (() => { try { JSON.parse(c.function.arguments); return false; } catch { return true; } })());
       if (cut.length) {
         log(`  （返事が上限で切れたので、途中で終わった呼び出しは実行しません：${cut.map(c => c.function.name).join(", ")}）`);

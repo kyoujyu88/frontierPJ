@@ -354,6 +354,9 @@ l = await run(2, ["--no-notes"]);
   mode = "normal"; maxTok = [];
   await run(1, ["--no-notes", "--max-tokens", "0"]);
   check(maxTok.length > 0 && maxTok.every(x => x.max === null), "--max-tokens 0 なら max_tokens を送らない（サーバーの設定のまま）");
+  maxTok = [];
+  const bad = await run(1, ["--no-notes", "--max-tokens", "abc"]);
+  check(maxTok.length > 0 && maxTok.filter(x => x.tools).every(x => x.max === 512) && /--max-tokens の値「abc」が数ではないので、512 にします/.test(bad), "--max-tokens が数でなければ、知らせて 512 を送る（黙って送らないにしない）");
 }
 // 手を JSON の配列で書いた返事（2026-11-17 のプレイログで空の返事と数えられた）は、文字の手として実行する
 mode = "json"; prompts = [];

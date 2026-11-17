@@ -189,7 +189,8 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
 
   /* JSON で書いた呼び出しを { name, args } の並びにする。
    *   {"name": "move_fleet", "arguments": {…}}（arguments は parameters・args でも、文字列の JSON でもよい）
-   *   {"build_ship": {…}, "say": "…"} … ツール名のキー。say はその操作のひとこと（say 引数）にする
+   *   {"build_ship": {…}, "say": "…"} … ツール名のキー。say はその操作のひとこと（say 引数）にする。
+   *     1つの {} にツールが2つ以上あるときは、say は最初の手にだけ付ける（同じセリフを2回字幕に出さない）
    *   {"say": "…"} / {"say": {"text": "…"}} … セリフだけ */
   function jsonCalls(o) {
     if (!o || typeof o !== "object" || Array.isArray(o)) return [];
@@ -208,6 +209,8 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
     for (let m; (m = JSON_HEAD.exec(src));) {
       const close = matchClose(src, m.index);
       if (close < 0) {
+        // {"name": … で閉じていないものは、呼び出しかどうか分からないので触らない（字幕を文末まで消さない）
+        if (m[1] === "name") { JSON_HEAD.lastIndex = m.index + 1; continue; }
         // 閉じていない（返事が途中で切れた）。引数がそろっているか分からないので実行はせず、字幕からだけ外す
         out.push({ name: m[1], args: null, start: m.index, end: src.length, src });
         break;
@@ -215,7 +218,7 @@ export function makeTalk({ toolNames, name = "", labels = LABELS }) {
       let o = null;
       try { o = JSON.parse(src.slice(m.index, close)); } catch { /* JSON ではない */ }
       const cs = jsonCalls(o);
-      if (o && !cs.length && m[1] === "name") { JSON_HEAD.lastIndex = m.index + 1; continue; } // {"name": "のあ"} のような、呼び出しではない JSON
+      if (!cs.length && m[1] === "name") { JSON_HEAD.lastIndex = m.index + 1; continue; } // {"name": "のあ"} のような呼び出しではない JSON や、読めない JSON は触らない
       if (!cs.length) out.push({ name: m[1], args: null, start: m.index, end: close, src });
       for (const c of cs) out.push({ ...c, start: m.index, end: close, src });
       JSON_HEAD.lastIndex = close;

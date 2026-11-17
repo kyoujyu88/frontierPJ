@@ -37,8 +37,8 @@ export async function modelInfo(baseUrl, model) {
   const arch = mi["general.architecture"] || d.family || null;
   const maxCtx = Number(mi[`${arch}.context_length`]) || Number(d.context_length) || null;
   const param = (k) => String(sh.parameters ?? "").match(new RegExp(`(?:^|\\n)\\s*${k}\\s+(-?\\d+)`))?.[1];
-  const numCtx = Number(param("num_ctx")) || null;
-  const numPredict = param("num_predict") != null ? Number(param("num_predict")) : null; // -1 は上限なし
+  const numCtx = Number(param("num_ctx")) > 0 ? Number(param("num_ctx")) : null;
+  const np = param("num_predict"), numPredict = np != null ? Number(np) : null; // -1 は上限なし
   return {
     version, family: d.family || arch, arch,
     parameterSize: d.parameter_size || null, parameterCount: Number(mi["general.parameter_count"]) || null,
