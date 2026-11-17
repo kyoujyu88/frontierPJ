@@ -434,9 +434,12 @@ function fleetNext(f){
  * 以前は「第2艦隊 ID6（行き先は前と同じ）」と名前だけにしていたが、手を選ぶのに前のメッセージを探す必要があり、
  * その直後に中身が空の返事が続いた（2026-11-16・17 のログ） */
 function fleetBrief(f){
-  const opts=moveOptions(f).filter(o=>!o.kind.startsWith("不可")),near=opts.filter(o=>o.kind!=="亜空間移動").map(o=>o.to);
+  const opts=moveOptions(f).filter(o=>!o.kind.startsWith("不可"));
+  const near=opts.filter(o=>o.kind!=="亜空間移動").map(o=>o.to),warp=opts.filter(o=>o.kind==="亜空間移動").map(o=>o.to);
   if(!opts.length)return`${f.name} ID${f.id}（行ける星なし）`;
-  return`move_fleet(fleet_id=${f.id}, to=${near.length?near.join("か"):"自国の星"})${intruder(f)?"（迎撃可）":""}`;
+  // to には星のIDだけを書く（「自国の星」のような言葉を書くと、そのまま真似されて失敗する）。亜空間移動の行き先もIDで添える
+  const to=near.length?`${near.join("か")}${warp.length?`（亜空間移動なら${warp.join("/")}も）`:""}`:`${warp.join("か")}（亜空間移動）`;
+  return`move_fleet(fleet_id=${f.id}, to=${to})${intruder(f)?"（迎撃可）":""}`;
 }
 // 艦隊ごとに、このターンに知らせた行き先（fleetNext の文）。同じなら次からは呼び出しの形だけにする
 let idleTold={turn:null,told:new Map()};

@@ -466,7 +466,9 @@ async function startTurn(turn) {
   turnStartTokens = sizeOf.of(msgs); // 最初の返事の prompt_tokens（実測）で置き換える
   return msgs;
 }
-/* ターンの終わりに、このターンで会話が何トークン伸びたかを覚える（次に続けるかどうかの見込みに使う） */
+/* ターンの終わりに、このターンで会話が何トークン伸びたかを覚える（次に続けるかどうかの見込みに使う）。
+ * 始まりは最初の返事の prompt_tokens、終わりは sizeOf.of（最後にツールつきで送ったときの usage に、そのあと足した字数×トークン/字）で、
+ * どちらも実測を土台にしている。ツールなしの問い合わせは usage にツールの定義が入らず土台にできないので、そのぶんは字数から見積もる */
 function noteGrowth(messages) {
   if (turnStartTokens == null || !CTX) return;
   const g = sizeOf.of(messages) - turnStartTokens;
@@ -524,7 +526,8 @@ async function playTurn(turn) {
        * 空の返事は会話に積まない（積むと、空の返事を続けやすくなる）。
        * 1回目は「のこりの手」（行き先も全部）を見せて、ツールを1つだけ呼ぶよう頼む。
        * 2回目はツールを渡さずに聞き、手を文字で書いてもらう（Ollama のツール呼び出しの読み取りを通らない。文字の呼び出しはこちらで拾う）。
-       * それでも空なら自動進行に切り替える */
+       * それでも空なら自動進行に切り替える。
+       * 2回目は1ステップの中で LLM を2回呼ぶ（step・--max-steps には1回と数える。空の返事は3回で必ず抜けるので、増えても1ステップ1回まで） */
       empty++;
       plog.write("empty", { n: empty, tokens: msg.usage?.completion_tokens ?? null, finish: msg.finish ?? null });
       if (empty >= 3) break;
@@ -539,6 +542,8 @@ async function playTurn(turn) {
       msg = await chat(slim(messages), { withTools: false, kind: "text" });
       ({ lines, calls: written } = splitReply(stripThink(msg.content)));
       if (!written.length) {
+        // 手は書かずに話しただけ：セリフは字幕に出し、空の返事と同じに数える（話すだけで進まない返事が続いたら自動進行にする）
+        for (const line of lines) { log(`${NAME}：` + line); await say(line.slice(0, 160)); }
         empty++;
         plog.write("empty", { n: empty, tokens: msg.usage?.completion_tokens ?? null, finish: msg.finish ?? null, text: true });
         if (empty >= 3) break;

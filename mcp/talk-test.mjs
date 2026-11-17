@@ -2,6 +2,7 @@
  * ブラウザも LLM も要らない。  node talk-test.mjs
  */
 import { makeTalk, splitRecordedTalk, stripThink } from "./talk.mjs";
+import { newEvents, summaryDelta } from "./sumdiff.mjs";
 
 const T = makeTalk({ toolNames: ["say", "end_turn", "move_fleet", "dismiss_dialog", "battle_move", "research", "build"], name: "のあ" });
 let failed = 0;
@@ -82,5 +83,17 @@ eq(lines('say "閉じ忘れ\nend_turn()'), ["閉じ忘れ"], "閉じ引用符が
 eq(lines('みんなに say "hello" って言いたい'), ['みんなに say "hello" って言いたい'], "文の途中の say は触らない");
 eq(T.cleanTalk('say "ターン終了！"'), "", "cleanTalk も say \"…\" の記法を外す");
 eq(splitRecordedTalk('say "記録済み"', "のあ"), ["記録済み"], '記録済みのセリフの say "…" も直す');
+
+// 続けるターンの状況テキストの差分（sumdiff.mjs）。出来事は新しい順なので、前の一覧の続きより前を新しい出来事とする
+eq(newEvents(["[4001] c", "[4001] b"], ["[4002] e", "[4002] d", "[4001] c", "[4001] b"]), ["[4002] e", "[4002] d"], "出来事：前の一覧の続きより前が新しい");
+eq(newEvents(["[4002] 改装", "[4002] 改装"], ["[4002] 改装", "[4002] 改装", "[4002] 改装"]), ["[4002] 改装"], "出来事：同じ文面が続けて起きても落とさない");
+eq(newEvents(["[4001] a"], ["[4001] a"]), [], "出来事：増えていなければなし");
+{
+  const prev = "【ターン1】\n■内政の候補\n 研究\n■惑星（ID 名前）\n 0アステリア 自国\n 1リュネ 中立\n■最近の出来事\n [3990] a";
+  const next = "【ターン2】\n■内政の候補\n 施設\n■惑星（ID 名前）\n 0アステリア 自国\n 1リュネ 自国\n■最近の出来事\n [3991] b\n [3990] a";
+  eq(summaryDelta(prev, next).split("\n"), ["【ターン2】", "■内政の候補", " 施設", "■惑星（前のターンから変わった星だけ。ほかは前の状況テキストと同じ）", " 1リュネ 自国", "■最近の出来事（前のターンのあとの出来事）", " [3991] b"],
+    "状況テキストの差分：惑星は変わった行だけ、出来事は新しいものだけ、ほかは全部");
+  eq(summaryDelta(prev, "【戦闘中】盤面"), null, "作戦卓の状況テキストでなければ差分にしない（全文を渡す）");
+}
 
 process.exit(failed ? 1 : 0);
