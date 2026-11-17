@@ -383,7 +383,8 @@ function devSummary(st){
   if(r.next){
     const m=investMax();
     if(investRoom()<30)L.push(` 研究：このターンの投資は上限（${investCap()}）まで済み。invest_research はもう呼ばない`);
-    else if(m>=30)L.push(` 研究：invest_research(amount=${m>30?`30〜${m}`:"30"}) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1。30刻み、投資は1ターン${investCap()}まで）`);
+    else if(m>=30)L.push(` 研究：invest_research(amount=${m>30?`30〜${m}`:"30"}) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1。30刻み、投資は1ターン${investCap()}まで）。${m}入れると資金は残り${funds-m}`);
+    // ↑ 残りを書く：研究に120入れてから、ターン最初の一覧で見た造船（費用56、資金148）を呼んで断られたことがあった（2026-11-17 のログ）
     else no.push("研究30");
   }else L.push(` 研究：いまは投資できない（${r.note}）。invest_research は呼ばない`);
   const sv=[],ft=[];
@@ -444,31 +445,66 @@ function fleetBrief(f){
 // 艦隊ごとに、このターンに知らせた行き先（fleetNext の文）。同じなら次からは呼び出しの形だけにする
 let idleTold={turn:null,told:new Map()};
 const toldOf=()=>{if(idleTold.turn!==S.turn)idleTold={turn:S.turn,told:new Map()};return idleTold.told};
+/* 内政の手を、払えるかどうかにかかわらず並べる（key：同じ手を見分ける名前、cost：費用、ok：いま払えるか、text：のこりの手に書く形、short：払えなくなったときの短い名前）。
+ * 施設は施設の種類ごとに1つ（建てられる星のIDは fac に。のこりの手では星のIDの組ごとにまとめて書く） */
+function payItems(){
+  const funds=S.funds,out=[],own=S.planets.filter(p=>p.owner==="P"),mine=myFleets();
+  const add=(key,cost,text,short,fac)=>out.push({key,cost,ok:cost<=funds,text,short,...(fac?{fac}:{})});
+  if(researchOpen()&&investRoom()>=30)add("research",30,`研究 invest_research(amount=${investMax()>30?`30〜${investMax()}`:"30"})`,"研究");
+  const free=own.filter(p=>p.fac.length<p.slots);
+  for(const k of FAC_KEYS){const ids=free.filter(p=>!hasF(p,k)).map(p=>p.id).join("/");if(ids)add(`fac:${k}`,FAC[k].cost,"",`施設 ${k} 費用${FAC[k].cost}`,{k,ids})}
+  const sv=own.filter(p=>p.survey>0);if(sv.length)add("survey",40,`探査 survey(planet_id=${sv.map(p=>p.id).join("か")}) 費用40`,"探査 費用40");
+  const ft=own.filter(p=>p.def<p.maxDef);if(ft.length)add("fortify",30,`防衛修復 fortify(planet_id=${ft.map(p=>p.id).join("か")}) 費用30`,"防衛修復 費用30");
+  for(const f of mine){
+    const p=planet(f.node);if(p.owner!=="P")continue;
+    if(fleetDamage(f))add(`repair:${f.id}`,repairCost(f),`修理 repair_fleet(fleet_id=${f.id}) 費用${repairCost(f)}`,`${f.name}の修理 費用${repairCost(f)}`);
+    if(p.yard){
+      const cc=bcost(S.tier,p),rp=replaceOf(f,S.tier,p);
+      if(f.ships.length<4)add(`build:${f.id}`,cc,`造船 build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${f.name}に${CLASSES[S.tier].name}を追加 費用${cc}`,`${f.name}に${CLASSES[S.tier].name}を追加 費用${cc}`);
+      else if(rp)add(`build:${f.id}`,rp.net,`造船 build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で${f.name}の旧艦を置換 実費${rp.net}`,`${f.name}の旧艦を置換 実費${rp.net}`);
+    }
+  }
+  const yards=own.filter(p=>p.yard);
+  if(mine.length<3&&yards.length)add("newfleet",bcost(0,yards[0]),`新艦隊 new_fleet(planet_id=${yards[0].id}) 費用${bcost(0,yards[0])}`,`新艦隊 費用${bcost(0,yards[0])}`);
+  return out;
+}
+/* このターンに「払える」と知らせた内政の手（key → short）。資金を使ったあと、知らせた手が払えなくなったら一度だけ「払えなくなった手」として書く。
+ * 前に見た一覧（ターン最初の状況テキストや前の「のこりの手」）の手を覚えていて、資金が減ったあとに呼んで断られることがあった
+ * （2026-11-17 のログで資金不足5回。造船88を資金80で、アークライト級160を造船所を建てたあとの資金145で、など） */
+let payTold={turn:null,told:new Map()};
+const payToldOf=()=>{if(payTold.turn!==S.turn)payTold={turn:S.turn,told:new Map()};return payTold.told};
+/* 払える手を知らせたことにし、知らせたのに払えなくなった手を返す（返した手は忘れる＝一度だけ書く） */
+function notePay(items){
+  const told=payToldOf(),lost=[],keys=new Set(items.map(i=>i.key));
+  for(const [key,short] of told){
+    if(!keys.has(key)){told.delete(key);continue} // もう打てない（建て終えた・修理した・満杯など）。資金のせいではないので書かない
+    const it=items.find(i=>i.key===key);
+    if(!it.ok){lost.push(it);told.delete(key)}
+  }
+  for(const it of items)if(it.ok)told.set(it.key,it.short);
+  return lost;
+}
 /* 費用は「費用N」と書き、艦隊・星はIDつきの呼び出しの形で書く（「新艦隊(32)」の 32 を艦隊IDと読んで build_ship(fleet_id=32) を呼んだことがあった）。
  * 操作のたびに付くので短く保つ（1ターンに8回ほど付き、会話を続けるとそのぶんコンテキストが伸びる） */
 function nextHint(){
   if(!S||S.over||B)return null;
-  const funds=S.funds,pay=[],own=S.planets.filter(p=>p.owner==="P"),mine=myFleets();
-  if(researchOpen()&&investMax()>=30)pay.push(`研究 invest_research(amount=${investMax()>30?`30〜${investMax()}`:"30"})`);
+  const funds=S.funds,mine=myFleets(),items=payItems(),lost=notePay(items),pay=[],byIds=new Map();
   // 施設は「建てられる星のID」ごとにまとめる（星ごとに書くより半分ほどの長さ。例：mineは星2、sats/lab/flakは星0/1/2）
-  const free=own.filter(p=>p.fac.length<p.slots),byIds=new Map();
-  for(const k of FAC_KEYS.filter(k=>FAC[k].cost<=funds)){const ids=free.filter(p=>!hasF(p,k)).map(p=>p.id).join("/");if(ids)byIds.set(ids,[...(byIds.get(ids)??[]),k])}
-  if(byIds.size)pay.push(`施設 build_facility(planet_id=…, facility=…)：${[...byIds].map(([ids,ks])=>`${ks.join("/")}は星${ids}`).join("、")}`);
-  const sv=own.filter(p=>p.survey>0);if(funds>=40&&sv.length)pay.push(`探査 survey(planet_id=${sv.map(p=>p.id).join("か")}) 費用40`);
-  const ft=own.filter(p=>p.def<p.maxDef);if(funds>=30&&ft.length)pay.push(`防衛修復 fortify(planet_id=${ft.map(p=>p.id).join("か")}) 費用30`);
-  for(const f of mine){
-    const p=planet(f.node);if(p.owner!=="P")continue;
-    if(fleetDamage(f)&&repairCost(f)<=funds)pay.push(`修理 repair_fleet(fleet_id=${f.id}) 費用${repairCost(f)}`);
-    if(p.yard){
-      const cc=bcost(S.tier,p),rp=replaceOf(f,S.tier,p);
-      if(f.ships.length<4){if(cc<=funds)pay.push(`造船 build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${f.name}に${CLASSES[S.tier].name}を追加 費用${cc}`)}
-      else if(rp&&rp.net<=funds)pay.push(`造船 build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で${f.name}の旧艦を置換 実費${rp.net}`);
-    }
+  let facAt=-1;
+  for(const it of items){
+    if(!it.ok)continue;
+    if(!it.fac){pay.push(it.text);continue}
+    if(facAt<0){facAt=pay.length;pay.push("")}
+    byIds.set(it.fac.ids,[...(byIds.get(it.fac.ids)??[]),it.fac.k]);
   }
-  const yards=own.filter(p=>p.yard);
-  if(mine.length<3&&yards.length&&bcost(0,yards[0])<=funds)pay.push(`新艦隊 new_fleet(planet_id=${yards[0].id}) 費用${bcost(0,yards[0])}`);
+  if(facAt>=0)pay[facAt]=`施設 build_facility(planet_id=…, facility=…)：${[...byIds].map(([ids,ks])=>`${ks.join("/")}は星${ids}`).join("、")}`;
   const idle=mine.filter(f=>!f.moved),told=toldOf();
   const L=[`のこりの手：資金${funds}。払える内政：${pay.join("、")||"なし"}`];
+  if(lost.length){
+    // 施設は1つにまとめる（施設 mine60/lab70）
+    const fac=lost.filter(i=>i.fac).map(i=>`${i.fac.k}${i.cost}`),rest=lost.filter(i=>!i.fac).map(i=>i.short);
+    L.push(`資金が足りなくなった手（呼ばない）：${[...(fac.length?[`施設 ${fac.join("/")}`]:[]),...rest].join("、")}`);
+  }
   // 行き先が前に知らせたときから変わっていない艦隊は、説明を省いて呼び出しの形だけ書く（返り値を短く保つ）。
   // 艦隊ごとに見るので、1艦隊を動かしたあとも、ほかの艦隊の行き先は繰り返さない
   let brief=0;
@@ -489,6 +525,7 @@ function getSummary(){
   const sit=st.situation;
   L.push(`情勢：${sit.xenoAppeared?`異生体出現中${sit.xenoEvolved?"（進化済：新しく湧く群れは正面が弱点、進化前の群れは側面）":"（側面が弱点）"}`:"異生体は未出現（ターン18かヴァルガ本星占領で出現）"}${sit.truceWithVarga?"・ヴァルガと休戦中":""}・敵の艦級${sit.enemyTier}`);
   const dev=devSummary(st);if(dev)L.push(dev);
+  notePay(payItems()); // 状況テキストで「払える」と見せた手も、あとで払えなくなったら「のこりの手」で知らせる
   L.push("■自軍艦隊");
   if(!st.myFleets.length)L.push(" なし（造船所のある星で new_fleet）");
   for(const f of st.myFleets){
@@ -812,7 +849,7 @@ const RULES=`# 辺境星系戦記 ルール要約（AIプレイヤー向け）
 - 戦闘が終わったら battle_close で作戦卓へ戻る。
 ## 操作上の注意
 - 通信ウィンドウ（dialog）は、次の操作をすると自動で閉じる（内容は返り値と状況テキストに出る。dismiss_dialog は呼ばなくてよい）。
-- 操作の返り値の「のこりの手」（next）に、いまの資金で払える内政と未行動の艦隊が出る。資金を使ったあと・艦隊を動かしたあとは、状況テキストではなくこちらを見て次の手を選ぶ。断られたときは、理由と一緒に出る「選べるもの」から選び直す。
+- 操作の返り値の「のこりの手」（next）に、いまの資金で払える内政と未行動の艦隊が出る。資金を使ったあと・艦隊を動かしたあとは、状況テキストではなくこちらを見て次の手を選ぶ（「資金が足りなくなった手」に出た手は呼ばない）。断られたときは、理由と一緒に出る「選べるもの」から選び直す。
 - IDは状況テキスト（get_summary）や get_state に出る数値を使う。戦闘ユニットのIDは「ID30」のような番号（get_state なら battle.units[].id）。
 `;
 
