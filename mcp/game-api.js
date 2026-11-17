@@ -191,8 +191,17 @@ async function closeAutoBattle(){
   if(B&&B.ended)closeBattle();
   await sleep(80);
 }
-/* 行動の実行ラッパー：成否・新しいログ・状況の要約を返す */
-async function act(name,fn){
+/* 行動の実行ラッパー：成否・新しいログ・状況の要約を返す。
+ * 操作は1つずつ順番に実行する。検査と確定の間に演出の待ちがあるので、応答を待たずに続けて送られた操作が
+ * 同じ状態のまま検査を通り抜けていた（new_fleet を2件同時に送ると、上限3つを超えて第4艦隊ができた。Issue #27）。
+ * MCP のサーバーはリクエストを並行に処理し、HTTP 版はリクエストごとにサーバーを組み立てるが、ゲームのページは1つなので、ここで順番待ちにする */
+let actQueue=Promise.resolve();
+function act(name,fn){
+  const run=actQueue.then(()=>actNow(name,fn));
+  actQueue=run.catch(()=>{}); // 前の操作が例外で終わっても、次の操作は進める
+  return run;
+}
+async function actNow(name,fn){
   const n=seq;
   actNotes=[];closedDialogs=[];
   try{
