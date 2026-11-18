@@ -20,7 +20,9 @@
  *   node playlog.mjs                         … ログの一覧（新しい順。番号つき）
  *   node playlog.mjs 1 --format srt          … 1番目（いちばん新しい）のセリフを SRT で表示
  *   node playlog.mjs <名前> --format txt --out 台本.txt   … 台本（時刻・ターン区切り・セリフ・操作・戦闘）をファイルへ
- *   形式：srt / vtt（セリフの字幕）・txt（台本）・chapters（ターンごとのチャプター）・jsonl（全部）
+ *   形式：srt / vtt（セリフの字幕）・txt（台本）・chapters（ターンごとのチャプター）・stats（集計）・jsonl（全部）
+ *   node playlog.mjs --stats                 … いちばん新しいログの集計（1ターンの秒数と内訳・読み込みの速さ・失敗率など。logstats.mjs）
+ *   node playlog.mjs --stats 3 2 1           … 何本かを横に並べて比べる（モデルや設定を替えたときに）
  *   --all  … 台本に LLM とのやり取りも入れる
  */
 import fs from "node:fs";
@@ -29,6 +31,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { splitRecordedTalk } from "./talk.mjs";
 import { describeModel, describeLoaded } from "./llm-info.mjs";
+import { statsOf, statsText, compareText } from "./logstats.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const LOG_DIR = path.join(HERE, "logs");
@@ -215,14 +218,15 @@ export function toText(events, { all = false, name = "" } = {}) {
   }
   return L.filter((l, i) => l !== "" || i > 2).join("\n") + "\n";
 }
-export const FORMATS = { srt: [toSrt, "application/x-subrip"], vtt: [toVtt, "text/vtt"], txt: [toText, "text/plain"], chapters: [toChapters, "text/plain"] };
+const toStats = (events, { name = "" } = {}) => statsText(statsOf(events), { name });
+export const FORMATS = { srt: [toSrt, "application/x-subrip"], vtt: [toVtt, "text/vtt"], txt: [toText, "text/plain"], chapters: [toChapters, "text/plain"], stats: [toStats, "text/plain"] };
 export function exportLog(events, format, opts = {}) {
   if (format === "jsonl") return events.map(e => JSON.stringify(e)).join("\n") + "\n";
   const f = FORMATS[format]; if (!f) throw new Error(`形式は ${[...Object.keys(FORMATS), "jsonl"].join(" / ")} のどれかです`);
   return f[0](events, opts);
 }
-/* 出力ファイル名の後ろ（chapters だけ .chapters.txt にして、台本の .txt と分ける） */
-export const extOf = (format) => format === "chapters" ? ".chapters.txt" : `.${format}`;
+/* 出力ファイル名の後ろ（chapters・stats は .chapters.txt・.stats.txt にして、台本の .txt と分ける） */
+export const extOf = (format) => format === "chapters" ? ".chapters.txt" : format === "stats" ? ".stats.txt" : `.${format}`;
 
 /* 録画の隣に同じ名前の字幕（.srt）を置く（VLC などの再生ソフトや編集ソフトが自動で読む） */
 export async function subtitlesBeside(logFile, videoFile) {
@@ -239,15 +243,24 @@ async function cli(args) {
   const dir = path.resolve(val("dir") ?? LOG_DIR);
   const pos = args.filter((a, i) => !a.startsWith("--") && !["--format", "--out", "--dir"].includes(args[i - 1]));
   const logs = await listLogs(dir);
+  const find = (key) => /^\d+$/.test(key) && logs[Number(key) - 1] ? logs[Number(key) - 1] : logs.find(l => l.name === key.replace(/\.jsonl$/, "")) ?? logs.find(l => l.name.includes(key));
+  if (args.includes("--stats")) {
+    // 集計：指定がなければいちばん新しいもの。2本以上は横に並べる（書いた順に左から）
+    const hits = (pos.length ? pos : ["1"]).map(k => find(k) ?? (() => { throw new Error(`見つかりません：${k}（node playlog.mjs で一覧）`); })());
+    const list = await Promise.all(hits.map(async h => ({ name: h.name, stats: statsOf(await readLog(path.join(dir, h.name + ".jsonl"))) })));
+    process.stdout.write(list.length === 1 ? statsText(list[0].stats, { name: list[0].name }) : compareText(list));
+    return;
+  }
   if (!pos.length) {
     if (!logs.length) { console.log(`ログはまだありません（${dir}）`); return; }
     console.log(`ログ（${dir}、新しい順）`);
     logs.forEach((l, i) => console.log(`${String(i + 1).padStart(3)}. ${l.name}　${l.player} ${l.model}　${l.outcome}${l.turn ? ` ターン${l.turn}` : ""}　${clock(l.lengthMs)}${l.video ? "　録画あり" : ""}`));
-    console.log("\n取り出し：node playlog.mjs <番号か名前> --format srt|vtt|txt|chapters|jsonl [--out ファイル] [--all]");
+    console.log("\n取り出し：node playlog.mjs <番号か名前> --format srt|vtt|txt|chapters|stats|jsonl [--out ファイル] [--all]");
+    console.log("集計：node playlog.mjs --stats [番号か名前 …]（2本以上で並べて比べる）");
     return;
   }
   const key = pos[0];
-  const hit = /^\d+$/.test(key) && logs[Number(key) - 1] ? logs[Number(key) - 1] : logs.find(l => l.name === key.replace(/\.jsonl$/, "")) ?? logs.find(l => l.name.includes(key));
+  const hit = find(key);
   if (!hit) { console.error(`見つかりません：${key}（node playlog.mjs で一覧）`); process.exit(1); }
   const format = val("format") ?? "txt";
   const text = exportLog(await readLog(path.join(dir, hit.name + ".jsonl")), format, { all: args.includes("--all"), name: hit.name });

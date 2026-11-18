@@ -44,7 +44,8 @@ import readline from "node:readline/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName } from "./notes.mjs";
-import { PlayLog, LOG_DIR, subtitlesBeside } from "./playlog.mjs";
+import { PlayLog, LOG_DIR, subtitlesBeside, readLog } from "./playlog.mjs";
+import { statsOf, statsLine } from "./logstats.mjs";
 import { makeTalk, stripThink } from "./talk.mjs";
 import { summaryDelta } from "./sumdiff.mjs";
 import { modelInfo, loadedInfo, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
@@ -739,6 +740,8 @@ else if (!st.over && llmDown && WRITE_NOTES && journal.turns.length) {
 const videos = (await tool("finish_recording").catch(() => null))?.json?.videos ?? [];
 plog.write("end", { outcome: st.over === "win" ? "勝利" : st.over === "lose" ? "敗北" : llmDown ? "LLMエラー" : Number.isFinite(TURNS) && journal.turns.length >= TURNS ? "ターン上限" : "途中終了",
   turn: lastTurn ?? st.turn ?? null, ...(videos.length ? { video: path.basename(videos.at(-1)) } : {}) });
+// 集計を1行で出す（詳しくは node playlog.mjs --stats か、操作盤のプレイログ）
+if (LOG_FILE && journal.turns.length) { const s = await readLog(LOG_FILE).then(statsOf).catch(() => null); if (s) log(`集計：${statsLine(s)}`); }
 // 録画の隣に同じ名前の字幕（.srt）を置く
 if (LOG_FILE) for (const v of videos) { const f = await subtitlesBeside(LOG_FILE, v).catch(() => null); if (f) log(`字幕を書き出しました：${f}`); }
 await mcp.close();

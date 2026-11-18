@@ -17,7 +17,9 @@
     "play": "node ai-player.mjs",
     "noa": "node ai-player.mjs",
     "ui": "node control.mjs",
-    "logs": "node playlog.mjs"
+    "logs": "node playlog.mjs",
+    "stats": "node playlog.mjs --stats",
+    "test:stats": "node logstats-test.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

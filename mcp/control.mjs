@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { loadNotes, safeName } from "./notes.mjs";
 import { sweep } from "./mux-audio.mjs";
 import { LOG_DIR, listLogs, logPath, readLog, exportLog, extOf, describe, ensureEnd, subtitlesBeside, FORMATS } from "./playlog.mjs";
+import { statsOf, statsRows } from "./logstats.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -360,7 +361,8 @@ const server = http.createServer(async (req, res) => {
         const all = url.searchParams.get("all") === "1";
         const lines = events.map(e => { const d = describe(e, { all }); return d && { ms: e.ms, vms: e.vms ?? null, ...d }; }).filter(Boolean);
         const video = events.findLast(e => e.type === "end")?.video ?? null;
-        return json(res, 200, { name, video, hasVideoTime: events.some(e => e.vms != null), lines });
+        let stats = null; try { stats = statsRows(statsOf(events)); } catch {} // 集計（[見出し, 値, 内訳の行か]）
+        return json(res, 200, { name, video, hasVideoTime: events.some(e => e.vms != null), lines, stats });
       }
       const format = url.searchParams.get("format") || "srt";
       if (format !== "jsonl" && !FORMATS[format]) return json(res, 400, { error: `形式は ${[...Object.keys(FORMATS), "jsonl"].join(" / ")} のどれかです` });
