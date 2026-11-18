@@ -19,6 +19,7 @@ let prompts = [], reflections = 0;
 // ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）／emptytalk（空と地の文だけの返事を交互に返す）
 // ／emptyall（ツールを渡されると必ず空を返す。ツールなしで手を文字で頼まれたら、文字で end_turn() を書く）
 // ／json（ターンの最初に、手をツール名をキーにした JSON の配列でコードブロックに書く）／cut（ターンの最初に、最後の呼び出しの引数が途中で切れた返事を finish=length で返す）
+// ／think（ターンの最初に、考えた部分だけで上限に届いた返事を finish=length で返す。手は書かない）
 let mode = "normal", emptySent = false, etStart = "", etN = 0, textAsks = 0;
 // 送られてきた max_tokens（ツールつき・なし）
 let maxTok = [];
@@ -28,6 +29,8 @@ let psCtx = 0;
 const psSize = 20e9; let psVram = psSize;
 // /api/ps がこの回数だけモデルを返さない（すぐ外れた・タイミングで見つからない、のまね）
 let psMiss = 0;
+// Ollama でないサーバーのふり：llama.cpp の /props・vLLM の /v1/models が返すコンテキスト長（0 なら 404）
+let propsCtx = 0, modelsCtx = 0;
 // 送られてきた問い合わせ（keep のテスト用。ターンをまたいで会話を続けたかを見る）
 let sentAll = [];
 // 会話の書き換えの見張り：同じターンの中で、前に送ったメッセージが次の問い合わせで変わっていたら数える（変わるとローカルLLMがプロンプト全体を読み直す）
@@ -52,6 +55,8 @@ const llm = http.createServer(async (req, res) => {
   }
   if (req.url === "/api/version" && psCtx) { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ version: "0.13.0" })); }
   if (req.url.startsWith("/api/")) { res.writeHead(404); return res.end(); }
+  if (req.url === "/props") { if (!propsCtx) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ default_generation_settings: { n_ctx: propsCtx }, total_slots: 1 })); }
+  if (req.url === "/v1/models") { if (!modelsCtx) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ object: "list", data: [{ id: "other" }, { id: "mock", max_model_len: modelsCtx }] })); }
   const b = JSON.parse(body);
   if (b.tools) sentAll.push(b.messages);
   maxTok.push({ tools: !!b.tools, max: b.max_tokens ?? null });
@@ -96,10 +101,11 @@ const llm = http.createServer(async (req, res) => {
         : mode === "bare" ? reply({ content: "内政はおしまい！\nend_turn" })
         // 2026-11-17 のプレイログで出た形：ツール呼び出しを使わずに、手を JSON の配列で書く
         : mode === "json" ? reply({ content: '```json\n[\n  {"say": "さあ、新しいターン！"},\n  {"invest_research": {"amount": 30}, "say": "研究に少しだけ！"},\n  {"end_turn": {}}\n]\n```' })
+        : mode === "think" ? { choices: [{ index: 0, message: { role: "assistant", content: "", reasoning_content: "まずは状況を整理しよう。資金は…" }, finish_reason: "length" }] }
         : mode === "cut" ? { choices: [{ index: 0, message: { role: "assistant", content: "", tool_calls: [callOf(`r${prompts.length}`, "invest_research", { amount: 30, say: "研究するよ！" }),
           { id: `x${prompts.length}`, type: "function", function: { name: "move_fleet", arguments: '{"fleet_id":1,"' } }] }, finish_reason: "length" }] }
         : reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
-    } else out = mode === "empty" || mode === "play" || mode === "cut" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
+    } else out = mode === "empty" || mode === "play" || mode === "cut" || mode === "think" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
       : mode === "keep" ? reply({ content: "", tool_calls: [callOf(`k${sentAll.length}`, "end_turn", { say: "ターン終了！" })] })
       : reply({ content: "様子を見るね" });
     // keep：ターンの最初は研究に投資してから（「前のターンにしたこと」に出るか見る）。usage も返す（2字=1トークンとして）
@@ -287,6 +293,16 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   psCtx = 0; sentAll = [];
   await run(2, ["--no-notes"]);
   check(sentAll.filter(m => m.length === 2 && starts(m) === 1).length === 2, "コンテキスト長が分からなければ、毎ターン作り直す");
+  // Ollama でないサーバーでも、コンテキスト長を聞いて会話を続ける：llama.cpp の /props、vLLM などの /v1/models
+  propsCtx = 1000000; sentAll = [];
+  await run(2, ["--no-notes"]);
+  ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(starts(sentAll.at(-1)) === 2 && ev.some(e => e.type === "ctx" && e.ctx === 1000000 && /llama\.cpp/.test(e.source)), "llama.cpp の /props（n_ctx）でコンテキスト長を知り、会話を続ける");
+  propsCtx = 0; modelsCtx = 900000; sentAll = [];
+  await run(2, ["--no-notes"]);
+  ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(starts(sentAll.at(-1)) === 2 && ev.some(e => e.type === "ctx" && e.ctx === 900000 && e.source === "/v1/models"), "/v1/models の max_model_len（vLLM など）でコンテキスト長を知り、会話を続ける");
+  modelsCtx = 0;
   mode = "normal";
 }
 
@@ -357,6 +373,21 @@ l = await run(2, ["--no-notes"]);
   maxTok = [];
   const bad = await run(1, ["--no-notes", "--max-tokens", "abc"]);
   check(maxTok.length > 0 && maxTok.filter(x => x.tools).every(x => x.max === 512) && /--max-tokens の値「abc」が数ではないので、512 にします/.test(bad), "--max-tokens が数でなければ、知らせて 512 を送る（黙って送らないにしない）");
+  // 考えるモデル：--think low なら 4096 から。指定した --max-tokens は守る
+  maxTok = [];
+  await run(1, ["--no-notes", "--think", "low"]);
+  check(maxTok.filter(x => x.tools).every(x => x.max === 4096), `--think low なら返事の上限は 4096（${[...new Set(maxTok.filter(x => x.tools).map(x => x.max))].join("/")}）`);
+  maxTok = [];
+  await run(1, ["--no-notes", "--think", "low", "--max-tokens", "300"]);
+  check(maxTok.filter(x => x.tools).every(x => x.max === 300), "--max-tokens を指定したら、考えるときもその値");
+  // 考えないつもりでも、考えた部分で上限に届いたら広げる
+  mode = "think"; maxTok = [];
+  const th = await run(1, ["--no-notes"]);
+  const thEv = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const sentMax = maxTok.filter(x => x.tools).map(x => x.max);
+  check(sentMax[0] === 512 && sentMax.slice(1).every(x => x === 4096) && sentMax.length > 1 && thEv.some(e => e.type === "max_tokens" && e.from === 512 && e.to === 4096) && /上限を 4096 に広げます/.test(th),
+    `考えた部分で上限に届いたら、次から上限を広げる（${sentMax.join(" → ")}）`);
+  mode = "normal";
 }
 // 手を JSON の配列で書いた返事（2026-11-17 のプレイログで空の返事と数えられた）は、文字の手として実行する
 mode = "json"; prompts = [];

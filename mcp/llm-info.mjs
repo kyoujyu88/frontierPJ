@@ -8,7 +8,8 @@
  *                  メモリの使い方（size：全体、size_vram：そのうち GPU のメモリ＝VRAM に載った分。残りはメインメモリで CPU が計算）
  * GPU の機種名は Ollama の API にない。--gpu <名前> で書けばログに出す。
  * Ollama が同じ PC（localhost）のときだけ、nvidia-smi があれば機種名と VRAM の大きさを自動で調べる。
- * Ollama でないサーバー（LM Studio など）では、どれも取れずに null になる（プレイには影響しない）
+ * Ollama でないサーバー（LM Studio など）では、どれも取れずに null になる（プレイには影響しない）。
+ * コンテキスト長だけは、ほかのサーバーにも聞く（serverCtx。llama.cpp・LM Studio・vLLM・OpenRouter など）
  */
 import { execFile } from "node:child_process";
 
@@ -62,6 +63,29 @@ export async function loadedInfo(baseUrl, model) {
     gpuPct: cpuPct == null ? null : 100 - cpuPct, cpuPct,
     others: (ps.models ?? []).filter(x => x !== m).map(x => x.name || x.model), // 同時に読み込まれているほかのモデル（VRAM を取り合う）
   };
+}
+
+/* Ollama でないサーバーのコンテキスト長（会話をターンをまたいで続けるかどうかに使う）。分からなければ null
+ *   llama.cpp の llama-server … /props の default_generation_settings.n_ctx（1つの会話に使える長さ。新しい版は n_ctx）
+ *   LM Studio                 … /api/v0/models/<モデル> の loaded_context_length（読み込まれているときの実際の長さ）
+ *   vLLM・OpenRouter など      … /v1/models の、このモデルの max_model_len・context_length・context_window
+ * どれもないサーバーでは null（--ctx で指定すれば続けられる） */
+export async function serverCtx(baseUrl, model, key) {
+  const root = ollamaRoot(baseUrl), base = String(baseUrl).replace(/\/+$/, "");
+  const init = key ? { headers: { authorization: `Bearer ${key}` } } : {};
+  const pos = (v) => (Number(v) > 0 ? Math.floor(Number(v)) : null);
+  const tries = [
+    async () => { const p = await getJson(`${root}/props`, init); const n = pos(p?.default_generation_settings?.n_ctx ?? p?.n_ctx); return n && { ctx: n, source: "llama.cpp の /props" }; },
+    async () => { const m = await getJson(`${root}/api/v0/models/${encodeURIComponent(model)}`, init); const n = pos(m?.loaded_context_length); return n && { ctx: n, source: "LM Studio の /api/v0/models" }; },
+    async () => {
+      const r = await getJson(`${base}/models`, init);
+      const m = (r?.data ?? []).find(x => sameModel(x?.id, model));
+      const n = pos(m?.max_model_len ?? m?.context_length ?? m?.context_window ?? m?.top_provider?.context_length);
+      return n && { ctx: n, source: "/v1/models" };
+    },
+  ];
+  for (const t of tries) { try { const r = await t(); if (r) return r; } catch {} }
+  return null;
 }
 
 /* 同じ PC の NVIDIA GPU（nvidia-smi）。なければ null */

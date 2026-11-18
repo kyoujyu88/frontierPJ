@@ -21,14 +21,15 @@
  *   --turns <n>        何ターン遊んだら止めるか（既定 無制限）                        NOA_TURNS
  *   --temperature <t>  （既定 0.6）                                                   LLM_TEMPERATURE
  *   --think <none|low|medium|high>  考える量（reasoning_effort）。none で考えずに即答（Ollama の thinking 対応モデル向け）  LLM_THINK
- *   --max-tokens <n>   1回の返事の上限トークン数（既定 512。振り返りは 1024 以上。0 でサーバーの設定のまま）。Modelfile の num_predict より優先  LLM_MAX_TOKENS
+ *   --max-tokens <n>   1回の返事の上限トークン数（既定 512。--think low/medium/high なら 4096。振り返りは 1024 以上。0 でサーバーの設定のまま）。Modelfile の num_predict より優先  LLM_MAX_TOKENS
+ *                      指定しなければ、考える部分で上限に届いたときに自動で広げる
  *   --loop             ゲームが終わったら新しいゲームを始める
  *   --notes <file>     反省メモのファイル（既定 notes/<名前>.md）                    NOA_NOTES
  *   --notes-chars <n>  プロンプトに入れる反省メモの上限文字数（既定 1200）           NOA_NOTES_CHARS
  *   --reflect-every <n> 何ターンごとにゲームの途中でも振り返るか（既定 10、0で終了時だけ） NOA_REFLECT_EVERY
  *   --notes-readonly   反省メモを読むだけで書き換えない（腕前を固定して見せたいとき）
  *   --no-notes         反省メモを使わない（毎回はじめて遊ぶ状態）
- *   --ctx <n>          LLM のコンテキスト長（トークン）。省くと Ollama に聞く（/api/ps）。分かれば、ターンをまたいで会話を続ける  LLM_CTX
+ *   --ctx <n>          LLM のコンテキスト長（トークン）。省くとサーバーに聞く（Ollama・llama.cpp・LM Studio・vLLM など）。分かれば、ターンをまたいで会話を続ける  LLM_CTX
  *   --gpu <名前>       Ollama が使う GPU の名前（ログに出すだけ。Ollama の API では機種名が分からないため。例 "RTX 4090 24GB"）  LLM_GPU
  *   --keep-turns <n>   会話を続ける最大のターン数（既定 4。ここで作り直す）                  NOA_KEEP_TURNS
  *   --no-keep-context  ターンごとに会話を作り直す（以前の動き。毎ターンの最初にプロンプト全体の読み直しが入る）
@@ -48,7 +49,7 @@ import { PlayLog, LOG_DIR, subtitlesBeside, readLog } from "./playlog.mjs";
 import { statsOf, statsLine } from "./logstats.mjs";
 import { makeTalk, stripThink } from "./talk.mjs";
 import { summaryDelta } from "./sumdiff.mjs";
-import { modelInfo, loadedInfo, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
+import { modelInfo, loadedInfo, serverCtx, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
 
 const sep = process.argv.indexOf("--");
 const argv = sep >= 0 ? process.argv.slice(2, sep) : process.argv.slice(2);
@@ -68,10 +69,16 @@ const THINK = opt("think", "LLM_THINK", null);
 const MAX_TOKENS_RAW = opt("max-tokens", "LLM_MAX_TOKENS", "512");
 // 数でない値（打ち間違い）で黙って「送らない」にすると、200 で切れる元の状態に戻るので、既定の 512 にして知らせる
 const MAX_TOKENS = /^\s*\d+(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW)) ? Math.floor(Number(MAX_TOKENS_RAW)) : 512;
+/* 考えるモデル（--think low/medium/high、Qwen3・DeepSeek-R1 など）は、考えた部分も返事の上限に数えるサーバーが多く、512 では手を書く前に切れる。
+ * --max-tokens を指定していなければ、考えるときは 4096 から始め、考えないつもりでも考えた部分で上限に届いたら（finish=length）その場で広げる */
+const MAX_TOKENS_GIVEN = argv.includes("--max-tokens") || process.env.LLM_MAX_TOKENS != null;
+const THINKING = !!THINK && THINK !== "none";
+const THINK_TOKENS = 4096, TOKENS_CAP = 16384;
+let maxTokens = MAX_TOKENS && THINKING && !MAX_TOKENS_GIVEN ? Math.max(MAX_TOKENS, THINK_TOKENS) : MAX_TOKENS;
 const LOOP = argv.includes("--loop");
 /* ターンをまたいで会話を続ける（B2）。ローカルLLM（Ollama の Gemma 系など）は、前に送ったプロンプトの「後ろに足した」ときだけ読み直しを省ける。
  * ターンごとに会話を作り直すと、毎ターン最初の返事でプロンプト全体（約7千トークン）を読み直して 約11秒かかっていた（2026-11-16 のログ、36ターン×11秒）。
- * 続けるとコンテキストが伸びるので、長さが分かるとき（--ctx か Ollama の /api/ps）だけ、収まる間だけ続ける */
+ * 続けるとコンテキストが伸びるので、長さが分かるとき（--ctx か、サーバーに聞いて分かったとき）だけ、収まる間だけ続ける */
 let CTX = Number(opt("ctx", "LLM_CTX", 0)) || 0;
 const CTX_GIVEN = CTX > 0; // --ctx で指定された（Ollama に聞いた値で上書きしない）
 const KEEP = !argv.includes("--no-keep-context");
@@ -114,7 +121,7 @@ let lastTurn = null;
 // URL は「プロトコル・ホスト・パス」だけ残す（ユーザー名・パスワードやクエリに載せたキーをログと操作盤に出さないように）
 if (MAX_TOKENS === 512 && !/^\s*512(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW))) log(`--max-tokens の値「${MAX_TOKENS_RAW}」が数ではないので、512 にします（送らないときは 0）`);
 const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathname; } catch { return "(URLを読めません)"; } })();
-plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxTokens: MAX_TOKENS || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
+plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxTokens: maxTokens || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
   notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
 if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
 
@@ -125,7 +132,7 @@ const LOADED_TRIES = 3; // 見つからなければ、次のターンの最初�
 llm.info = await modelInfo(BASE, MODEL).catch(() => null);
 if (!llm.gpu && isLocalHost(BASE)) { const g = gpuText(await localGpus().catch(() => null)); if (g) { llm.gpu = g; llm.gpuFrom = "nvidia-smi"; } }
 // 複数行は1行ずつ log する（操作盤は行頭の時刻で行を見分けるので、2行目以降にも時刻を付ける）
-for (const line of `LLM：${describeModel(MODEL, llm.info, { maxTokens: MAX_TOKENS }) ?? `${MODEL}（Ollama ではないので、モデルの詳細は分かりません）`}`.split("\n")) log(line);
+for (const line of `LLM：${describeModel(MODEL, llm.info, { maxTokens }) ?? `${MODEL}（Ollama ではないので、モデルの詳細は分かりません）`}`.split("\n")) log(line);
 if (llm.gpu) log(`  GPU：${llm.gpu}（${llm.gpuFrom === "--gpu" ? "--gpu の指定" : "この PC の nvidia-smi"}）`);
 plog.write("model", { model: MODEL, ...(llm.info ?? { ollama: false }), gpu: llm.gpu, gpuFrom: llm.gpuFrom });
 /* 読み込まれたあとの状態。ターンの最初の返事のあとに聞く（モデルはその返事で読み込まれる）。
@@ -259,7 +266,8 @@ const sizeOf = {
     return Math.ceil((charsOf(messages) + TOOLS_CHARS) * (this.perChar ?? 1));
   },
 };
-/* コンテキスト長：--ctx がなければ Ollama に聞く（読み込み中のモデルの context_length。古い Ollama ならモデルの num_ctx）。分からなければ 0 */
+/* コンテキスト長：--ctx がなければサーバーに聞く（Ollama は読み込み中のモデルの context_length、古い Ollama ならモデルの num_ctx。
+ * ほかのサーバーは llm-info.mjs の serverCtx）。分からなければ 0 */
 let ctxAsked = false;
 async function detectCtx() {
   if (ctxAsked || !KEEP || MANUAL_BATTLE) return;
@@ -270,10 +278,13 @@ async function detectCtx() {
     if (real && real < CTX) log(`  ⚠ Ollama が実際に確保したコンテキスト長は ${real} で、--ctx ${CTX} より短いので、あふれた分は古い会話から切り捨てられます`);
     plog.write("ctx", { ctx: CTX, ...(real ? { loaded: real } : {}) }); return;
   }
-  // 読み込み中のモデルの実際の長さ（/api/ps）。古い Ollama で分からなければ Modelfile の num_ctx（/api/show）
+  // Ollama：読み込み中のモデルの実際の長さ（/api/ps）。古い Ollama で分からなければ Modelfile の num_ctx（/api/show）
   CTX = llm.loaded?.ctx || llm.info?.numCtx || 0; // checkLoaded は呼び出し元で済んでいる
-  log(CTX ? `コンテキスト長 ${CTX}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します（--ctx <トークン数> で指定すると続けられます）");
-  plog.write("ctx", { ctx: CTX || null });
+  // Ollama でないサーバー：llama.cpp・LM Studio・vLLM などに聞く（最初の返事のあとなので、モデルは読み込まれている）
+  let source = CTX ? "Ollama" : null;
+  if (!CTX && !llm.info) { const r = await serverCtx(BASE, MODEL, KEY).catch(() => null); if (r) { CTX = r.ctx; source = r.source; } }
+  log(CTX ? `コンテキスト長 ${CTX}${source && source !== "Ollama" ? `（${source}）` : ""}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します（--ctx <トークン数> で指定すると続けられます）");
+  plog.write("ctx", { ctx: CTX || null, ...(source ? { source } : {}) });
 }
 
 /* ---------- LLM 呼び出し ---------- */
@@ -281,7 +292,7 @@ async function chat(messages, { withTools = true, kind = withTools ? "play" : "r
   const body = { model: MODEL, messages, temperature: TEMP };
   if (THINK) body.reasoning_effort = THINK;
   // 振り返り（反省メモ）は箇条書きで長くなる（上限 1200字）ので、少なくとも 1024
-  if (MAX_TOKENS) body.max_tokens = kind === "reflect" ? Math.max(MAX_TOKENS, 1024) : MAX_TOKENS;
+  if (maxTokens) body.max_tokens = kind === "reflect" ? Math.max(maxTokens, 1024) : maxTokens;
   if (withTools) Object.assign(body, { tools, tool_choice: "auto" });
   else body.temperature = Math.min(TEMP, 0.4);
   const t0 = Date.now();
@@ -317,6 +328,13 @@ async function chat(messages, { withTools = true, kind = withTools ? "play" : "r
   msg.finish = data.choices[0].finish_reason ?? null;
   // content を配列で返すサーバーもある
   if (Array.isArray(msg.content)) msg.content = msg.content.map(c => c.text ?? "").join("");
+  // 考えた部分で上限に届いた：次からの上限を広げる（--max-tokens を指定したときは、その値を守る）
+  if (msg.finish === "length" && maxTokens && !MAX_TOKENS_GIVEN && maxTokens < TOKENS_CAP && (msg.reasoning_content || msg.reasoning || /<think>/.test(msg.content ?? ""))) {
+    const to = Math.min(TOKENS_CAP, Math.max(THINK_TOKENS, maxTokens * 2));
+    log(`考える部分で返事の上限 ${maxTokens} に届いたので、上限を ${to} に広げます（--max-tokens で固定できます）`);
+    plog.write("max_tokens", { from: maxTokens, to, reason: "thinking" });
+    maxTokens = to;
+  }
   // 返事は加工する前の全文を残す（考えた部分を別の欄で返すサーバーもある）
   plog.write("llm", { kind, sec: Math.round(sec * 10) / 10, content: msg.content ?? "",
     ...(msg.reasoning_content || msg.reasoning ? { reasoning: msg.reasoning_content || msg.reasoning } : {}),
