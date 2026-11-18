@@ -84,7 +84,7 @@ test("失敗率・理由・同じ失敗の繰り返し", () => {
   const s = statsOf(makeLog());
   assert.equal(s.ops.total, 7);             // get_next（ok:null）は数えない
   assert.equal(s.ops.fails, 3);
-  assert.equal(s.ops.failRate, "42.9");
+  assert.equal(s.ops.failRate, 42.9);
   assert.deepEqual(s.ops.failKinds, { "資金不足": 2, "いまいる星への移動": 1 });
   assert.equal(s.ops.repeatFails, 1);
   assert.equal(failKind("第3艦隊 はこのターン行動済みです"), "行動済みの艦隊");
@@ -124,6 +124,13 @@ test("空のログ・途中のログでも落ちない", () => {
   statsText(s);
   const part = makeLog().filter(e => !["over", "end"].includes(e.type));
   assert.equal(statsOf(part).outcome, "途中");
+  // end がなく over だけのとき（落ちた途中のログ）、負けは「敗北」にする
+  const lost = makeLog().filter(e => e.type !== "end").map(e => e.type === "over" ? { ...e, result: "lose" } : e);
+  assert.equal(statsOf(lost).outcome, "敗北");
+  // 振り返りの返事はターン最初の読み直しに数えない
+  const ev = makeLog(); const i = ev.findIndex(e => e.type === "turn" && e.turn === 2);
+  ev.splice(i + 1, 0, { t: ev[i].t, ms: ev[i].ms, type: "llm", kind: "reflect", sec: 5, usage: { prompt_tokens: 3000, completion_tokens: 200, prompt_tokens_details: { cached_tokens: 0 } } });
+  assert.equal(statsOf(ev).llm.turnFirstReread, 1);
 });
 
 // コマンド：node playlog.mjs --stats（1本・並べる）と --format stats

@@ -68,7 +68,8 @@ export function statsOf(events) {
 
   /* LLM */
   const llm = events.filter(e => e.type === "llm");
-  const play = llm.filter(e => (e.kind ?? "play") === "play" || e.kind === "text");
+  const isPlay = (e) => (e.kind ?? "play") === "play" || e.kind === "text"; // 振り返り（reflect）は数えない
+  const play = llm.filter(isPlay);
   const llmSec = play.reduce((s, e) => s + (num(e.sec) ?? 0), 0);
   const hasCache = play.some(e => e.usage?.prompt_tokens_details && "cached_tokens" in e.usage.prompt_tokens_details);
   const cachedOf = (e) => e.usage?.prompt_tokens_details?.cached_tokens ?? 0;
@@ -97,7 +98,8 @@ export function statsOf(events) {
   for (const e of play) finish[e.finish ?? "?"] = (finish[e.finish ?? "?"] ?? 0) + 1;
   const sayOnly = play.filter(e => e.calls?.length && e.calls.every(c => c.name === "say")).length;
 
-  /* ツールの実行時間（その手を出した返事か直前の手から、結果まで） */
+  /* ツールの実行時間（その手を出した返事か直前の手から、結果まで）。AI の手だけでなく自動進行・人の手も数える
+   *（「移動・戦闘の演出」は誰が動かしても画面で流れる時間なので、1ターンの内訳としては全部入れる） */
   const dur = {};
   let prev = null;
   for (const e of events) {
@@ -124,7 +126,7 @@ export function statsOf(events) {
 
   return {
     name: start.name ?? null, model: start.model ?? null, baseUrl: start.baseUrl ?? null,
-    outcome: end?.outcome ?? (over ? (over.result === "win" ? "勝利" : over.result) : "途中"), startedAt: start.t ?? null,
+    outcome: end?.outcome ?? (over ? ({ win: "勝利", lose: "敗北" }[over.result] ?? over.result) : "途中"), startedAt: start.t ?? null,
     settings: { think: start.think ?? null, maxTokens: start.maxTokens ?? null, temperature: start.temperature ?? null,
       battleSpeed: arg("battle-speed"), pace: arg("pace"), ctx: ctxEv?.ctx ?? loaded?.ctx ?? null,
       gpuPct: loaded?.gpuPct ?? null, quantization: model?.quantization ?? null, parameterSize: model?.parameterSize ?? null },
@@ -138,27 +140,27 @@ export function statsOf(events) {
     llm: {
       replies: play.length, perTurn: r1(per(play.length)), cacheKnown: hasCache,
       reread: hasCache ? reread.length : null, rereadAvgSec: r1(mean(reread.map(e => e.sec))), rereadSec: r0(sum(reread.map(e => e.sec))),
-      turnFirstReread: hasCache ? turnFirstRereads(events) : null,
+      turnFirstReread: hasCache ? turnFirstRereads(events, isPlay) : null,
       warmAvgSec: r1(mean(warm.map(e => e.sec))),
       addedTokensAvg: r0(mean(warm.map(e => e.usage.prompt_tokens - cachedOf(e)))),
       promptTps: r0(promptTps), genTps: r1(genTps),
       promptMax: play.reduce((m, e) => Math.max(m, e.usage?.prompt_tokens ?? 0), 0) || null,
       completionMax: play.reduce((m, e) => Math.max(m, e.usage?.completion_tokens ?? 0), 0) || null,
-      finish, sayOnly, textAsk: llm.filter(e => e.kind === "text").length,
+      finish, cutByLimit: finish.length ?? 0, sayOnly, textAsk: llm.filter(e => e.kind === "text").length,
     },
-    ops: { total: judged.length, fails: fails.length, failRate: judged.length ? (fails.length / judged.length * 100).toFixed(1) : null, failKinds, repeatFails },
+    ops: { total: judged.length, fails: fails.length, failRate: judged.length ? r1(fails.length / judged.length * 100) : null, failKinds, repeatFails },
     empty: empty.length, emptyText: empty.filter(e => e.text).length,
     cut: events.filter(e => e.type === "cut").length, refuse: events.filter(e => e.type === "refuse").length,
     auto: events.filter(e => e.type === "auto").length, errors: events.filter(e => e.type === "error").length,
     context: { keep, rebuild, compact },
   };
 }
-/* 各ターンの最初の返事が読み直しだった回数 */
-function turnFirstRereads(events) {
+/* 各ターンの最初の返事が読み直しだった回数（読み直しの回数と同じく、プレイの返事だけを見る） */
+function turnFirstRereads(events, isPlay) {
   let n = 0, waiting = false;
   for (const e of events) {
     if (e.type === "turn") waiting = true;
-    else if (waiting && e.type === "llm") { waiting = false; if ((e.usage?.prompt_tokens_details?.cached_tokens ?? 0) === 0 && e.usage?.prompt_tokens) n++; }
+    else if (waiting && e.type === "llm" && isPlay(e)) { waiting = false; if ((e.usage?.prompt_tokens_details?.cached_tokens ?? 0) === 0 && e.usage?.prompt_tokens) n++; }
   }
   return n;
 }
@@ -179,10 +181,10 @@ const ROWS = [
   ["読み直しなしの返事", s => s.llm.cacheKnown ? `${fmt(s.llm.warmAvgSec, "秒")}（足したトークン 平均${fmt(s.llm.addedTokensAvg)}）` : "—"],
   ["読み込み／生成の速さ", s => `${fmt(s.llm.promptTps)} ／ ${fmt(s.llm.genTps)} トークン/秒`],
   ["会話の継続", s => `続けた ${s.context.keep}・作り直し ${s.context.rebuild}${s.context.compact ? `・途中で作り直し ${s.context.compact}` : ""}`],
-  ["失敗率", s => s.ops.failRate == null ? "—" : `${s.ops.failRate}%（${s.ops.fails}/${s.ops.total}）`],
+  ["失敗率", s => s.ops.failRate == null ? "—" : `${s.ops.failRate.toFixed(1)}%（${s.ops.fails}/${s.ops.total}）`],
   ["  失敗の理由", s => kinds(s.ops.failKinds) + (s.ops.repeatFails ? `／同じ失敗の繰り返し ${s.ops.repeatFails}` : "")],
   ["空の返事", s => `${s.empty}回${s.llm.textAsk ? `（文字で聞き直し ${s.llm.textAsk}）` : ""}`],
-  ["上限で切れた", s => `${s.llm.finish.length ?? 0}回（最長の返事 ${fmt(s.llm.completionMax)}トークン・上限 ${fmt(s.settings.maxTokens)}）`],
+  ["上限で切れた", s => `${s.llm.cutByLimit}回（最長の返事 ${fmt(s.llm.completionMax)}トークン・上限 ${fmt(s.settings.maxTokens)}）`],
   ["断った・自動進行", s => `${s.refuse}・${s.auto}`],
 ];
 /* 見出しと値の組（操作盤は表にする） */
@@ -206,6 +208,6 @@ export function statsLine(s) {
   return [`1ターン${fmt(s.secPerTurn, "秒")}（LLM ${fmt(s.time.llmPerTurn)}・移動と戦闘 ${fmt(s.time.battlePerTurn)}）`,
     s.llm.cacheKnown ? `読み直し${s.llm.reread}回×${fmt(s.llm.rereadAvgSec, "秒")}` : null,
     s.llm.promptTps ? `読み込み${s.llm.promptTps}トークン/秒` : null,
-    s.ops.failRate != null ? `失敗${s.ops.failRate}%` : null, `空の返事${s.empty}`,
+    s.ops.failRate != null ? `失敗${s.ops.failRate.toFixed(1)}%` : null, `空の返事${s.empty}`,
     `会話継続${s.context.keep}/${s.context.keep + s.context.rebuild}`].filter(Boolean).join("・");
 }
