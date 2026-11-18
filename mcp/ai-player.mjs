@@ -21,14 +21,19 @@
  *   --turns <n>        何ターン遊んだら止めるか（既定 無制限）                        NOA_TURNS
  *   --temperature <t>  （既定 0.6）                                                   LLM_TEMPERATURE
  *   --think <none|low|medium|high>  考える量（reasoning_effort）。none で考えずに即答（Ollama の thinking 対応モデル向け）  LLM_THINK
- *   --max-tokens <n>   1回の返事の上限トークン数（既定 512。振り返りは 1024 以上。0 でサーバーの設定のまま）。Modelfile の num_predict より優先  LLM_MAX_TOKENS
+ *   --max-tokens <n>   1回の返事の上限トークン数（既定 512。--think low/medium/high なら 4096。振り返りは 1024 以上。0 でサーバーの設定のまま）。Modelfile の num_predict より優先  LLM_MAX_TOKENS
+ *                      指定しなければ、考える部分で上限に届いたときに自動で広げる
  *   --loop             ゲームが終わったら新しいゲームを始める
  *   --notes <file>     反省メモのファイル（既定 notes/<名前>.md）                    NOA_NOTES
  *   --notes-chars <n>  プロンプトに入れる反省メモの上限文字数（既定 1200）           NOA_NOTES_CHARS
  *   --reflect-every <n> 何ターンごとにゲームの途中でも振り返るか（既定 10、0で終了時だけ） NOA_REFLECT_EVERY
  *   --notes-readonly   反省メモを読むだけで書き換えない（腕前を固定して見せたいとき）
  *   --no-notes         反省メモを使わない（毎回はじめて遊ぶ状態）
- *   --ctx <n>          LLM のコンテキスト長（トークン）。省くと Ollama に聞く（/api/ps）。分かれば、ターンをまたいで会話を続ける  LLM_CTX
+ *   --tool-mode <auto|native|text>  ツール呼び出しの渡し方（既定 auto）。native＝API のツール呼び出し、text＝ツールを渡さずに手を関数の形で文字に書いてもらう
+ *                      （ツール非対応のモデルや、ツール呼び出しの書式が崩れやすいモデル向け）。auto はふだん native で、サーバーが「ツール非対応」と断ったら text に切り替える  LLM_TOOL_MODE
+ *   --lite [auto|on|off]  小さなモデル向けの軽量モード（既定 auto）。ルールを短縮版に、配信のしかたとツールの説明を短く、反省メモを600字までにする。
+ *                      auto はコンテキスト長が 12288 より短いと分かったときだけ使う。--lite だけなら on  NOA_LITE
+ *   --ctx <n>          LLM のコンテキスト長（トークン）。省くとサーバーに聞く（Ollama・llama.cpp・LM Studio・vLLM など）。分かれば、ターンをまたいで会話を続ける  LLM_CTX
  *   --gpu <名前>       Ollama が使う GPU の名前（ログに出すだけ。Ollama の API では機種名が分からないため。例 "RTX 4090 24GB"）  LLM_GPU
  *   --keep-turns <n>   会話を続ける最大のターン数（既定 4。ここで作り直す）                  NOA_KEEP_TURNS
  *   --no-keep-context  ターンごとに会話を作り直す（以前の動き。毎ターンの最初にプロンプト全体の読み直しが入る）
@@ -44,10 +49,11 @@ import readline from "node:readline/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName } from "./notes.mjs";
-import { PlayLog, LOG_DIR, subtitlesBeside } from "./playlog.mjs";
+import { PlayLog, LOG_DIR, subtitlesBeside, readLog } from "./playlog.mjs";
+import { statsOf, statsLine } from "./logstats.mjs";
 import { makeTalk, stripThink } from "./talk.mjs";
 import { summaryDelta } from "./sumdiff.mjs";
-import { modelInfo, loadedInfo, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
+import { modelInfo, loadedInfo, serverCtx, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
 
 const sep = process.argv.indexOf("--");
 const argv = sep >= 0 ? process.argv.slice(2, sep) : process.argv.slice(2);
@@ -67,15 +73,32 @@ const THINK = opt("think", "LLM_THINK", null);
 const MAX_TOKENS_RAW = opt("max-tokens", "LLM_MAX_TOKENS", "512");
 // 数でない値（打ち間違い）で黙って「送らない」にすると、200 で切れる元の状態に戻るので、既定の 512 にして知らせる
 const MAX_TOKENS = /^\s*\d+(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW)) ? Math.floor(Number(MAX_TOKENS_RAW)) : 512;
+/* 考えるモデル（--think low/medium/high、Qwen3・DeepSeek-R1 など）は、考えた部分も返事の上限に数えるサーバーが多く、512 では手を書く前に切れる。
+ * --max-tokens を指定していなければ、考えるときは 4096 から始め、考えないつもりでも考えた部分で上限に届いたら（finish=length）その場で広げる */
+const MAX_TOKENS_GIVEN = argv.includes("--max-tokens") || process.env.LLM_MAX_TOKENS != null;
+const THINKING = !!THINK && THINK !== "none";
+const THINK_TOKENS = 4096, TOKENS_CAP = 16384;
+let maxTokens = MAX_TOKENS && THINKING && !MAX_TOKENS_GIVEN ? Math.max(MAX_TOKENS, THINK_TOKENS) : MAX_TOKENS;
 const LOOP = argv.includes("--loop");
 /* ターンをまたいで会話を続ける（B2）。ローカルLLM（Ollama の Gemma 系など）は、前に送ったプロンプトの「後ろに足した」ときだけ読み直しを省ける。
  * ターンごとに会話を作り直すと、毎ターン最初の返事でプロンプト全体（約7千トークン）を読み直して 約11秒かかっていた（2026-11-16 のログ、36ターン×11秒）。
- * 続けるとコンテキストが伸びるので、長さが分かるとき（--ctx か Ollama の /api/ps）だけ、収まる間だけ続ける */
+ * 続けるとコンテキストが伸びるので、長さが分かるとき（--ctx か、サーバーに聞いて分かったとき）だけ、収まる間だけ続ける */
 let CTX = Number(opt("ctx", "LLM_CTX", 0)) || 0;
 const CTX_GIVEN = CTX > 0; // --ctx で指定された（Ollama に聞いた値で上書きしない）
 const KEEP = !argv.includes("--no-keep-context");
 const GPU_LABEL = String(opt("gpu", "LLM_GPU", "") || "").trim() || null;
 const KEEP_TURNS = Math.max(1, Number(opt("keep-turns", "NOA_KEEP_TURNS", 4)) || 4);
+/* ツール呼び出しの渡し方（--tool-mode）。text では API の tools を送らず、システムプロンプトに手の一覧と書き方を足して、
+ * 返事の地の文に書かれた呼び出し（talk.mjs の splitReply が拾う）を実行する。会話の中では今までどおりツール呼び出しとして持ち、送るときだけ文字に直す */
+const TOOL_MODE_RAW = String(opt("tool-mode", "LLM_TOOL_MODE", "auto")).trim().toLowerCase();
+const TOOL_MODE = ["auto", "native", "text"].includes(TOOL_MODE_RAW) ? TOOL_MODE_RAW : "auto";
+let textMode = TOOL_MODE === "text";
+/* 小さなモデル向けの軽量モード（--lite）。システムプロンプト（ルール・配信のしかた・反省メモ）とツールの説明を短くして、
+ * 8K のモデルでも状況テキストと会話が入るようにする。auto はコンテキスト長が LITE_CTX より短いと分かったときだけ */
+const LITE_RAW = (() => { const i = argv.indexOf("--lite"); if (i < 0) return String(process.env.NOA_LITE ?? "auto").trim().toLowerCase(); return ["auto", "on", "off"].includes(argv[i + 1]) ? argv[i + 1] : "on"; })();
+const LITE_MODE = ["auto", "on", "off"].includes(LITE_RAW) ? LITE_RAW : "auto";
+const LITE_CTX = 12288;
+let lite = LITE_MODE === "on";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /* プレイヤー名：--name がなければ起動時に聞く（Enter で前回の名前。初回は のあ）。ここで選んだ名前は次回の既定になる */
 const LAST_FILE = path.join(HERE, "notes", ".last-player.json");
@@ -98,6 +121,8 @@ const USE_NOTES = !argv.includes("--no-notes");
 const WRITE_NOTES = USE_NOTES && !argv.includes("--notes-readonly");
 const NOTES_FILE = path.resolve(opt("notes", "NOA_NOTES", path.join(HERE, "notes", `${safeName(NAME)}.md`)));
 const NOTES_CHARS = Number(opt("notes-chars", "NOA_NOTES_CHARS", 1200));
+const NOTES_CHARS_GIVEN = argv.includes("--notes-chars") || process.env.NOA_NOTES_CHARS != null;
+const LITE_NOTES_CHARS = 600; // 軽量モードでプロンプトに入れる反省メモ（--notes-chars を指定したらそちら）
 const REFLECT_EVERY = Number(opt("reflect-every", "NOA_REFLECT_EVERY", 10));
 // 字幕の名前をプレイヤー名にそろえる（-- の後ろで --speaker を指定したらそちらが優先）
 if (!serverArgs.includes("--speaker") && !process.env.GAME_SPEAKER) serverArgs.push("--speaker", NAME);
@@ -111,9 +136,11 @@ const LOG_FILE = argv.includes("--no-log") ? null : path.resolve(HERE, opt("log-
 const plog = new PlayLog(LOG_FILE);
 let lastTurn = null;
 // URL は「プロトコル・ホスト・パス」だけ残す（ユーザー名・パスワードやクエリに載せたキーをログと操作盤に出さないように）
+if (LITE_MODE !== LITE_RAW) log(`--lite の値「${LITE_RAW}」は使えないので auto にします（auto / on / off）`);
+if (TOOL_MODE !== TOOL_MODE_RAW) log(`--tool-mode の値「${TOOL_MODE_RAW}」は使えないので auto にします（auto / native / text）`);
 if (MAX_TOKENS === 512 && !/^\s*512(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW))) log(`--max-tokens の値「${MAX_TOKENS_RAW}」が数ではないので、512 にします（送らないときは 0）`);
 const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathname; } catch { return "(URLを読めません)"; } })();
-plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxTokens: MAX_TOKENS || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
+plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, toolMode: TOOL_MODE, lite: LITE_MODE, temperature: TEMP, maxTokens: maxTokens || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
   notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
 if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
 
@@ -124,7 +151,7 @@ const LOADED_TRIES = 3; // 見つからなければ、次のターンの最初�
 llm.info = await modelInfo(BASE, MODEL).catch(() => null);
 if (!llm.gpu && isLocalHost(BASE)) { const g = gpuText(await localGpus().catch(() => null)); if (g) { llm.gpu = g; llm.gpuFrom = "nvidia-smi"; } }
 // 複数行は1行ずつ log する（操作盤は行頭の時刻で行を見分けるので、2行目以降にも時刻を付ける）
-for (const line of `LLM：${describeModel(MODEL, llm.info, { maxTokens: MAX_TOKENS }) ?? `${MODEL}（Ollama ではないので、モデルの詳細は分かりません）`}`.split("\n")) log(line);
+for (const line of `LLM：${describeModel(MODEL, llm.info, { maxTokens }) ?? `${MODEL}（Ollama ではないので、モデルの詳細は分かりません）`}`.split("\n")) log(line);
 if (llm.gpu) log(`  GPU：${llm.gpu}（${llm.gpuFrom === "--gpu" ? "--gpu の指定" : "この PC の nvidia-smi"}）`);
 plog.write("model", { model: MODEL, ...(llm.info ?? { ollama: false }), gpu: llm.gpu, gpuFrom: llm.gpuFrom });
 /* 読み込まれたあとの状態。ターンの最初の返事のあとに聞く（モデルはその返事で読み込まれる）。
@@ -146,6 +173,7 @@ async function checkLoaded() {
     CTX = llm.loaded.ctx;
     log(`コンテキスト長 ${CTX}：収まる間はターンをまたいで会話を続けます`);
     plog.write("ctx", { ctx: CTX });
+    liteFor(CTX, "Ollama");
   }
   return llm.loaded;
 }
@@ -216,6 +244,25 @@ const tools = mcpTools.filter(t => !HIDDEN.has(t.name)).map(t => ({
   function: { name: t.name, description: t.description, parameters: { type: "object", properties: {}, ...llmSchema(t.inputSchema) } },
 }));
 
+/* 軽量モードで渡すツール：説明は最初の1文、引数の説明は括弧の前まで、JSON Schema の付けたし（$schema など）は外す。
+ * ふだん使わない手（dismiss_dialog・demolish_facility）は渡さない（呼ばれたら実行はする） */
+const LITE_HIDDEN = new Set(["dismiss_dialog", "demolish_facility"]);
+const firstSentence = (t) => String(t ?? "").split(/(?<=。)/)[0].trim();
+function slimSchema(p) {
+  if (Array.isArray(p)) return p.map(slimSchema);
+  if (!p || typeof p !== "object") return p;
+  const out = {};
+  for (const [k, v] of Object.entries(p)) {
+    if (k === "$schema" || (k === "additionalProperties" && v === false)) continue;
+    if (k === "description" && typeof v === "string") { const d = v.split("（")[0].trim(); if (d) out[k] = d; continue; }
+    out[k] = k === "properties" ? Object.fromEntries(Object.entries(v).map(([n, x]) => [n, slimSchema(x)])) : slimSchema(v);
+  }
+  return out;
+}
+const liteTools = tools.filter(t => !LITE_HIDDEN.has(t.function.name)).map(t => ({
+  type: "function", function: { name: t.function.name, description: firstSentence(t.function.description), parameters: slimSchema(t.function.parameters) },
+}));
+const activeTools = () => lite ? liteTools : tools;
 const TOOL_NAMES = new Set(tools.map(t => t.function.name));
 // 録画しているなら、その開始時刻をプレイログに入れる（以降の行に「録画の開始からの時間」が付き、字幕を動画に合わせられる）
 { const ri = (await tool("recording_info").catch(() => null))?.json; if (ri?.recording) plog.setVideo(ri.t0, { name: ri.name, lag: ri.lag ?? 200 }); }
@@ -229,8 +276,24 @@ const { cleanTalk, splitReply } = makeTalk({ toolNames: mcpTools.map(t => t.name
 const persona = PERSONA_FILE ? (await fs.readFile(PERSONA_FILE, "utf8")).trim()
   : `あなたは「${NAME}」。SF戦略シミュレーション「辺境星系戦記」を実況プレイ配信している。明るく、視聴者に話しかけるように短く喋る。`;
 const rules = (await tool("get_rules")).text;
+// 短いルール（軽量モード）。戦闘を手で操作するときや、短い版を返さない古いサーバーでは全文のまま
+const rulesBrief = MANUAL_BATTLE ? rules : ((await tool("get_rules", { brief: true }).catch(() => null))?.text || rules);
 const notes = USE_NOTES ? await loadNotes(NOTES_FILE) : { lessons: [], records: [] };
-const SYSTEM = () => `${persona}
+// 軽量モードの「配信のしかた」。ふだんの版から、いちばん効いている決まりだけを残す
+const GUIDE_LITE = () => `# 配信のしかた
+- ツールでゲームを操作する。ツール以外の地の文は、そのまま字幕に出る。1回に1〜2文、60字以内。
+- 1ターンの流れ：内政（「■内政の候補」から1つ以上）→ 攻めに行く艦隊は陣形（set_formation）→ 艦隊の移動 → end_turn。
+- セリフは操作ツールの say 引数に書く。
+- 操作の返り値の「のこりの手」から次の手を選ぶ。「打てる手はもうありません」と出たら end_turn。
+- 戦闘はオートで決着する。勝てる相手を選び、傷ついた艦隊は修理してから出す。
+- IDは状況テキストの数字だけを使う。断られたら、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。`;
+const notesChars = () => lite && !NOTES_CHARS_GIVEN ? Math.min(NOTES_CHARS, LITE_NOTES_CHARS) : NOTES_CHARS;
+const SYSTEM = () => lite && !MANUAL_BATTLE ? `${persona}
+
+${GUIDE_LITE()}
+
+${rulesBrief}
+${USE_NOTES ? `\n${notesPrompt(notes, notesChars())}` : ""}`.trimEnd() : `${persona}
 
 # 配信のしかた
 - ツールを使ってゲームを操作する。ツール以外の地の文は、そのまま配信画面に字幕で出る。1回に1〜2文、60字以内で、視聴者に向けて話す。
@@ -246,29 +309,71 @@ ${MANUAL_BATTLE ? `- 戦闘中は、攻撃候補（予測ダメージつき）�
 - IDは状況テキストに書かれた数字だけを使う（艦隊は「ID」の後ろの数字、星は名前の前の数字）。断られたときは、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。
 
 ${rules}
-${USE_NOTES ? `\n${notesPrompt(notes, NOTES_CHARS)}` : ""}`.trimEnd();
+${USE_NOTES ? `\n${notesPrompt(notes, notesChars())}` : ""}`.trimEnd();
+
+/* ---------- 手を文字で書くとき（--tool-mode text） ----------
+ * ツールの一覧を「名前(引数, …)：説明の最初の1文」の行にしてシステムプロンプトに足す。enum の引数は選べる値も書く */
+function toolLine(t) {
+  const f = t.function, props = f.parameters?.properties ?? {}, req = new Set(f.parameters?.required ?? []);
+  const arg = (k, p) => {
+    const vals = p.enum ?? p.anyOf?.flatMap(x => x.enum ?? []) ?? [];
+    return `${k}${req.has(k) ? "" : "?"}${vals.length ? `="${vals.slice(0, 8).join("|")}"` : ""}`;
+  };
+  const desc = String(f.description ?? "").split(/(?<=。)/)[0].trim();
+  return `- ${f.name}(${Object.entries(props).map(([k, p]) => arg(k, p)).join(", ")})${desc ? `：${desc}` : ""}`;
+}
+const TEXT_GUIDE = () => `# 手の書き方（この配信では、ツール呼び出しの機能は使わずに手を文字で書く）
+- 手は1行に1つ、関数の形で書く。例：move_fleet(fleet_id=6, to=7)　build_facility(planet_id=3, facility="lab")　end_turn()
+- 文字の値は "…" で囲む。数は囲まない。引数名の後ろに ? が付いたものは省いてよい
+- セリフは手の say 引数に書く：invest_research(amount=60, say="研究を進めるよ！")。手でない行は、そのまま字幕に出る
+- 1回の返事に書く手は1〜3個まで。結果は次のメッセージ（【手の名前 の結果】）で届く
+# 使える手
+${activeTools().map(toolLine).join("\n")}`;
+const callText = (c) => {
+  let a = c.function?.arguments ?? {};
+  if (typeof a === "string") { try { a = JSON.parse(a || "{}"); } catch { a = {}; } }
+  return `${c.function?.name}(${Object.entries(a ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`;
+};
+/* 送る直前に、会話を文字だけのやり取りに直す（ツール呼び出し → 関数の形の行、ツールの結果 → 【名前 の結果】のユーザー発言）。
+ * 同じ会話からは毎回同じ文字になるので、後ろに足したときのキャッシュは今までどおり効く。ユーザー発言が続くときは1つにまとめる
+ * （役割が交互でないと断るチャットテンプレートがあるため） */
+function forText(messages) {
+  const out = [];
+  const user = (text) => { const last = out.at(-1); if (last?.role === "user") last.content += `\n\n${text}`; else out.push({ role: "user", content: text }); };
+  for (const m of messages) {
+    if (m.role === "system") out.push({ role: "system", content: `${m.content}\n\n${TEXT_GUIDE()}` });
+    else if (m.role === "assistant") out.push({ role: "assistant", content: [m.content, ...(m.tool_calls ?? []).map(callText)].filter(Boolean).join("\n") || "（なし）" });
+    else if (m.role === "tool") user(`【${m.name} の結果】${m.content}`);
+    else if (m.role === "user") user(typeof m.content === "string" ? m.content : JSON.stringify(m.content));
+    else out.push(m);
+  }
+  return out;
+}
+const NOT_TOOLS = /does not support tools|tools? (?:is|are) not supported|not support(?:ed)? (?:function|tool)|tool[_ ]?(?:use|calling|choice).{0,40}not (?:supported|enabled)/i;
 
 /* ---------- 会話の長さの見積もり（ターンをまたいで続けるか、作り直すかを決める） ----------
  * 最後の返事の usage（prompt_tokens + completion_tokens）に、そのあと足したメッセージの字数×（トークン/字）を足す。
  * トークン/字は、送った字数（ツールの定義も含む）と prompt_tokens から測り、少し多めに見る。usage が無いサーバーでは 1字=1トークンで数える */
-const TOOLS_CHARS = JSON.stringify(tools).length;
+const TOOLS_CHARS_OF = new Map([[tools, JSON.stringify(tools).length], [liteTools, JSON.stringify(liteTools).length]]);
+const toolsChars = () => TOOLS_CHARS_OF.get(activeTools());
 const charsOf = (ms) => ms.reduce((t, m) => t + (typeof m.content === "string" ? m.content.length : 0) + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0);
 const sizeOf = {
   last: null, perChar: null, // perChar：トークン/字（まだ測っていなければ null で、1字=1トークンとして数える）
   seen(messages, usage) {
     if (!usage?.prompt_tokens) { this.last = null; return; }
     this.last = { messages, count: messages.length, tokens: usage.prompt_tokens + (usage.completion_tokens ?? 0) };
-    const r = usage.prompt_tokens / (charsOf(messages) + TOOLS_CHARS);
+    const r = usage.prompt_tokens / (charsOf(messages) + toolsChars());
     if (r > 0.2 && r < 3) this.perChar = Math.max(this.perChar ?? 0, r * 1.1);
   },
   // messages を送ったときのトークン数の見積もり
   of(messages) {
     const l = this.last;
     if (l && messages.length >= l.count && l.messages.every((m, i) => messages[i] === m)) return l.tokens + Math.ceil(charsOf(messages.slice(l.count)) * (this.perChar ?? 1));
-    return Math.ceil((charsOf(messages) + TOOLS_CHARS) * (this.perChar ?? 1));
+    return Math.ceil((charsOf(messages) + toolsChars()) * (this.perChar ?? 1));
   },
 };
-/* コンテキスト長：--ctx がなければ Ollama に聞く（読み込み中のモデルの context_length。古い Ollama ならモデルの num_ctx）。分からなければ 0 */
+/* コンテキスト長：--ctx がなければサーバーに聞く（Ollama は読み込み中のモデルの context_length、古い Ollama ならモデルの num_ctx。
+ * ほかのサーバーは llm-info.mjs の serverCtx）。分からなければ 0 */
 let ctxAsked = false;
 async function detectCtx() {
   if (ctxAsked || !KEEP || MANUAL_BATTLE) return;
@@ -279,20 +384,50 @@ async function detectCtx() {
     if (real && real < CTX) log(`  ⚠ Ollama が実際に確保したコンテキスト長は ${real} で、--ctx ${CTX} より短いので、あふれた分は古い会話から切り捨てられます`);
     plog.write("ctx", { ctx: CTX, ...(real ? { loaded: real } : {}) }); return;
   }
-  // 読み込み中のモデルの実際の長さ（/api/ps）。古い Ollama で分からなければ Modelfile の num_ctx（/api/show）
+  // Ollama：読み込み中のモデルの実際の長さ（/api/ps）。古い Ollama で分からなければ Modelfile の num_ctx（/api/show）
   CTX = llm.loaded?.ctx || llm.info?.numCtx || 0; // checkLoaded は呼び出し元で済んでいる
-  log(CTX ? `コンテキスト長 ${CTX}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します（--ctx <トークン数> で指定すると続けられます）");
-  plog.write("ctx", { ctx: CTX || null });
+  // Ollama でないサーバー：llama.cpp・LM Studio・vLLM などに聞く（最初の返事のあとなので、モデルは読み込まれている）
+  let source = CTX ? "Ollama" : null;
+  if (!CTX && !llm.info) { const r = await serverCtx(BASE, MODEL, KEY).catch(() => null); if (r) { CTX = r.ctx; source = r.source; } }
+  log(CTX ? `コンテキスト長 ${CTX}${source && source !== "Ollama" ? `（${source}）` : ""}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します（--ctx <トークン数> で指定すると続けられます）");
+  plog.write("ctx", { ctx: CTX || null, ...(source ? { source } : {}) });
+  liteFor(CTX, source ?? "サーバー");
 }
+
+/* ---------- 軽量モード（--lite） ---------- */
+function logBase() {
+  const sys = SYSTEM().length, t = textMode ? TEXT_GUIDE().length : toolsChars();
+  log(`プロンプトの土台：約${sys + t}字（システム ${sys}字・${textMode ? "手の書き方" : "ツールの定義"} ${t}字）${lite ? "・軽量モード" : ""}`);
+}
+/* --lite auto で、コンテキスト長が LITE_CTX より短いと分かったら軽量モードにする。ゲームの途中で分かったときは、次のターンに会話を作り直す
+ *（システムプロンプトが変わるので startTurn が続けずに作り直す） */
+function liteFor(ctx, from) {
+  if (LITE_MODE !== "auto" || lite || !ctx || ctx >= LITE_CTX) return false;
+  lite = true;
+  log(`コンテキスト長 ${ctx}（${from}）は短いので、軽量モードにします（短いルールとツールの説明。使わないなら --lite off）`);
+  plog.write("lite", { on: true, ctx, from });
+  logBase();
+  return true;
+}
+// 始める前に分かるコンテキスト長で決める：--ctx、Ollama は Modelfile の num_ctx、ほかのサーバーは llm-info.mjs の serverCtx。
+// 読み込まれていないと分からないことが多いので、最初の返事のあと（detectCtx）にもう一度見る
+if (LITE_MODE === "auto") {
+  const hint = CTX ? [CTX, "--ctx"]
+    : llm.info ? [llm.info.numCtx, "Ollama"]
+    : [(await serverCtx(BASE, MODEL, KEY).catch(() => null))?.ctx, "サーバー"];
+  if (!liteFor(...hint)) logBase();
+} else logBase();
 
 /* ---------- LLM 呼び出し ---------- */
 async function chat(messages, { withTools = true, kind = withTools ? "play" : "reflect" } = {}) {
-  const body = { model: MODEL, messages, temperature: TEMP };
+  const native = withTools && !textMode;
+  // 振り返り（反省メモ）はツールを使わないので、文字に直さない
+  const body = { model: MODEL, messages: textMode && kind !== "reflect" ? forText(messages) : messages, temperature: TEMP };
   if (THINK) body.reasoning_effort = THINK;
   // 振り返り（反省メモ）は箇条書きで長くなる（上限 1200字）ので、少なくとも 1024
-  if (MAX_TOKENS) body.max_tokens = kind === "reflect" ? Math.max(MAX_TOKENS, 1024) : MAX_TOKENS;
-  if (withTools) Object.assign(body, { tools, tool_choice: "auto" });
-  else body.temperature = Math.min(TEMP, 0.4);
+  if (maxTokens) body.max_tokens = kind === "reflect" ? Math.max(maxTokens, 1024) : maxTokens;
+  if (native) Object.assign(body, { tools: activeTools(), tool_choice: "auto" });
+  else if (!withTools) body.temperature = Math.min(TEMP, 0.4);
   const t0 = Date.now();
   // LLM まわりの失敗は「LLM API」で始まるエラーにそろえる。何度やっても同じになる失敗（つながらない・モデルがない・ツール非対応）には fatal をつける。
   // メインループは fatal ならすぐ止め、それ以外（400 などその場かぎりのもの）はそのターンだけ自動で進める
@@ -314,6 +449,13 @@ async function chat(messages, { withTools = true, kind = withTools ? "play" : "r
   }
   if (!res.ok) {
     const text = (await res.text()).slice(0, 300);
+    // ツール非対応のモデル・サーバー：--tool-mode auto なら、手を文字で書いてもらうやり方に切り替えて、同じ問い合わせをやり直す
+    if (native && TOOL_MODE === "auto" && NOT_TOOLS.test(text)) {
+      textMode = true;
+      log("このモデルはツール呼び出しに対応していないので、手を文字で書いてもらうやり方に切り替えます（--tool-mode text）");
+      plog.write("tool_mode", { mode: "text", reason: text.slice(0, 200) });
+      return chat(messages, { withTools, kind });
+    }
     throw llmError(`LLM API ${res.status}: ${text}`, [401, 403, 404].includes(res.status) || /does not support tools|model\b.*\bnot found/i.test(text));
   }
   const sec = (Date.now() - t0) / 1000;
@@ -326,6 +468,13 @@ async function chat(messages, { withTools = true, kind = withTools ? "play" : "r
   msg.finish = data.choices[0].finish_reason ?? null;
   // content を配列で返すサーバーもある
   if (Array.isArray(msg.content)) msg.content = msg.content.map(c => c.text ?? "").join("");
+  // 考えた部分で上限に届いた：次からの上限を広げる（--max-tokens を指定したときは、その値を守る）
+  if (msg.finish === "length" && maxTokens && !MAX_TOKENS_GIVEN && maxTokens < TOKENS_CAP && (msg.reasoning_content || msg.reasoning || /<think>/.test(msg.content ?? ""))) {
+    const to = Math.min(TOKENS_CAP, Math.max(THINK_TOKENS, maxTokens * 2));
+    log(`考える部分で返事の上限 ${maxTokens} に届いたので、上限を ${to} に広げます（--max-tokens で固定できます）`);
+    plog.write("max_tokens", { from: maxTokens, to, reason: "thinking" });
+    maxTokens = to;
+  }
   // 返事は加工する前の全文を残す（考えた部分を別の欄で返すサーバーもある）
   plog.write("llm", { kind, sec: Math.round(sec * 10) / 10, content: msg.content ?? "",
     ...(msg.reasoning_content || msg.reasoning ? { reasoning: msg.reasoning_content || msg.reasoning } : {}),
@@ -514,6 +663,11 @@ async function playTurn(turn) {
   let messages = await startTurn(turn);
   convo = null; // 最後まで普通に終わったターンだけ、次のターンに続ける
   let ended = false, over = false, idle = 0, empty = 0, wasted = 0, lastName = "", auto = false;
+  /* 断られた手（名前と引数。say は除く）→ 断りの理由。次に何かの操作が成功するまで、同じ手は実行せずに前の理由で断る
+   *（資金不足・行動済み・いまいる星への移動などは、何も変わらなければ同じ理由で断られる。2026-11-15 のログで同じ失敗の繰り返しが目立った）。
+   * 操作が1つでも成功したら忘れる（施設の撤去でスロットが空く、のように、ほかの手で通るようになることがあるため） */
+  const failed = new Map();
+  const sameKey = (name, a) => `${name}(${Object.keys(a).filter(k => k !== "say").sort().map(k => `${k}=${JSON.stringify(a[k])}`).join(",")})`;
   // 考える回数は、作戦卓ではこのターンの合計、戦闘では1戦ごとに数える（攻める戦闘と防衛戦が重なっても途中で自動進行にならないように）
   let step = 0, mapSteps = 0, battleSteps = 0, inBattle = false;
   while (mapSteps < MAX_STEPS && wasted < 6) {
@@ -554,7 +708,7 @@ async function playTurn(turn) {
       const nx = (await tool("get_next").catch(() => null))?.text || "";
       if (empty === 1) {
         log("  （空の返事だったので、のこりの手を見せてもう一度聞きます）");
-        messages.push({ role: "user", content: `返事が空でした。次の手をツールで1つだけ呼んでください（セリフは短く、そのツールの say 引数に）。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
+        messages.push({ role: "user", content: `返事が空でした。次の手を${textMode ? "1つだけ、関数の形で1行に書いてください（セリフは短く、その手の say 引数に）" : "ツールで1つだけ呼んでください（セリフは短く、そのツールの say 引数に）"}。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
         continue;
       }
       log("  （空の返事が続いたので、ツールを渡さずに手を文字で書いてもらいます）");
@@ -582,7 +736,7 @@ async function playTurn(turn) {
     if (!calls.length) {
       if (++idle >= 3) break;
       const nx = ended ? "" : (await tool("get_next").catch(() => null))?.text || "";
-      messages.push({ role: "user", content: ended ? "状況を見て、残りの戦闘や通信を片付けてください。" : `ツールで操作を続けてください。やることが終わったら end_turn。${nx ? `\n${nx}` : ""}` });
+      messages.push({ role: "user", content: ended ? "状況を見て、残りの戦闘や通信を片付けてください。" : `${textMode ? "手を関数の形で書いて" : "ツールで"}操作を続けてください。やることが終わったら end_turn。${nx ? `\n${nx}` : ""}` });
       continue;
     }
     idle = 0;
@@ -595,7 +749,7 @@ async function playTurn(turn) {
         plog.write("cut", { names: cut.map(c => c.function.name) });
         calls = calls.filter(c => !cut.includes(c));
         if (calls.length) messages.at(-1).tool_calls = calls;
-        else { delete messages.at(-1).tool_calls; messages.push({ role: "user", content: "返事が途中で切れました。手は1回に1〜3個までにして、もう一度ツールで呼んでください。" }); continue; }
+        else { delete messages.at(-1).tool_calls; messages.push({ role: "user", content: `返事が途中で切れました。手は1回に1〜3個までにして、もう一度${textMode ? "関数の形で書いて" : "ツールで呼んで"}ください。` }); continue; }
       }
     }
     for (const c of calls) {
@@ -612,7 +766,8 @@ async function playTurn(turn) {
       // 渡していないツールや、同じ情報の取り直しは実行せずに次の手を促す（読み直しのループを防ぐ）
       const refuse = !TOOL_NAMES.has(c.function.name)
         ? `失敗：${c.function.name} は使えません。ルールはシステムプロンプトに、今の状況は最初のメッセージに書いてあります。使えるツール：${[...TOOL_NAMES].join("、")}`
-        : c.function.name === "get_summary" && lastName === "get_summary" ? "状況はさっきと同じです。操作のツールを選んでください。" : null;
+        : c.function.name === "get_summary" && lastName === "get_summary" ? "状況はさっきと同じです。操作のツールを選んでください。"
+        : failed.has(sameKey(c.function.name, args)) ? `失敗：さっき断られた手と同じです（${failed.get(sameKey(c.function.name, args))}）。そのあと何も変わっていないので、同じ理由で断られます。「のこりの手」や「選べるもの」から別の手を選んでください。` : null;
       lastName = c.function.name;
       if (refuse) { wasted++; log("  ✗ " + refuse.split("。")[0]); plog.write("refuse", { name: c.function.name, args, reason: refuse.split("。")[0] }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: refuse }); continue; }
       if (c.function.name !== "get_summary") wasted = 0;
@@ -633,8 +788,11 @@ async function playTurn(turn) {
         const stop = await checkEndPhase();
         if (stop) { log("  ✗ まだ動ける艦があるので、フェイズ終了を止めました"); plog.write("refuse", { name: c.function.name, args, reason: "まだ動ける艦があるので、フェイズ終了を止めました" }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: stop }); continue; }
       } else if (c.function.name.startsWith("battle_")) endPhaseNagged = false;
+      const key = sameKey(c.function.name, args);
       const r = await tool(c.function.name, args);
       noteDone(c.function.name, args, r.json);
+      if (r.json?.ok === false) failed.set(key, String(r.json.message ?? "").split(/[。\n]/)[0].slice(0, 80));
+      else if (r.json?.ok === true && !QUIET.has(c.function.name) && c.function.name !== "get_next") failed.clear();
       if (c.function.name === "end_turn" && r.json?.ok) ended = true;
       if (r.json?.mode === "over") { over = true; break; } // 勝敗がついた（結果の画面は配信用に出したまま、振り返りへ）
       if (r.json?.mode) { const b = r.json.mode === "battle" || r.json.mode === "battle_ended"; if (b && !inBattle) battleSteps = 0; inBattle = b; }
@@ -749,6 +907,8 @@ else if (!st.over && llmDown && WRITE_NOTES && journal.turns.length) {
 const videos = (await tool("finish_recording").catch(() => null))?.json?.videos ?? [];
 plog.write("end", { outcome: st.over === "win" ? "勝利" : st.over === "lose" ? "敗北" : llmDown ? "LLMエラー" : Number.isFinite(TURNS) && journal.turns.length >= TURNS ? "ターン上限" : "途中終了",
   turn: lastTurn ?? st.turn ?? null, ...(videos.length ? { video: path.basename(videos.at(-1)) } : {}) });
+// 集計を1行で出す（詳しくは node playlog.mjs --stats か、操作盤のプレイログ）
+if (LOG_FILE && journal.turns.length) { const s = await readLog(LOG_FILE).then(statsOf).catch(() => null); if (s) log(`集計：${statsLine(s)}`); }
 // 録画の隣に同じ名前の字幕（.srt）を置く
 if (LOG_FILE) for (const v of videos) { const f = await subtitlesBeside(LOG_FILE, v).catch(() => null); if (f) log(`字幕を書き出しました：${f}`); }
 await mcp.close();

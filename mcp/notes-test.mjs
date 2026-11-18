@@ -19,15 +19,23 @@ let prompts = [], reflections = 0;
 // ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）／emptytalk（空と地の文だけの返事を交互に返す）
 // ／emptyall（ツールを渡されると必ず空を返す。ツールなしで手を文字で頼まれたら、文字で end_turn() を書く）
 // ／json（ターンの最初に、手をツール名をキーにした JSON の配列でコードブロックに書く）／cut（ターンの最初に、最後の呼び出しの引数が途中で切れた返事を finish=length で返す）
+// ／text（ツールを渡されなければ、手を関数の形で文字に書く。--tool-mode text と、notools で切り替えたあと）
+// ／think（ターンの最初に、考えた部分だけで上限に届いた返事を finish=length で返す。手は書かない）
 let mode = "normal", emptySent = false, etStart = "", etN = 0, textAsks = 0;
 // 送られてきた max_tokens（ツールつき・なし）
 let maxTok = [];
+// 手を文字で書くやり方（--tool-mode text）で送られてきた問い合わせ
+let textReqs = [];
 // Ollama の /api/ps に見せるコンテキスト長（0 なら /api/ps は 404。ai-player はコンテキスト長が分からず、毎ターン会話を作り直す）
 let psCtx = 0;
 // /api/ps に見せるメモリの量（全体と、そのうち GPU の VRAM に載った分）
 const psSize = 20e9; let psVram = psSize;
 // /api/ps がこの回数だけモデルを返さない（すぐ外れた・タイミングで見つからない、のまね）
 let psMiss = 0;
+// Ollama でないサーバーのふり：llama.cpp の /props・vLLM の /v1/models が返すコンテキスト長（0 なら 404）
+let propsCtx = 0, modelsCtx = 0;
+// 最後に送られてきたツールの定義（軽量モードのテスト用）
+let lastTools = null;
 // 送られてきた問い合わせ（keep のテスト用。ターンをまたいで会話を続けたかを見る）
 let sentAll = [];
 // 会話の書き換えの見張り：同じターンの中で、前に送ったメッセージが次の問い合わせで変わっていたら数える（変わるとローカルLLMがプロンプト全体を読み直す）
@@ -52,8 +60,10 @@ const llm = http.createServer(async (req, res) => {
   }
   if (req.url === "/api/version" && psCtx) { res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ version: "0.13.0" })); }
   if (req.url.startsWith("/api/")) { res.writeHead(404); return res.end(); }
+  if (req.url === "/props") { if (!propsCtx) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ default_generation_settings: { n_ctx: propsCtx }, total_slots: 1 })); }
+  if (req.url === "/v1/models") { if (!modelsCtx) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ object: "list", data: [{ id: "other" }, { id: "mock", max_model_len: modelsCtx }] })); }
   const b = JSON.parse(body);
-  if (b.tools) sentAll.push(b.messages);
+  if (b.tools) { sentAll.push(b.messages); lastTools = b.tools; }
   maxTok.push({ tools: !!b.tools, max: b.max_tokens ?? null });
   const fail = (message) => { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message, type: "invalid_request_error" } })); };
   // Ollama と同じく、content が文字列でも配列でもないメッセージ（ツール呼び出しなし）は断る
@@ -64,7 +74,14 @@ const llm = http.createServer(async (req, res) => {
   // flaky：2ターン目の最初の問い合わせだけ断る（prompts には1ターン目の分だけが入っている）
   if (b.tools && mode === "flaky" && String(b.messages.at(-1).content).includes("今の状況です") && prompts.length === 1) { prompts.push("(400)"); return fail("the request exceeds the available context size"); }
   let out;
-  if (!b.tools && /^返事がまた空でした/.test(b.messages.at(-1).content)) {
+  const textReq = !b.tools && String(b.messages[0]?.content ?? "").includes("# 手の書き方");
+  if (textReq && !/^返事がまた空でした/.test(b.messages.at(-1).content)) {
+    // 手を文字で書くやり方：ターンの最初は研究に投資、その結果が届いたら end_turn を文字で書く
+    textReqs.push(b.messages);
+    const last = String(b.messages.at(-1).content);
+    out = reply({ content: /【invest_research の結果】/.test(last) ? 'おしまい！\nend_turn(say="ターン終了だよ")'
+      : /今の状況です/.test(last) ? '研究を進めるね。\ninvest_research(amount=30, say="研究に投資！")' : "end_turn()" });
+  } else if (!b.tools && /^返事がまた空でした/.test(b.messages.at(-1).content)) {
     // 空の返事が続いたときの、ツールを渡さない問い合わせ：手を文字で書く
     textAsks++;
     out = reply({ content: mode === "emptyall" ? "えっと、ターンを終えるね！\nend_turn()" : "うーん" });
@@ -96,10 +113,16 @@ const llm = http.createServer(async (req, res) => {
         : mode === "bare" ? reply({ content: "内政はおしまい！\nend_turn" })
         // 2026-11-17 のプレイログで出た形：ツール呼び出しを使わずに、手を JSON の配列で書く
         : mode === "json" ? reply({ content: '```json\n[\n  {"say": "さあ、新しいターン！"},\n  {"invest_research": {"amount": 30}, "say": "研究に少しだけ！"},\n  {"end_turn": {}}\n]\n```' })
+        : mode === "repeat" ? reply({ content: "", tool_calls: [callOf(`m${prompts.length}`, "move_fleet", { fleet_id: 1, to: 0 })] })
+        : mode === "think" ? { choices: [{ index: 0, message: { role: "assistant", content: "", reasoning_content: "まずは状況を整理しよう。資金は…" }, finish_reason: "length" }] }
         : mode === "cut" ? { choices: [{ index: 0, message: { role: "assistant", content: "", tool_calls: [callOf(`r${prompts.length}`, "invest_research", { amount: 30, say: "研究するよ！" }),
           { id: `x${prompts.length}`, type: "function", function: { name: "move_fleet", arguments: '{"fleet_id":1,"' } }] }, finish_reason: "length" }] }
         : reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
-    } else out = mode === "empty" || mode === "play" || mode === "cut" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
+    } else if (mode === "repeat") {
+      // 断られた手を、say だけ変えてもう一度呼ぶ。同じ手だと断られたら end_turn
+      out = /さっき断られた手と同じ/.test(String(last.content)) ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
+        : reply({ content: "", tool_calls: [callOf(`m${toolSeen.length}`, "move_fleet", { to: 0, fleet_id: 1, say: "もう一回！" })] });
+    } else out = mode === "empty" || mode === "play" || mode === "cut" || mode === "think" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
       : mode === "keep" ? reply({ content: "", tool_calls: [callOf(`k${sentAll.length}`, "end_turn", { say: "ターン終了！" })] })
       : reply({ content: "様子を見るね" });
     // keep：ターンの最初は研究に投資してから（「前のターンにしたこと」に出るか見る）。usage も返す（2字=1トークンとして）
@@ -280,14 +303,53 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
     `作り直したターンには、前の2ターンのセリフではなく成功した操作を1行ずつ渡す（${fresh[1]?.split("\n").slice(0, 3).join(" / ")}）`);
   // コンテキストに収まらないときは毎ターン作り直す
   psCtx = 6000; sentAll = [];
-  await run(2, ["--no-notes"]);
+  await run(2, ["--no-notes", "--lite", "off"]); // 軽量モードにすると収まってしまうので、ふだんの長さで
   ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
   check(sentAll.filter(m => m.length === 2 && starts(m) === 1).length === 2 && ev.some(e => e.type === "context" && e.keep === false), "コンテキストに収まらなければ、毎ターン作り直す");
   // コンテキスト長が分からないとき（Ollama 以外）は、今までどおり毎ターン作り直す
   psCtx = 0; sentAll = [];
   await run(2, ["--no-notes"]);
   check(sentAll.filter(m => m.length === 2 && starts(m) === 1).length === 2, "コンテキスト長が分からなければ、毎ターン作り直す");
+  // Ollama でないサーバーでも、コンテキスト長を聞いて会話を続ける：llama.cpp の /props、vLLM などの /v1/models
+  propsCtx = 1000000; sentAll = [];
+  await run(2, ["--no-notes"]);
+  ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(starts(sentAll.at(-1)) === 2 && ev.some(e => e.type === "ctx" && e.ctx === 1000000 && /llama\.cpp/.test(e.source)), "llama.cpp の /props（n_ctx）でコンテキスト長を知り、会話を続ける");
+  propsCtx = 0; modelsCtx = 900000; sentAll = [];
+  await run(2, ["--no-notes"]);
+  ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(starts(sentAll.at(-1)) === 2 && ev.some(e => e.type === "ctx" && e.ctx === 900000 && e.source === "/v1/models"), "/v1/models の max_model_len（vLLM など）でコンテキスト長を知り、会話を続ける");
+  modelsCtx = 0;
   mode = "normal";
+}
+
+// 小さなモデル向けの軽量モード（--lite）：短いルール・短い配信のしかた・短いツールの説明
+{
+  prompts = [];
+  let out = await run(2, ["--no-notes", "--lite"]);
+  const short = prompts[0], liteTools = lastTools;
+  await run(1, ["--no-notes", "--lite", "off"]);
+  const full = prompts.at(-1), lastToolsFull = lastTools;
+  check(/ルール（短縮版）/.test(short) && !/ルール（短縮版）/.test(full) && short.length < full.length * 0.6 && /・軽量モード/.test(out) && (out.match(/=== ターン\d+ /g) || []).length === 2,
+    `--lite：ルールは短縮版、配信のしかたも短くする（システムプロンプト ${full.length} → ${short.length}字）`);
+  check(!liteTools.some(t => ["dismiss_dialog", "demolish_facility"].includes(t.function.name)) && !JSON.stringify(liteTools).includes("$schema")
+    && liteTools.find(t => t.function.name === "move_fleet").function.parameters.properties.say.description === "この操作と一緒に視聴者へ言うひとこと"
+    && liteTools.find(t => t.function.name === "set_formation").function.parameters.properties.formation.enum?.length === 5
+    && JSON.stringify(liteTools).length < JSON.stringify(lastToolsFull).length * 0.7,
+    `--lite：ツールの説明は最初の1文・ふだん使わない手は渡さない・選べる値は残す（${JSON.stringify(lastToolsFull).length} → ${JSON.stringify(liteTools).length}字）`);
+  // auto（既定）：llama.cpp の /props で 8192 と分かったら、始めから軽量モード
+  propsCtx = 8192; prompts = [];
+  out = await run(1, ["--no-notes"]);
+  let ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(/コンテキスト長 8192（サーバー）は短いので、軽量モードにします/.test(out) && ev.some(e => e.type === "lite" && e.on && e.ctx === 8192) && /ルール（短縮版）/.test(prompts[0]),
+    "コンテキスト長が短い（8192）と分かったら、自動で軽量モードにする");
+  propsCtx = 0;
+  // Ollama で、読み込まれてから短いと分かったとき：次のターンから軽量モード（会話を作り直す）
+  psCtx = 8000; prompts = []; // Modelfile の num_ctx は 16384 なので、始めは軽量モードにならない
+  out = await run(2, ["--no-notes"]);
+  check(!/ルール（短縮版）/.test(prompts[0]) && /ルール（短縮版）/.test(prompts.at(-1)) && /コンテキスト長 8000（Ollama）は短いので/.test(out),
+    "読み込まれてから短いと分かったら、次のターンから軽量モードにする");
+  psCtx = 0;
 }
 
 // 使っている LLM の詳細：Ollama なら始めにモデルの詳細、最初の返事のあとに実際のコンテキスト長とメモリの載り方を出す
@@ -357,6 +419,21 @@ l = await run(2, ["--no-notes"]);
   maxTok = [];
   const bad = await run(1, ["--no-notes", "--max-tokens", "abc"]);
   check(maxTok.length > 0 && maxTok.filter(x => x.tools).every(x => x.max === 512) && /--max-tokens の値「abc」が数ではないので、512 にします/.test(bad), "--max-tokens が数でなければ、知らせて 512 を送る（黙って送らないにしない）");
+  // 考えるモデル：--think low なら 4096 から。指定した --max-tokens は守る
+  maxTok = [];
+  await run(1, ["--no-notes", "--think", "low"]);
+  check(maxTok.filter(x => x.tools).every(x => x.max === 4096), `--think low なら返事の上限は 4096（${[...new Set(maxTok.filter(x => x.tools).map(x => x.max))].join("/")}）`);
+  maxTok = [];
+  await run(1, ["--no-notes", "--think", "low", "--max-tokens", "300"]);
+  check(maxTok.filter(x => x.tools).every(x => x.max === 300), "--max-tokens を指定したら、考えるときもその値");
+  // 考えないつもりでも、考えた部分で上限に届いたら広げる
+  mode = "think"; maxTok = [];
+  const th = await run(1, ["--no-notes"]);
+  const thEv = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const sentMax = maxTok.filter(x => x.tools).map(x => x.max);
+  check(sentMax[0] === 512 && sentMax.slice(1).every(x => x === 4096) && sentMax.length > 1 && thEv.some(e => e.type === "max_tokens" && e.from === 512 && e.to === 4096) && /上限を 4096 に広げます/.test(th),
+    `考えた部分で上限に届いたら、次から上限を広げる（${sentMax.join(" → ")}）`);
+  mode = "normal";
 }
 // 手を JSON の配列で書いた返事（2026-11-17 のプレイログで空の返事と数えられた）は、文字の手として実行する
 mode = "json"; prompts = [];
@@ -384,12 +461,46 @@ l = await run(2, ["--no-notes", "--max-steps", "8"]);
   check(ev.filter(e => e.type === "empty").length === 6 && !ev.some(e => e.type === "auto") && ev.filter(e => e.type === "tool" && e.name === "end_turn").every(e => e.by === "ai"),
     `空の返事が話した返事をはさんで3回あっても、続いていなければ自動進行にしない（空 ${ev.filter(e => e.type === "empty").length} 回）`);
 }
+// 断られた手と同じ手（引数の順や say が違っても）をもう一度呼んだら、実行せずに前の理由で断る
+mode = "repeat"; prompts = [];
+l = await run(1, ["--no-notes"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const moves = ev.filter(e => e.type === "tool" && e.name === "move_fleet");
+  check(moves.length === 1 && moves[0].ok === false && ev.some(e => e.type === "refuse" && e.name === "move_fleet" && /さっき断られた手と同じ/.test(e.reason))
+    && ev.some(e => e.type === "tool" && e.name === "end_turn" && e.by === "ai"),
+    `断られた手と同じ手をもう一度呼んだら、実行せずに前の理由で断る（実行 ${moves.length} 回）`);
+}
 mode = "flaky"; prompts = [];
 l = await run(3, ["--no-notes"]);
 check(/エラー：LLM API 400/.test(l) && /このターンは自動で進めます/.test(l) && !stopLine.test(l) && turns(l) === 3, "その場かぎりの 400 はそのターンだけ自動で進めて続ける");
+// ツール非対応のモデル：--tool-mode auto（既定）なら、手を文字で書いてもらうやり方に切り替えて続ける
+mode = "notools"; prompts = []; textReqs = [];
+l = await run(2, ["--no-notes"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const ok = (name) => ev.filter(e => e.type === "tool" && e.name === name).every(e => e.by === "ai" && e.ok) && ev.some(e => e.type === "tool" && e.name === name);
+  const msgs = textReqs.at(-1) ?? [];
+  check(!stopLine.test(l) && turns(l) === 2 && /手を文字で書いてもらうやり方に切り替えます/.test(l) && ev.some(e => e.type === "tool_mode" && e.mode === "text")
+    && ok("invest_research") && ok("end_turn") && !ev.some(e => e.type === "auto"),
+    "ツール非対応の 400 なら、手を文字で書くやり方に切り替えて続ける（--tool-mode auto）");
+  check(msgs.length > 2 && !msgs.some(m => m.role === "tool" || m.tool_calls) && msgs.every((m, i) => i === 0 || m.role !== msgs[i - 1].role)
+    && msgs.some(m => m.role === "assistant" && /invest_research\(amount=30[,)]/.test(m.content)) && msgs.some(m => m.role === "user" && /【invest_research の結果】成功：/.test(m.content)),
+    "文字のやり方では、呼び出しは関数の形の行・結果は【名前 の結果】のユーザー発言にし、役割を交互にする");
+  check(ev.some(e => e.type === "talk" && e.text === "研究に投資！") && !ev.some(e => e.type === "talk" && /invest_research|end_turn/.test(e.text)), "文字で書いた手は字幕に出さず、say はセリフにする");
+}
+// --tool-mode text：はじめからツールを渡さず、システムプロンプトに手の一覧を足す
+mode = "normal"; textReqs = []; maxTok = [];
+l = await run(1, ["--no-notes", "--tool-mode", "text"]);
+{
+  const sys = String(textReqs[0]?.[0]?.content ?? "");
+  check(maxTok.length > 0 && maxTok.every(x => !x.tools) && /# 使える手\n- /.test(sys) && /^- move_fleet\(fleet_id, to, say\?\)：/m.test(sys) && /^- set_formation\(fleet_id, formation="[a-z|]+"/m.test(sys) && turns(l) === 1,
+    "--tool-mode text ではツールを送らず、手の一覧（引数と選べる値）をシステムプロンプトに足す");
+}
+// --tool-mode native：今までどおり、ツール非対応ならすぐ止める
 mode = "notools"; prompts = [];
-l = await run(3, ["--no-notes"]);
-check(/LLMのエラーで止めます/.test(l) && turns(l) === 1, "ツール非対応の 400 はすぐ止める");
+l = await run(3, ["--no-notes", "--tool-mode", "native"]);
+check(/LLMのエラーで止めます/.test(l) && turns(l) === 1, "--tool-mode native なら、ツール非対応の 400 はすぐ止める");
 mode = "always400"; prompts = [];
 l = await run(6, ["--no-notes"]);
 check(/3ターン続けて失敗/.test(l) && turns(l) === 3, "400 が3ターン続いたら止める");

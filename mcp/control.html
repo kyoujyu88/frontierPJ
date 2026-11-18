@@ -91,6 +91,9 @@ a { color: var(--blue); }
 .dl a { border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; text-decoration: none; background: var(--panel2); }
 .dl a:hover { border-color: var(--blue); }
 #plog { max-height: 480px; overflow: auto; background: #070b17; border-radius: 8px; padding: 8px 10px; font: 12.5px/1.55 ui-monospace, "BIZ UDGothic", Consolas, monospace; white-space: pre-wrap; word-break: break-all; }
+#plogStats { margin: 6px 0 0; background: #070b17; border-radius: 8px; padding: 6px 10px; border-collapse: collapse; font-size: 13px; width: 100%; }
+#plogStats th { text-align: left; font-weight: normal; color: var(--muted); white-space: nowrap; padding: 2px 14px 2px 0; vertical-align: top; } #plogStats th.sub { padding-left: 1.2em; } #plogStats td { padding: 2px 0; }
+#plogStatsBox { margin-bottom: 8px; font-size: 13px; } #plogStatsBox > summary { cursor: pointer; color: var(--muted); }
 #plog .ln { display: grid; grid-template-columns: 5.2em 1fr; gap: 8px; }
 #plog .tm { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
 #plog a.tm { color: var(--blue); text-decoration: none; }
@@ -147,6 +150,12 @@ a { color: var(--blue); }
             </select>
           </div>
         </div>
+        <label for="toolMode" title="ツール呼び出しに対応していないモデルや、呼び出しの書式が崩れやすいモデルは「文字で書く」に">手の渡し方</label>
+        <select id="toolMode" name="toolMode">
+          <option value="auto">自動（ツール非対応なら文字で）</option>
+          <option value="native">ツール呼び出し</option>
+          <option value="text">文字で書いてもらう</option>
+        </select>
         <div class="row">
           <div>
             <label for="trials">試行回数</label>
@@ -176,6 +185,10 @@ a { color: var(--blue); }
             <div><label for="battleSpeed">戦闘の演出の速さ</label>
               <select id="battleSpeed" name="battleSpeed"><option value="1">ふつう（1倍）</option><option value="1.5">1.5倍</option><option value="2">2倍</option><option value="3">3倍</option><option value="4">4倍</option></select></div>
             <div><label class="check" style="margin-top:22px"><input type="checkbox" id="keepContext" name="keepContext"> 会話を続ける</label></div>
+          </div>
+          <div class="row">
+            <div><label for="lite" title="ルールを短縮版に、配信のしかたとツールの説明を短く、反省メモを600字までにする（8K などコンテキストが短いモデル向け）">軽量モード（小さなモデル向け）</label>
+              <select id="lite" name="lite"><option value="auto">自動（コンテキスト長が12K未満なら）</option><option value="on">使う</option><option value="off">使わない</option></select></div>
           </div>
           <div class="row">
             <div><label for="maxSteps">操作の上限（1ターン・1戦ごと）</label><input id="maxSteps" name="maxSteps" type="number" min="5" max="200"></div>
@@ -262,6 +275,7 @@ a { color: var(--blue); }
           <label class="check"><input type="checkbox" id="plogAll"> LLMとのやり取り（全文）</label>
         </div>
         <div class="summary" id="plogInfo"></div>
+        <details id="plogStatsBox"><summary>集計（1ターンの秒数と内訳・読み込みの速さ・失敗率など）</summary><table id="plogStats"></table></details>
         <div class="dl" id="plogDl"></div>
         <div id="plog"></div>
       </div>
@@ -271,7 +285,7 @@ a { color: var(--blue); }
 
 <script>
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["baseUrl", "model", "name", "think", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
+const FIELDS = ["baseUrl", "model", "name", "think", "toolMode", "lite", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
 let status = {}, history = [], tick = null;
 
 async function api(path, body) {
@@ -402,7 +416,8 @@ async function loadPlog() {
 }
 function renderPlog() {
   const box = $("plog"), d = plogData;
-  if (!d) { box.innerHTML = `<div class="empty">ログを選んでください</div>`; $("plogDl").innerHTML = ""; $("plogInfo").textContent = ""; return; }
+  if (!d) { box.innerHTML = `<div class="empty">ログを選んでください</div>`; $("plogDl").innerHTML = ""; $("plogInfo").textContent = ""; $("plogStatsBox").hidden = true; return; }
+  $("plogStatsBox").hidden = !d.stats; $("plogStats").innerHTML = (d.stats || []).map(([h, v, sub]) => `<tr><th${sub ? ' class="sub"' : ""}>${esc(h)}</th><td>${esc(v)}</td></tr>`).join("");
   const on = new Set([...document.querySelectorAll("#plogFilter [data-k]")].filter(c => c.checked).map(c => c.dataset.k));
   if ($("plogAll").checked) on.add("llm");
   const meta = plogs.find(l => l.name === d.name);
@@ -411,7 +426,7 @@ function renderPlog() {
   const q = (f) => `/api/log/download?name=${encodeURIComponent(d.name)}&format=${f}`;
   $("plogDl").innerHTML = `取り出す：<a href="${q("srt")}" title="セリフの字幕。動画編集ソフトや再生ソフトで読めます">字幕 SRT</a><a href="${q("vtt")}" title="セリフの字幕（Web 用）">字幕 VTT</a>`
     + `<a href="${q("txt")}" title="時刻つきの台本：ターン区切り・セリフ・操作・戦闘・反省メモ">台本 TXT</a><a href="${q("txt")}&all=1" title="台本に LLM に送った文と返事の全文も入れたもの">台本（LLM全文つき）</a>`
-    + `<a href="${q("chapters")}" title="YouTube の概要欄に貼れるターンごとのチャプター">チャプター</a><a href="${q("jsonl")}" title="すべての記録（1行1件の JSON）">JSONL</a>`;
+    + `<a href="${q("chapters")}" title="YouTube の概要欄に貼れるターンごとのチャプター">チャプター</a><a href="${q("stats")}" title="1ターンの秒数と内訳・読み込みの速さ・失敗率などの集計。モデルや設定を替えたときの比べ用">集計 TXT</a><a href="${q("jsonl")}" title="すべての記録（1行1件の JSON）">JSONL</a>`;
   const rows = d.lines.filter(l => on.has(l.kind));
   box.innerHTML = rows.map(l => {
     const t = l.vms ?? l.ms, tm = d.video && l.vms != null ? `<a href="#" class="tm" data-video="${esc(d.video)}" data-sec="${Math.max(0, l.vms / 1000 - 1).toFixed(1)}">${clock(t)}</a>` : `<span class="tm">${clock(t)}</span>`;

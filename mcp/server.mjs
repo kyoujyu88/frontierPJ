@@ -196,7 +196,9 @@ function buildServer() {
       catch (e) { return asText({ ok: false, message: `サーバーエラー：${e.message}` }); }
     });
 
-  tool("get_rules", "ゲームのルール要約（目的・内政・改装・戦術戦闘の計算式）を読む。最初に一度読むこと。", {}, () => call("rules"));
+  tool("get_rules", "ゲームのルール要約（目的・内政・改装・戦術戦闘の計算式）を読む。最初に一度読むこと。", {
+    brief: bool.optional().describe("true＝小さなモデル向けの短い版（オート戦闘のとき）"),
+  }, ({ brief }) => call("rules", !!brief));
   tool("get_state", "現在の全状況を取得：資金・研究・自軍艦隊（移動先の候補つき）・敵艦隊・惑星・最近のログ。通信ウィンドウや戦闘中ならその内容も含む。", {}, () => call("getState"));
   tool("get_summary", "現在の状況を短い日本語の文章で取得する（get_state より軽い。小さなモデル向け）。戦闘中は盤面図と各艦の攻撃候補・移動先を返す。", {}, () => call("getSummary"));
   tool("get_screenshot", "配信画面のスクリーンショットを取得する（画像）。", {}, async () => {
