@@ -1,7 +1,7 @@
 /* 字幕の整え方の確認（talk.mjs）：LLM の返事に書かれたツール呼び出しの記法を字幕に出さず、say は1件ずつのセリフにする。
  * ブラウザも LLM も要らない。  node talk-test.mjs
  */
-import { makeTalk, splitRecordedTalk, stripThink } from "./talk.mjs";
+import { makeTalk, splitRecordedTalk, stripThink, foldSayOnly } from "./talk.mjs";
 import { newEvents, summaryDelta } from "./sumdiff.mjs";
 
 const T = makeTalk({ toolNames: ["say", "end_turn", "move_fleet", "dismiss_dialog", "battle_move", "research", "build"], name: "のあ" });
@@ -111,6 +111,38 @@ eq(newEvents(["[4001] a"], ["[4001] a"]), [], "出来事：増えていなけれ
   eq(summaryDelta(prev, next).split("\n"), ["【ターン2】", "■内政の候補", " 施設", "■惑星（前のターンから変わった星だけ。ほかは前の状況テキストと同じ）", " 1リュネ 自国", "■最近の出来事（前のターンのあとの出来事）", " [3991] b"],
     "状況テキストの差分：惑星は変わった行だけ、出来事は新しいものだけ、ほかは全部");
   eq(summaryDelta(prev, "【戦闘中】盤面"), null, "作戦卓の状況テキストでなければ差分にしない（全文を渡す）");
+}
+
+// セリフだけの返事を、次の手の返事にまとめて会話に残す（foldSayOnly）
+{
+  const call = (id, name, args, raw = false) => ({ id, type: "function", function: { name, arguments: raw ? args : JSON.stringify(args) } });
+  const sayOnly = (id, text) => [{ role: "assistant", content: "", tool_calls: [call(id, "say", { text })] }, { role: "tool", tool_call_id: id, name: "say", content: "表示しました。" }];
+  const head = [{ role: "system", content: "s" }, { role: "user", content: "今の状況です。" }];
+  const shape = (ms) => ms.map(m => m.role === "assistant" ? `A:${m.content}|${(m.tool_calls ?? []).map(c => `${c.function.name}${typeof c.function.arguments === "string" ? c.function.arguments : JSON.stringify(c.function.arguments)}`).join(",")}` : m.role[0].toUpperCase());
+
+  let ms = [...head, ...sayOnly("s1", "研究するよ！"), { role: "assistant", content: "", tool_calls: [call("a1", "invest_research", { amount: 30 })] }, { role: "tool", tool_call_id: "a1", content: "成功" }];
+  const orig = ms[4].tool_calls[0];
+  eq(foldSayOnly(ms, 4), 2, "セリフだけの返事とその結果（2件）を外す");
+  eq(shape(ms), ["S", "U", 'A:|invest_research{"amount":30,"say":"研究するよ！"}', "T"], "セリフは次の手の say 引数に移る");
+  eq(JSON.parse(orig.function.arguments), { amount: 30 }, "元の呼び出しの物は書き換えない（実行した引数はそのまま）");
+
+  ms = [...head, ...sayOnly("s1", "まずは"), ...sayOnly("s2", "研究！"), { role: "assistant", content: "行くよ", tool_calls: [call("a1", "invest_research", { amount: 30, say: "投資！" })] }, { role: "tool", tool_call_id: "a1", content: "成功" }];
+  eq(foldSayOnly(ms, 6), 4, "セリフだけの返事が2回続いたら、両方まとめる");
+  eq(shape(ms), ["S", "U", 'A:まずは 研究！\n行くよ|invest_research{"amount":30,"say":"投資！"}', "T"], "手に say があれば、セリフは地の文の前に足す");
+
+  ms = [...head, ...sayOnly("s1", "考え中"), { role: "assistant", content: "", tool_calls: [call("a1", "say", { text: "まだ考え中" })] }];
+  eq(foldSayOnly(ms, 4), 0, "次の返事もセリフだけなら、まとめない");
+  ms = [...head, ...sayOnly("s1", "うーん"), { role: "user", content: "返事が空でした。" }, { role: "assistant", content: "", tool_calls: [call("a1", "end_turn", {})] }];
+  eq(foldSayOnly(ms, 5), 0, "あいだにほかのメッセージがあれば、まとめない");
+  ms = [...head, ...sayOnly("s1", "前のターン"), { role: "user", content: "【ターン2】" }, { role: "assistant", content: "", tool_calls: [call("a1", "end_turn", {})] }];
+  eq(foldSayOnly(ms, 5, 4), 0, "前のターンから続けている部分（min より前）は書き換えない");
+  ms = [...head, { role: "assistant", content: "", tool_calls: [call("s1", "say", { text: "やるよ" }), call("s2", "say", { text: "研究！" })] }, { role: "tool", tool_call_id: "s1", content: "表示しました。" }, { role: "tool", tool_call_id: "s2", content: "表示しました。" },
+    { role: "assistant", content: "", tool_calls: [call("a1", "invest_research", { amount: 30 }, false)] }];
+  eq(foldSayOnly(ms, 5), 3, "1つの返事に say が2つでも、結果がそろっていればまとめる");
+  eq(JSON.parse(ms[2].tool_calls[0].function.arguments).say, "やるよ 研究！", "セリフは並びどおりにつなぐ");
+  ms = [...head, ...sayOnly("s1", "行くよ"), { role: "assistant", content: "", tool_calls: [{ id: "a1", type: "function", function: { name: "end_turn", arguments: {} } }] }];
+  foldSayOnly(ms, 4);
+  eq(ms[2].tool_calls[0].function.arguments, { say: "行くよ" }, "引数がオブジェクトのときはオブジェクトのまま");
 }
 
 process.exit(failed ? 1 : 0);

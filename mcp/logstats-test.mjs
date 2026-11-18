@@ -77,6 +77,7 @@ test("読み直し・読み込みの速さ・会話の継続", () => {
   assert.ok(s.llm.genTps == null || s.llm.genTps > 0);
   assert.deepEqual(s.context, { keep: 1, rebuild: 1, compact: 0 });
   assert.equal(s.llm.sayOnly, 1);           // say と end_turn を一緒に呼んだ返事は数えない
+  assert.equal(s.llm.sayWith, 1);           // その say と end_turn を一緒に呼んだ返事
   assert.equal(s.empty, 1);
 });
 

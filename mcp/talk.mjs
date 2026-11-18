@@ -308,3 +308,48 @@ export function splitRecordedTalk(text, who = "") {
   // 整えて空になったのが操作（ツール名・呼び出し）だけのセリフなら外す。それ以外で空になったら元の文を残す
   return lines.length || calls.length ? lines : [text];
 }
+
+/* セリフだけの返事を、次の手の返事にまとめて会話に残す（会話の書き換え。実行や字幕には関わらない）。
+ * say だけを呼んで次の返事で手を打つ、という流れが会話に残ると、モデルはそれをまねて同じ流れを続ける
+ *（2026-11-18 20:26 のログ：セリフだけの返事 49回のうち 27回がターン24〜28に固まり、1つの返事で話して手も打った返事は 53→13回に減っていた）。
+ * そこで、セリフだけの返事（と、その「表示しました」の結果）を会話から外し、そのセリフを次の手の say 引数に移す。
+ * 手にもう say があれば、地の文（content）の前に足す。会話には「話しながら1回で手を打った」返事だけが残る。
+ * messages[at] は手を打った返事（tool_calls に say 以外がある assistant）。外してよいのは min より後ろだけ
+ *（前のターンから続けている部分を書き換えると、送るプロンプトの先頭が変わって全部の読み直しになるため）。
+ * 外したメッセージの数を返す（0 ならまとめていない）。tool_calls は差し替える（元の呼び出しの物は書き換えない） */
+export function foldSayOnly(messages, at, min = 0) {
+  const cur = messages[at];
+  if (cur?.role !== "assistant" || !cur.tool_calls?.some(c => c.function?.name !== "say")) return 0;
+  const argsOf = (c) => {
+    const a = c.function?.arguments;
+    if (a && typeof a === "object") return a;
+    try { const o = JSON.parse(a || "{}"); return o && typeof o === "object" && !Array.isArray(o) ? o : {}; } catch { return {}; }
+  };
+  const str = (s) => typeof s === "string" && s.trim() ? s.trim() : null;
+  let from = at;
+  const texts = [];
+  for (;;) {
+    let j = from - 1;
+    while (j > min && messages[j]?.role === "tool") j--;
+    const a = messages[j];
+    if (j < min || a?.role !== "assistant" || !a.tool_calls?.length || !a.tool_calls.every(c => c.function?.name === "say")) break;
+    const ids = new Set(a.tool_calls.map(c => c.id));
+    const results = messages.slice(j + 1, from);
+    if (results.length !== a.tool_calls.length || !results.every(m => m.role === "tool" && ids.has(m.tool_call_id))) break;
+    texts.unshift(...[str(a.content), ...a.tool_calls.map(c => str(argsOf(c).text))].filter(Boolean));
+    from = j;
+  }
+  if (from === at) return 0;
+  const text = texts.join(" ");
+  if (text) {
+    const i = cur.tool_calls.findIndex(c => c.function?.name !== "say");
+    const c = cur.tool_calls[i], a = argsOf(c);
+    if (str(a.say)) cur.content = [text, str(cur.content)].filter(Boolean).join("\n");
+    else {
+      const na = { ...a, say: text };
+      cur.tool_calls = cur.tool_calls.map((x, k) => k === i ? { ...x, function: { ...x.function, arguments: typeof x.function.arguments === "string" ? JSON.stringify(na) : na } } : x);
+    }
+  }
+  messages.splice(from, at - from);
+  return at - from;
+}

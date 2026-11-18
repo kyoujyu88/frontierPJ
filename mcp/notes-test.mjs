@@ -40,6 +40,8 @@ let lastTools = null;
 let sentAll = [];
 // 会話の書き換えの見張り：同じターンの中で、前に送ったメッセージが次の問い合わせで変わっていたら数える（変わるとローカルLLMがプロンプト全体を読み直す）
 let lastMsgs = null, rewrites = 0, toolSeen = [], firstUser = [];
+// sayonly のテスト：このターンの問い合わせの回数と、送られてきた会話
+let soN = 0, soSent = [];
 const callOf = (id, name, args) => ({ id, type: "function", function: { name, arguments: JSON.stringify(args) } });
 
 const reply = (message) => ({ choices: [{ index: 0, message: { role: "assistant", ...message }, finish_reason: "stop" }] });
@@ -129,6 +131,16 @@ const llm = http.createServer(async (req, res) => {
     if (mode === "keep") {
       if (starts) out = reply({ content: "", tool_calls: [callOf(`r${sentAll.length}`, "invest_research", { amount: 30, say: "研究に少し投資するよ！" })] });
       out.usage = { prompt_tokens: Math.ceil(JSON.stringify(b.messages).length / 2), completion_tokens: 20 };
+    }
+    // sayonly：セリフだけの返事 → 手（say なし）→ セリフだけ ×2 → 手（say つき）→ end_turn。会話にまとめて残るかを見る
+    if (mode === "sayonly") {
+      if (starts) soN = 0;
+      soN++; soSent.push(b.messages);
+      const sayCall = (t) => reply({ content: "", tool_calls: [callOf(`so${soN}`, "say", { text: t })] });
+      out = soN === 1 ? sayCall("まずは研究だよ！") : soN === 2 ? reply({ content: "", tool_calls: [callOf(`so${soN}`, "invest_research", { amount: 30 })] })
+        : soN === 3 ? sayCall("もう少し") : soN === 4 ? sayCall("研究しちゃおう")
+        : soN === 5 ? reply({ content: "", tool_calls: [callOf(`so${soN}`, "invest_research", { amount: 30, say: "えいっ！" })] })
+        : reply({ content: "", tool_calls: [callOf(`so${soN}`, "end_turn", {})] });
     }
     // emptytalk：ターンごとに 空→地の文だけ→空→地の文だけ→空→end_turn（空は3回だが続いてはいない）
     if (mode === "emptyall") out = reply({ content: "" });
@@ -240,6 +252,26 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   // 修正前のログ（記法つきのまま1件で残ったセリフ）も、字幕に書き出すときに分ける
   const old = toSrt([{ type: "talk", ms: 0, who: "のあ", durMs: 9000, text: "say{text:「研究にガッツリ投資！」} say{text:「守りを固めよう。」}" }]);
   check(!old.includes("say{") && /^1\n00:00:00,000 --> 00:00:0\d,\d{3}\n研究にガッツリ投資！\n\n2\n.+ --> 00:00:09,000\n守りを固めよう。\n$/.test(old), "修正前のログも SRT では1件ずつに分ける");
+  mode = "normal";
+}
+
+// セリフだけの返事（say だけ）は、次の手の返事にまとめて会話に残す。字幕は1回ずつ、言った時に出る
+{
+  mode = "sayonly"; soSent = [];
+  await run(1, ["--no-notes", "--max-steps", "8"]);
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const talks = ev.filter(e => e.type === "talk").map(e => e.text);
+  const sayOnlyIn = (ms) => ms.some(m => m.role === "assistant" && m.tool_calls?.length && m.tool_calls.every(c => c.function.name === "say"));
+  const calls = (ms) => ms.filter(m => m.role === "assistant").flatMap(m => (m.tool_calls ?? []).map(c => [m.content, c.function.name, JSON.parse(c.function.arguments)]));
+  check(soSent.length === 6 && sayOnlyIn(soSent[1]) && !sayOnlyIn(soSent[2]) && !sayOnlyIn(soSent[5]), `まとめるのは手を打った返事のあと（問い合わせ ${soSent.length}回）`);
+  check(JSON.stringify(calls(soSent[2])) === JSON.stringify([["", "invest_research", { amount: 30, say: "まずは研究だよ！" }]]) && !soSent[2].some(m => m.role === "tool" && m.name === "say"),
+    `セリフは次の手の say 引数に移り、「表示しました」の結果も外す（${JSON.stringify(calls(soSent[2]))}）`);
+  check(JSON.stringify(calls(soSent[5])) === JSON.stringify([["", "invest_research", { amount: 30, say: "まずは研究だよ！" }], ["もう少し 研究しちゃおう", "invest_research", { amount: 30, say: "えいっ！" }]]),
+    `手に say があれば、セリフは地の文にまとめる（${JSON.stringify(calls(soSent[5]).at(-1))}）`);
+  check(JSON.stringify(talks.slice(0, 4)) === JSON.stringify(["まずは研究だよ！", "もう少し", "研究しちゃおう", "えいっ！"]) && ev.filter(e => e.type === "fold").length === 2,
+    `字幕は言ったときに1回ずつ（${talks.slice(0, 4).join(" / ")}）・まとめた記録 ${ev.filter(e => e.type === "fold").length}回`);
+  const inv = ev.filter(e => e.type === "tool" && e.name === "invest_research");
+  check(inv.length === 2 && inv.every(e => e.ok && !("say" in e.args)), "まとめても、実行した手はそのまま（say はサーバーに渡さない）");
   mode = "normal";
 }
 

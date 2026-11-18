@@ -97,6 +97,9 @@ export function statsOf(events) {
   const finish = {};
   for (const e of play) finish[e.finish ?? "?"] = (finish[e.finish ?? "?"] ?? 0) + 1;
   const sayOnly = play.filter(e => e.calls?.length && e.calls.every(c => c.name === "say")).length;
+  // 手を打ちながら話した返事（say と手を一緒に呼んだ・手の say 引数に書いた・地の文と手）。セリフだけの返事と見比べる
+  const hasSayArg = (c) => { try { const a = typeof c.arguments === "string" ? JSON.parse(c.arguments || "{}") : c.arguments; return typeof a?.say === "string" && !!a.say.trim(); } catch { return false; } };
+  const sayWith = play.filter(e => e.calls?.some(c => c.name !== "say") && (e.calls.some(c => c.name === "say" || hasSayArg(c)) || !!String(e.content ?? "").trim())).length;
 
   /* ツールの実行時間（その手を出した返事か直前の手から、結果まで）。AI の手だけでなく自動進行・人の手も数える
    *（「移動・戦闘の演出」は誰が動かしても画面で流れる時間なので、1ターンの内訳としては全部入れる） */
@@ -146,7 +149,7 @@ export function statsOf(events) {
       promptTps: r0(promptTps), genTps: r1(genTps),
       promptMax: play.reduce((m, e) => Math.max(m, e.usage?.prompt_tokens ?? 0), 0) || null,
       completionMax: play.reduce((m, e) => Math.max(m, e.usage?.completion_tokens ?? 0), 0) || null,
-      finish, cutByLimit: finish.length ?? 0, sayOnly, textAsk: llm.filter(e => e.kind === "text").length,
+      finish, cutByLimit: finish.length ?? 0, sayOnly, sayWith, folded: events.filter(e => e.type === "fold").length, textAsk: llm.filter(e => e.kind === "text").length,
     },
     ops: { total: judged.length, fails: fails.length, failRate: judged.length ? r1(fails.length / judged.length * 100) : null, failKinds, repeatFails },
     empty: empty.length, emptyText: empty.filter(e => e.text).length,
@@ -176,7 +179,7 @@ const ROWS = [
   ["  LLM", s => `${fmt(s.time.llmPerTurn, "秒")}（${fmt(s.time.llmShare, "%")}）`],
   ["  移動・戦闘の演出", s => `${fmt(s.time.battlePerTurn, "秒")}（${fmt(s.time.battleShare, "%")}）${s.settings.battleSpeed ? `・倍速${s.settings.battleSpeed}` : ""}`],
   ["  そのほか", s => fmt(s.time.otherPerTurn, "秒")],
-  ["返事", s => `${s.llm.replies}回（${fmt(s.llm.perTurn, "回")}/ターン）・セリフだけ ${s.llm.sayOnly}回`],
+  ["返事", s => `${s.llm.replies}回（${fmt(s.llm.perTurn, "回")}/ターン）・セリフだけ ${s.llm.sayOnly}回・手と一緒に話した ${s.llm.sayWith ?? "—"}回`],
   ["読み直し", s => s.llm.cacheKnown ? `${s.llm.reread}回・1回 ${fmt(s.llm.rereadAvgSec, "秒")}（ターン最初 ${s.llm.turnFirstReread}回）` : "—（サーバーがキャッシュの量を返さない）"],
   ["読み直しなしの返事", s => s.llm.cacheKnown ? `${fmt(s.llm.warmAvgSec, "秒")}（足したトークン 平均${fmt(s.llm.addedTokensAvg)}）` : "—"],
   ["読み込み／生成の速さ", s => `${fmt(s.llm.promptTps)} ／ ${fmt(s.llm.genTps)} トークン/秒`],
