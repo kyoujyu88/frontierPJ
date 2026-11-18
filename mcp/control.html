@@ -150,6 +150,12 @@ a { color: var(--blue); }
             </select>
           </div>
         </div>
+        <label for="toolMode" title="ツール呼び出しに対応していないモデルや、呼び出しの書式が崩れやすいモデルは「文字で書く」に">手の渡し方</label>
+        <select id="toolMode" name="toolMode">
+          <option value="auto">自動（ツール非対応なら文字で）</option>
+          <option value="native">ツール呼び出し</option>
+          <option value="text">文字で書いてもらう</option>
+        </select>
         <div class="row">
           <div>
             <label for="trials">試行回数</label>
@@ -275,7 +281,7 @@ a { color: var(--blue); }
 
 <script>
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["baseUrl", "model", "name", "think", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
+const FIELDS = ["baseUrl", "model", "name", "think", "toolMode", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
 let status = {}, history = [], tick = null;
 
 async function api(path, body) {

@@ -29,6 +29,8 @@
  *   --reflect-every <n> 何ターンごとにゲームの途中でも振り返るか（既定 10、0で終了時だけ） NOA_REFLECT_EVERY
  *   --notes-readonly   反省メモを読むだけで書き換えない（腕前を固定して見せたいとき）
  *   --no-notes         反省メモを使わない（毎回はじめて遊ぶ状態）
+ *   --tool-mode <auto|native|text>  ツール呼び出しの渡し方（既定 auto）。native＝API のツール呼び出し、text＝ツールを渡さずに手を関数の形で文字に書いてもらう
+ *                      （ツール非対応のモデルや、ツール呼び出しの書式が崩れやすいモデル向け）。auto はふだん native で、サーバーが「ツール非対応」と断ったら text に切り替える  LLM_TOOL_MODE
  *   --ctx <n>          LLM のコンテキスト長（トークン）。省くとサーバーに聞く（Ollama・llama.cpp・LM Studio・vLLM など）。分かれば、ターンをまたいで会話を続ける  LLM_CTX
  *   --gpu <名前>       Ollama が使う GPU の名前（ログに出すだけ。Ollama の API では機種名が分からないため。例 "RTX 4090 24GB"）  LLM_GPU
  *   --keep-turns <n>   会話を続ける最大のターン数（既定 4。ここで作り直す）                  NOA_KEEP_TURNS
@@ -84,6 +86,11 @@ const CTX_GIVEN = CTX > 0; // --ctx で指定された（Ollama に聞いた値�
 const KEEP = !argv.includes("--no-keep-context");
 const GPU_LABEL = String(opt("gpu", "LLM_GPU", "") || "").trim() || null;
 const KEEP_TURNS = Math.max(1, Number(opt("keep-turns", "NOA_KEEP_TURNS", 4)) || 4);
+/* ツール呼び出しの渡し方（--tool-mode）。text では API の tools を送らず、システムプロンプトに手の一覧と書き方を足して、
+ * 返事の地の文に書かれた呼び出し（talk.mjs の splitReply が拾う）を実行する。会話の中では今までどおりツール呼び出しとして持ち、送るときだけ文字に直す */
+const TOOL_MODE_RAW = String(opt("tool-mode", "LLM_TOOL_MODE", "auto")).trim().toLowerCase();
+const TOOL_MODE = ["auto", "native", "text"].includes(TOOL_MODE_RAW) ? TOOL_MODE_RAW : "auto";
+let textMode = TOOL_MODE === "text";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /* プレイヤー名：--name がなければ起動時に聞く（Enter で前回の名前。初回は のあ）。ここで選んだ名前は次回の既定になる */
 const LAST_FILE = path.join(HERE, "notes", ".last-player.json");
@@ -119,9 +126,10 @@ const LOG_FILE = argv.includes("--no-log") ? null : path.resolve(HERE, opt("log-
 const plog = new PlayLog(LOG_FILE);
 let lastTurn = null;
 // URL は「プロトコル・ホスト・パス」だけ残す（ユーザー名・パスワードやクエリに載せたキーをログと操作盤に出さないように）
+if (TOOL_MODE !== TOOL_MODE_RAW) log(`--tool-mode の値「${TOOL_MODE_RAW}」は使えないので auto にします（auto / native / text）`);
 if (MAX_TOKENS === 512 && !/^\s*512(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW))) log(`--max-tokens の値「${MAX_TOKENS_RAW}」が数ではないので、512 にします（送らないときは 0）`);
 const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathname; } catch { return "(URLを読めません)"; } })();
-plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, temperature: TEMP, maxTokens: maxTokens || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
+plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, toolMode: TOOL_MODE, temperature: TEMP, maxTokens: maxTokens || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
   notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
 if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
 
@@ -246,6 +254,46 @@ ${MANUAL_BATTLE ? `- 戦闘中は、攻撃候補（予測ダメージつき）�
 ${rules}
 ${USE_NOTES ? `\n${notesPrompt(notes, NOTES_CHARS)}` : ""}`.trimEnd();
 
+/* ---------- 手を文字で書くとき（--tool-mode text） ----------
+ * ツールの一覧を「名前(引数, …)：説明の最初の1文」の行にしてシステムプロンプトに足す。enum の引数は選べる値も書く */
+function toolLine(t) {
+  const f = t.function, props = f.parameters?.properties ?? {}, req = new Set(f.parameters?.required ?? []);
+  const arg = (k, p) => {
+    const vals = p.enum ?? p.anyOf?.flatMap(x => x.enum ?? []) ?? [];
+    return `${k}${req.has(k) ? "" : "?"}${vals.length ? `="${vals.slice(0, 8).join("|")}"` : ""}`;
+  };
+  const desc = String(f.description ?? "").split(/(?<=。)/)[0].trim();
+  return `- ${f.name}(${Object.entries(props).map(([k, p]) => arg(k, p)).join(", ")})${desc ? `：${desc}` : ""}`;
+}
+const TEXT_GUIDE = () => `# 手の書き方（この配信では、ツール呼び出しの機能は使わずに手を文字で書く）
+- 手は1行に1つ、関数の形で書く。例：move_fleet(fleet_id=6, to=7)　build_facility(planet_id=3, facility="lab")　end_turn()
+- 文字の値は "…" で囲む。数は囲まない。引数名の後ろに ? が付いたものは省いてよい
+- セリフは手の say 引数に書く：invest_research(amount=60, say="研究を進めるよ！")。手でない行は、そのまま字幕に出る
+- 1回の返事に書く手は1〜3個まで。結果は次のメッセージ（【手の名前 の結果】）で届く
+# 使える手
+${tools.map(toolLine).join("\n")}`;
+const callText = (c) => {
+  let a = c.function?.arguments ?? {};
+  if (typeof a === "string") { try { a = JSON.parse(a || "{}"); } catch { a = {}; } }
+  return `${c.function?.name}(${Object.entries(a ?? {}).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`;
+};
+/* 送る直前に、会話を文字だけのやり取りに直す（ツール呼び出し → 関数の形の行、ツールの結果 → 【名前 の結果】のユーザー発言）。
+ * 同じ会話からは毎回同じ文字になるので、後ろに足したときのキャッシュは今までどおり効く。ユーザー発言が続くときは1つにまとめる
+ * （役割が交互でないと断るチャットテンプレートがあるため） */
+function forText(messages) {
+  const out = [];
+  const user = (text) => { const last = out.at(-1); if (last?.role === "user") last.content += `\n\n${text}`; else out.push({ role: "user", content: text }); };
+  for (const m of messages) {
+    if (m.role === "system") out.push({ role: "system", content: `${m.content}\n\n${TEXT_GUIDE()}` });
+    else if (m.role === "assistant") out.push({ role: "assistant", content: [m.content, ...(m.tool_calls ?? []).map(callText)].filter(Boolean).join("\n") || "（なし）" });
+    else if (m.role === "tool") user(`【${m.name} の結果】${m.content}`);
+    else if (m.role === "user") user(typeof m.content === "string" ? m.content : JSON.stringify(m.content));
+    else out.push(m);
+  }
+  return out;
+}
+const NOT_TOOLS = /does not support tools|tools? (?:is|are) not supported|not support(?:ed)? (?:function|tool)|tool[_ ]?(?:use|calling|choice).{0,40}not (?:supported|enabled)/i;
+
 /* ---------- 会話の長さの見積もり（ターンをまたいで続けるか、作り直すかを決める） ----------
  * 最後の返事の usage（prompt_tokens + completion_tokens）に、そのあと足したメッセージの字数×（トークン/字）を足す。
  * トークン/字は、送った字数（ツールの定義も含む）と prompt_tokens から測り、少し多めに見る。usage が無いサーバーでは 1字=1トークンで数える */
@@ -289,12 +337,14 @@ async function detectCtx() {
 
 /* ---------- LLM 呼び出し ---------- */
 async function chat(messages, { withTools = true, kind = withTools ? "play" : "reflect" } = {}) {
-  const body = { model: MODEL, messages, temperature: TEMP };
+  const native = withTools && !textMode;
+  // 振り返り（反省メモ）はツールを使わないので、文字に直さない
+  const body = { model: MODEL, messages: textMode && kind !== "reflect" ? forText(messages) : messages, temperature: TEMP };
   if (THINK) body.reasoning_effort = THINK;
   // 振り返り（反省メモ）は箇条書きで長くなる（上限 1200字）ので、少なくとも 1024
   if (maxTokens) body.max_tokens = kind === "reflect" ? Math.max(maxTokens, 1024) : maxTokens;
-  if (withTools) Object.assign(body, { tools, tool_choice: "auto" });
-  else body.temperature = Math.min(TEMP, 0.4);
+  if (native) Object.assign(body, { tools, tool_choice: "auto" });
+  else if (!withTools) body.temperature = Math.min(TEMP, 0.4);
   const t0 = Date.now();
   // LLM まわりの失敗は「LLM API」で始まるエラーにそろえる。何度やっても同じになる失敗（つながらない・モデルがない・ツール非対応）には fatal をつける。
   // メインループは fatal ならすぐ止め、それ以外（400 などその場かぎりのもの）はそのターンだけ自動で進める
@@ -316,6 +366,13 @@ async function chat(messages, { withTools = true, kind = withTools ? "play" : "r
   }
   if (!res.ok) {
     const text = (await res.text()).slice(0, 300);
+    // ツール非対応のモデル・サーバー：--tool-mode auto なら、手を文字で書いてもらうやり方に切り替えて、同じ問い合わせをやり直す
+    if (native && TOOL_MODE === "auto" && NOT_TOOLS.test(text)) {
+      textMode = true;
+      log("このモデルはツール呼び出しに対応していないので、手を文字で書いてもらうやり方に切り替えます（--tool-mode text）");
+      plog.write("tool_mode", { mode: "text", reason: text.slice(0, 200) });
+      return chat(messages, { withTools, kind });
+    }
     throw llmError(`LLM API ${res.status}: ${text}`, [401, 403, 404].includes(res.status) || /does not support tools|model\b.*\bnot found/i.test(text));
   }
   const sec = (Date.now() - t0) / 1000;
@@ -563,7 +620,7 @@ async function playTurn(turn) {
       const nx = (await tool("get_next").catch(() => null))?.text || "";
       if (empty === 1) {
         log("  （空の返事だったので、のこりの手を見せてもう一度聞きます）");
-        messages.push({ role: "user", content: `返事が空でした。次の手をツールで1つだけ呼んでください（セリフは短く、そのツールの say 引数に）。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
+        messages.push({ role: "user", content: `返事が空でした。次の手を${textMode ? "1つだけ、関数の形で1行に書いてください（セリフは短く、その手の say 引数に）" : "ツールで1つだけ呼んでください（セリフは短く、そのツールの say 引数に）"}。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
         continue;
       }
       log("  （空の返事が続いたので、ツールを渡さずに手を文字で書いてもらいます）");
@@ -591,7 +648,7 @@ async function playTurn(turn) {
     if (!calls.length) {
       if (++idle >= 3) break;
       const nx = ended ? "" : (await tool("get_next").catch(() => null))?.text || "";
-      messages.push({ role: "user", content: ended ? "状況を見て、残りの戦闘や通信を片付けてください。" : `ツールで操作を続けてください。やることが終わったら end_turn。${nx ? `\n${nx}` : ""}` });
+      messages.push({ role: "user", content: ended ? "状況を見て、残りの戦闘や通信を片付けてください。" : `${textMode ? "手を関数の形で書いて" : "ツールで"}操作を続けてください。やることが終わったら end_turn。${nx ? `\n${nx}` : ""}` });
       continue;
     }
     idle = 0;
@@ -604,7 +661,7 @@ async function playTurn(turn) {
         plog.write("cut", { names: cut.map(c => c.function.name) });
         calls = calls.filter(c => !cut.includes(c));
         if (calls.length) messages.at(-1).tool_calls = calls;
-        else { delete messages.at(-1).tool_calls; messages.push({ role: "user", content: "返事が途中で切れました。手は1回に1〜3個までにして、もう一度ツールで呼んでください。" }); continue; }
+        else { delete messages.at(-1).tool_calls; messages.push({ role: "user", content: `返事が途中で切れました。手は1回に1〜3個までにして、もう一度${textMode ? "関数の形で書いて" : "ツールで呼んで"}ください。` }); continue; }
       }
     }
     for (const c of calls) {

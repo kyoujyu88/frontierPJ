@@ -19,10 +19,13 @@ let prompts = [], reflections = 0;
 // ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）／emptytalk（空と地の文だけの返事を交互に返す）
 // ／emptyall（ツールを渡されると必ず空を返す。ツールなしで手を文字で頼まれたら、文字で end_turn() を書く）
 // ／json（ターンの最初に、手をツール名をキーにした JSON の配列でコードブロックに書く）／cut（ターンの最初に、最後の呼び出しの引数が途中で切れた返事を finish=length で返す）
+// ／text（ツールを渡されなければ、手を関数の形で文字に書く。--tool-mode text と、notools で切り替えたあと）
 // ／think（ターンの最初に、考えた部分だけで上限に届いた返事を finish=length で返す。手は書かない）
 let mode = "normal", emptySent = false, etStart = "", etN = 0, textAsks = 0;
 // 送られてきた max_tokens（ツールつき・なし）
 let maxTok = [];
+// 手を文字で書くやり方（--tool-mode text）で送られてきた問い合わせ
+let textReqs = [];
 // Ollama の /api/ps に見せるコンテキスト長（0 なら /api/ps は 404。ai-player はコンテキスト長が分からず、毎ターン会話を作り直す）
 let psCtx = 0;
 // /api/ps に見せるメモリの量（全体と、そのうち GPU の VRAM に載った分）
@@ -69,7 +72,14 @@ const llm = http.createServer(async (req, res) => {
   // flaky：2ターン目の最初の問い合わせだけ断る（prompts には1ターン目の分だけが入っている）
   if (b.tools && mode === "flaky" && String(b.messages.at(-1).content).includes("今の状況です") && prompts.length === 1) { prompts.push("(400)"); return fail("the request exceeds the available context size"); }
   let out;
-  if (!b.tools && /^返事がまた空でした/.test(b.messages.at(-1).content)) {
+  const textReq = !b.tools && String(b.messages[0]?.content ?? "").includes("# 手の書き方");
+  if (textReq && !/^返事がまた空でした/.test(b.messages.at(-1).content)) {
+    // 手を文字で書くやり方：ターンの最初は研究に投資、その結果が届いたら end_turn を文字で書く
+    textReqs.push(b.messages);
+    const last = String(b.messages.at(-1).content);
+    out = reply({ content: /【invest_research の結果】/.test(last) ? 'おしまい！\nend_turn(say="ターン終了だよ")'
+      : /今の状況です/.test(last) ? '研究を進めるね。\ninvest_research(amount=30, say="研究に投資！")' : "end_turn()" });
+  } else if (!b.tools && /^返事がまた空でした/.test(b.messages.at(-1).content)) {
     // 空の返事が続いたときの、ツールを渡さない問い合わせ：手を文字で書く
     textAsks++;
     out = reply({ content: mode === "emptyall" ? "えっと、ターンを終えるね！\nend_turn()" : "うーん" });
@@ -418,9 +428,33 @@ l = await run(2, ["--no-notes", "--max-steps", "8"]);
 mode = "flaky"; prompts = [];
 l = await run(3, ["--no-notes"]);
 check(/エラー：LLM API 400/.test(l) && /このターンは自動で進めます/.test(l) && !stopLine.test(l) && turns(l) === 3, "その場かぎりの 400 はそのターンだけ自動で進めて続ける");
+// ツール非対応のモデル：--tool-mode auto（既定）なら、手を文字で書いてもらうやり方に切り替えて続ける
+mode = "notools"; prompts = []; textReqs = [];
+l = await run(2, ["--no-notes"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const ok = (name) => ev.filter(e => e.type === "tool" && e.name === name).every(e => e.by === "ai" && e.ok) && ev.some(e => e.type === "tool" && e.name === name);
+  const msgs = textReqs.at(-1) ?? [];
+  check(!stopLine.test(l) && turns(l) === 2 && /手を文字で書いてもらうやり方に切り替えます/.test(l) && ev.some(e => e.type === "tool_mode" && e.mode === "text")
+    && ok("invest_research") && ok("end_turn") && !ev.some(e => e.type === "auto"),
+    "ツール非対応の 400 なら、手を文字で書くやり方に切り替えて続ける（--tool-mode auto）");
+  check(msgs.length > 2 && !msgs.some(m => m.role === "tool" || m.tool_calls) && msgs.every((m, i) => i === 0 || m.role !== msgs[i - 1].role)
+    && msgs.some(m => m.role === "assistant" && /invest_research\(amount=30[,)]/.test(m.content)) && msgs.some(m => m.role === "user" && /【invest_research の結果】成功：/.test(m.content)),
+    "文字のやり方では、呼び出しは関数の形の行・結果は【名前 の結果】のユーザー発言にし、役割を交互にする");
+  check(ev.some(e => e.type === "talk" && e.text === "研究に投資！") && !ev.some(e => e.type === "talk" && /invest_research|end_turn/.test(e.text)), "文字で書いた手は字幕に出さず、say はセリフにする");
+}
+// --tool-mode text：はじめからツールを渡さず、システムプロンプトに手の一覧を足す
+mode = "normal"; textReqs = []; maxTok = [];
+l = await run(1, ["--no-notes", "--tool-mode", "text"]);
+{
+  const sys = String(textReqs[0]?.[0]?.content ?? "");
+  check(maxTok.length > 0 && maxTok.every(x => !x.tools) && /# 使える手\n- /.test(sys) && /^- move_fleet\(fleet_id, to, say\?\)：/m.test(sys) && /^- set_formation\(fleet_id, formation="[a-z|]+"/m.test(sys) && turns(l) === 1,
+    "--tool-mode text ではツールを送らず、手の一覧（引数と選べる値）をシステムプロンプトに足す");
+}
+// --tool-mode native：今までどおり、ツール非対応ならすぐ止める
 mode = "notools"; prompts = [];
-l = await run(3, ["--no-notes"]);
-check(/LLMのエラーで止めます/.test(l) && turns(l) === 1, "ツール非対応の 400 はすぐ止める");
+l = await run(3, ["--no-notes", "--tool-mode", "native"]);
+check(/LLMのエラーで止めます/.test(l) && turns(l) === 1, "--tool-mode native なら、ツール非対応の 400 はすぐ止める");
 mode = "always400"; prompts = [];
 l = await run(6, ["--no-notes"]);
 check(/3ターン続けて失敗/.test(l) && turns(l) === 3, "400 が3ターン続いたら止める");
