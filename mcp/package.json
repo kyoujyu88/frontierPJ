@@ -11,6 +11,7 @@
     "test": "node selftest.mjs",
     "test:notes": "node notes-test.mjs",
     "test:regress": "node regress.mjs",
+    "test:api": "node api-test.mjs",
     "test:recsync": "node rec-sync-test.mjs",
     "test:talk": "node talk-test.mjs",
     "test:speed": "node speed-test.mjs",
