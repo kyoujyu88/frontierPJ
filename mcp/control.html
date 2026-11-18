@@ -187,6 +187,10 @@ a { color: var(--blue); }
             <div><label class="check" style="margin-top:22px"><input type="checkbox" id="keepContext" name="keepContext"> 会話を続ける</label></div>
           </div>
           <div class="row">
+            <div><label for="lite" title="ルールを短縮版に、配信のしかたとツールの説明を短く、反省メモを600字までにする（8K などコンテキストが短いモデル向け）">軽量モード（小さなモデル向け）</label>
+              <select id="lite" name="lite"><option value="auto">自動（コンテキスト長が12K未満なら）</option><option value="on">使う</option><option value="off">使わない</option></select></div>
+          </div>
+          <div class="row">
             <div><label for="maxSteps">操作の上限（1ターン・1戦ごと）</label><input id="maxSteps" name="maxSteps" type="number" min="5" max="200"></div>
             <div><label for="reflectEvery">途中の振り返り（ターンごと）</label><input id="reflectEvery" name="reflectEvery" type="number" min="0" max="999"></div>
           </div>
@@ -281,7 +285,7 @@ a { color: var(--blue); }
 
 <script>
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["baseUrl", "model", "name", "think", "toolMode", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
+const FIELDS = ["baseUrl", "model", "name", "think", "toolMode", "lite", "trials", "turns", "notesMode", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
 let status = {}, history = [], tick = null;
 
 async function api(path, body) {

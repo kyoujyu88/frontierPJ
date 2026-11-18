@@ -34,6 +34,8 @@ const psSize = 20e9; let psVram = psSize;
 let psMiss = 0;
 // Ollama でないサーバーのふり：llama.cpp の /props・vLLM の /v1/models が返すコンテキスト長（0 なら 404）
 let propsCtx = 0, modelsCtx = 0;
+// 最後に送られてきたツールの定義（軽量モードのテスト用）
+let lastTools = null;
 // 送られてきた問い合わせ（keep のテスト用。ターンをまたいで会話を続けたかを見る）
 let sentAll = [];
 // 会話の書き換えの見張り：同じターンの中で、前に送ったメッセージが次の問い合わせで変わっていたら数える（変わるとローカルLLMがプロンプト全体を読み直す）
@@ -61,7 +63,7 @@ const llm = http.createServer(async (req, res) => {
   if (req.url === "/props") { if (!propsCtx) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ default_generation_settings: { n_ctx: propsCtx }, total_slots: 1 })); }
   if (req.url === "/v1/models") { if (!modelsCtx) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ object: "list", data: [{ id: "other" }, { id: "mock", max_model_len: modelsCtx }] })); }
   const b = JSON.parse(body);
-  if (b.tools) sentAll.push(b.messages);
+  if (b.tools) { sentAll.push(b.messages); lastTools = b.tools; }
   maxTok.push({ tools: !!b.tools, max: b.max_tokens ?? null });
   const fail = (message) => { res.writeHead(400, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message, type: "invalid_request_error" } })); };
   // Ollama と同じく、content が文字列でも配列でもないメッセージ（ツール呼び出しなし）は断る
@@ -296,7 +298,7 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
     `作り直したターンには、前の2ターンのセリフではなく成功した操作を1行ずつ渡す（${fresh[1]?.split("\n").slice(0, 3).join(" / ")}）`);
   // コンテキストに収まらないときは毎ターン作り直す
   psCtx = 6000; sentAll = [];
-  await run(2, ["--no-notes"]);
+  await run(2, ["--no-notes", "--lite", "off"]); // 軽量モードにすると収まってしまうので、ふだんの長さで
   ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
   check(sentAll.filter(m => m.length === 2 && starts(m) === 1).length === 2 && ev.some(e => e.type === "context" && e.keep === false), "コンテキストに収まらなければ、毎ターン作り直す");
   // コンテキスト長が分からないとき（Ollama 以外）は、今までどおり毎ターン作り直す
@@ -314,6 +316,35 @@ check((log.match(/=== ターン1 /g) || []).length === 1, "負けたあと新し
   check(starts(sentAll.at(-1)) === 2 && ev.some(e => e.type === "ctx" && e.ctx === 900000 && e.source === "/v1/models"), "/v1/models の max_model_len（vLLM など）でコンテキスト長を知り、会話を続ける");
   modelsCtx = 0;
   mode = "normal";
+}
+
+// 小さなモデル向けの軽量モード（--lite）：短いルール・短い配信のしかた・短いツールの説明
+{
+  prompts = [];
+  let out = await run(2, ["--no-notes", "--lite"]);
+  const short = prompts[0], liteTools = lastTools;
+  await run(1, ["--no-notes", "--lite", "off"]);
+  const full = prompts.at(-1), lastToolsFull = lastTools;
+  check(/ルール（短縮版）/.test(short) && !/ルール（短縮版）/.test(full) && short.length < full.length * 0.6 && /・軽量モード/.test(out) && (out.match(/=== ターン\d+ /g) || []).length === 2,
+    `--lite：ルールは短縮版、配信のしかたも短くする（システムプロンプト ${full.length} → ${short.length}字）`);
+  check(!liteTools.some(t => ["dismiss_dialog", "demolish_facility"].includes(t.function.name)) && !JSON.stringify(liteTools).includes("$schema")
+    && liteTools.find(t => t.function.name === "move_fleet").function.parameters.properties.say.description === "この操作と一緒に視聴者へ言うひとこと"
+    && liteTools.find(t => t.function.name === "set_formation").function.parameters.properties.formation.enum?.length === 5
+    && JSON.stringify(liteTools).length < JSON.stringify(lastToolsFull).length * 0.7,
+    `--lite：ツールの説明は最初の1文・ふだん使わない手は渡さない・選べる値は残す（${JSON.stringify(lastToolsFull).length} → ${JSON.stringify(liteTools).length}字）`);
+  // auto（既定）：llama.cpp の /props で 8192 と分かったら、始めから軽量モード
+  propsCtx = 8192; prompts = [];
+  out = await run(1, ["--no-notes"]);
+  let ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  check(/コンテキスト長 8192（サーバー）は短いので、軽量モードにします/.test(out) && ev.some(e => e.type === "lite" && e.on && e.ctx === 8192) && /ルール（短縮版）/.test(prompts[0]),
+    "コンテキスト長が短い（8192）と分かったら、自動で軽量モードにする");
+  propsCtx = 0;
+  // Ollama で、読み込まれてから短いと分かったとき：次のターンから軽量モード（会話を作り直す）
+  psCtx = 8000; prompts = []; // Modelfile の num_ctx は 16384 なので、始めは軽量モードにならない
+  out = await run(2, ["--no-notes"]);
+  check(!/ルール（短縮版）/.test(prompts[0]) && /ルール（短縮版）/.test(prompts.at(-1)) && /コンテキスト長 8000（Ollama）は短いので/.test(out),
+    "読み込まれてから短いと分かったら、次のターンから軽量モードにする");
+  psCtx = 0;
 }
 
 // 使っている LLM の詳細：Ollama なら始めにモデルの詳細、最初の返事のあとに実際のコンテキスト長とメモリの載り方を出す

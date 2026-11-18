@@ -31,6 +31,8 @@
  *   --no-notes         反省メモを使わない（毎回はじめて遊ぶ状態）
  *   --tool-mode <auto|native|text>  ツール呼び出しの渡し方（既定 auto）。native＝API のツール呼び出し、text＝ツールを渡さずに手を関数の形で文字に書いてもらう
  *                      （ツール非対応のモデルや、ツール呼び出しの書式が崩れやすいモデル向け）。auto はふだん native で、サーバーが「ツール非対応」と断ったら text に切り替える  LLM_TOOL_MODE
+ *   --lite [auto|on|off]  小さなモデル向けの軽量モード（既定 auto）。ルールを短縮版に、配信のしかたとツールの説明を短く、反省メモを600字までにする。
+ *                      auto はコンテキスト長が 12288 より短いと分かったときだけ使う。--lite だけなら on  NOA_LITE
  *   --ctx <n>          LLM のコンテキスト長（トークン）。省くとサーバーに聞く（Ollama・llama.cpp・LM Studio・vLLM など）。分かれば、ターンをまたいで会話を続ける  LLM_CTX
  *   --gpu <名前>       Ollama が使う GPU の名前（ログに出すだけ。Ollama の API では機種名が分からないため。例 "RTX 4090 24GB"）  LLM_GPU
  *   --keep-turns <n>   会話を続ける最大のターン数（既定 4。ここで作り直す）                  NOA_KEEP_TURNS
@@ -91,6 +93,12 @@ const KEEP_TURNS = Math.max(1, Number(opt("keep-turns", "NOA_KEEP_TURNS", 4)) ||
 const TOOL_MODE_RAW = String(opt("tool-mode", "LLM_TOOL_MODE", "auto")).trim().toLowerCase();
 const TOOL_MODE = ["auto", "native", "text"].includes(TOOL_MODE_RAW) ? TOOL_MODE_RAW : "auto";
 let textMode = TOOL_MODE === "text";
+/* 小さなモデル向けの軽量モード（--lite）。システムプロンプト（ルール・配信のしかた・反省メモ）とツールの説明を短くして、
+ * 8K のモデルでも状況テキストと会話が入るようにする。auto はコンテキスト長が LITE_CTX より短いと分かったときだけ */
+const LITE_RAW = (() => { const i = argv.indexOf("--lite"); if (i < 0) return String(process.env.NOA_LITE ?? "auto").trim().toLowerCase(); return ["auto", "on", "off"].includes(argv[i + 1]) ? argv[i + 1] : "on"; })();
+const LITE_MODE = ["auto", "on", "off"].includes(LITE_RAW) ? LITE_RAW : "auto";
+const LITE_CTX = 12288;
+let lite = LITE_MODE === "on";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /* プレイヤー名：--name がなければ起動時に聞く（Enter で前回の名前。初回は のあ）。ここで選んだ名前は次回の既定になる */
 const LAST_FILE = path.join(HERE, "notes", ".last-player.json");
@@ -113,6 +121,8 @@ const USE_NOTES = !argv.includes("--no-notes");
 const WRITE_NOTES = USE_NOTES && !argv.includes("--notes-readonly");
 const NOTES_FILE = path.resolve(opt("notes", "NOA_NOTES", path.join(HERE, "notes", `${safeName(NAME)}.md`)));
 const NOTES_CHARS = Number(opt("notes-chars", "NOA_NOTES_CHARS", 1200));
+const NOTES_CHARS_GIVEN = argv.includes("--notes-chars") || process.env.NOA_NOTES_CHARS != null;
+const LITE_NOTES_CHARS = 600; // 軽量モードでプロンプトに入れる反省メモ（--notes-chars を指定したらそちら）
 const REFLECT_EVERY = Number(opt("reflect-every", "NOA_REFLECT_EVERY", 10));
 // 字幕の名前をプレイヤー名にそろえる（-- の後ろで --speaker を指定したらそちらが優先）
 if (!serverArgs.includes("--speaker") && !process.env.GAME_SPEAKER) serverArgs.push("--speaker", NAME);
@@ -126,10 +136,11 @@ const LOG_FILE = argv.includes("--no-log") ? null : path.resolve(HERE, opt("log-
 const plog = new PlayLog(LOG_FILE);
 let lastTurn = null;
 // URL は「プロトコル・ホスト・パス」だけ残す（ユーザー名・パスワードやクエリに載せたキーをログと操作盤に出さないように）
+if (LITE_MODE !== LITE_RAW) log(`--lite の値「${LITE_RAW}」は使えないので auto にします（auto / on / off）`);
 if (TOOL_MODE !== TOOL_MODE_RAW) log(`--tool-mode の値「${TOOL_MODE_RAW}」は使えないので auto にします（auto / native / text）`);
 if (MAX_TOKENS === 512 && !/^\s*512(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW))) log(`--max-tokens の値「${MAX_TOKENS_RAW}」が数ではないので、512 にします（送らないときは 0）`);
 const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathname; } catch { return "(URLを読めません)"; } })();
-plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, toolMode: TOOL_MODE, temperature: TEMP, maxTokens: maxTokens || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
+plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, toolMode: TOOL_MODE, lite: LITE_MODE, temperature: TEMP, maxTokens: maxTokens || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
   notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
 if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
 
@@ -162,6 +173,7 @@ async function checkLoaded() {
     CTX = llm.loaded.ctx;
     log(`コンテキスト長 ${CTX}：収まる間はターンをまたいで会話を続けます`);
     plog.write("ctx", { ctx: CTX });
+    liteFor(CTX, "Ollama");
   }
   return llm.loaded;
 }
@@ -222,6 +234,25 @@ const tools = mcpTools.filter(t => !HIDDEN.has(t.name)).map(t => ({
   function: { name: t.name, description: t.description, parameters: { type: "object", properties: {}, ...t.inputSchema } },
 }));
 
+/* 軽量モードで渡すツール：説明は最初の1文、引数の説明は括弧の前まで、JSON Schema の付けたし（$schema など）は外す。
+ * ふだん使わない手（dismiss_dialog・demolish_facility）は渡さない（呼ばれたら実行はする） */
+const LITE_HIDDEN = new Set(["dismiss_dialog", "demolish_facility"]);
+const firstSentence = (t) => String(t ?? "").split(/(?<=。)/)[0].trim();
+function slimSchema(p) {
+  if (Array.isArray(p)) return p.map(slimSchema);
+  if (!p || typeof p !== "object") return p;
+  const out = {};
+  for (const [k, v] of Object.entries(p)) {
+    if (k === "$schema" || (k === "additionalProperties" && v === false)) continue;
+    if (k === "description" && typeof v === "string") { const d = v.split("（")[0].trim(); if (d) out[k] = d; continue; }
+    out[k] = k === "properties" ? Object.fromEntries(Object.entries(v).map(([n, x]) => [n, slimSchema(x)])) : slimSchema(v);
+  }
+  return out;
+}
+const liteTools = tools.filter(t => !LITE_HIDDEN.has(t.function.name)).map(t => ({
+  type: "function", function: { name: t.function.name, description: firstSentence(t.function.description), parameters: slimSchema(t.function.parameters) },
+}));
+const activeTools = () => lite ? liteTools : tools;
 const TOOL_NAMES = new Set(tools.map(t => t.function.name));
 // 録画しているなら、その開始時刻をプレイログに入れる（以降の行に「録画の開始からの時間」が付き、字幕を動画に合わせられる）
 { const ri = (await tool("recording_info").catch(() => null))?.json; if (ri?.recording) plog.setVideo(ri.t0, { name: ri.name, lag: ri.lag ?? 200 }); }
@@ -235,8 +266,24 @@ const { cleanTalk, splitReply } = makeTalk({ toolNames: mcpTools.map(t => t.name
 const persona = PERSONA_FILE ? (await fs.readFile(PERSONA_FILE, "utf8")).trim()
   : `あなたは「${NAME}」。SF戦略シミュレーション「辺境星系戦記」を実況プレイ配信している。明るく、視聴者に話しかけるように短く喋る。`;
 const rules = (await tool("get_rules")).text;
+// 短いルール（軽量モード）。戦闘を手で操作するときや、短い版を返さない古いサーバーでは全文のまま
+const rulesBrief = MANUAL_BATTLE ? rules : ((await tool("get_rules", { brief: true }).catch(() => null))?.text || rules);
 const notes = USE_NOTES ? await loadNotes(NOTES_FILE) : { lessons: [], records: [] };
-const SYSTEM = () => `${persona}
+// 軽量モードの「配信のしかた」。ふだんの版から、いちばん効いている決まりだけを残す
+const GUIDE_LITE = () => `# 配信のしかた
+- ツールでゲームを操作する。ツール以外の地の文は、そのまま字幕に出る。1回に1〜2文、60字以内。
+- 1ターンの流れ：内政（「■内政の候補」から1つ以上）→ 攻めに行く艦隊は陣形（set_formation）→ 艦隊の移動 → end_turn。
+- セリフは操作ツールの say 引数に書く。
+- 操作の返り値の「のこりの手」から次の手を選ぶ。「打てる手はもうありません」と出たら end_turn。
+- 戦闘はオートで決着する。勝てる相手を選び、傷ついた艦隊は修理してから出す。
+- IDは状況テキストの数字だけを使う。断られたら、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。`;
+const notesChars = () => lite && !NOTES_CHARS_GIVEN ? Math.min(NOTES_CHARS, LITE_NOTES_CHARS) : NOTES_CHARS;
+const SYSTEM = () => lite && !MANUAL_BATTLE ? `${persona}
+
+${GUIDE_LITE()}
+
+${rulesBrief}
+${USE_NOTES ? `\n${notesPrompt(notes, notesChars())}` : ""}`.trimEnd() : `${persona}
 
 # 配信のしかた
 - ツールを使ってゲームを操作する。ツール以外の地の文は、そのまま配信画面に字幕で出る。1回に1〜2文、60字以内で、視聴者に向けて話す。
@@ -252,7 +299,7 @@ ${MANUAL_BATTLE ? `- 戦闘中は、攻撃候補（予測ダメージつき）�
 - IDは状況テキストに書かれた数字だけを使う（艦隊は「ID」の後ろの数字、星は名前の前の数字）。断られたときは、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。
 
 ${rules}
-${USE_NOTES ? `\n${notesPrompt(notes, NOTES_CHARS)}` : ""}`.trimEnd();
+${USE_NOTES ? `\n${notesPrompt(notes, notesChars())}` : ""}`.trimEnd();
 
 /* ---------- 手を文字で書くとき（--tool-mode text） ----------
  * ツールの一覧を「名前(引数, …)：説明の最初の1文」の行にしてシステムプロンプトに足す。enum の引数は選べる値も書く */
@@ -271,7 +318,7 @@ const TEXT_GUIDE = () => `# 手の書き方（この配信では、ツール呼�
 - セリフは手の say 引数に書く：invest_research(amount=60, say="研究を進めるよ！")。手でない行は、そのまま字幕に出る
 - 1回の返事に書く手は1〜3個まで。結果は次のメッセージ（【手の名前 の結果】）で届く
 # 使える手
-${tools.map(toolLine).join("\n")}`;
+${activeTools().map(toolLine).join("\n")}`;
 const callText = (c) => {
   let a = c.function?.arguments ?? {};
   if (typeof a === "string") { try { a = JSON.parse(a || "{}"); } catch { a = {}; } }
@@ -297,21 +344,22 @@ const NOT_TOOLS = /does not support tools|tools? (?:is|are) not supported|not su
 /* ---------- 会話の長さの見積もり（ターンをまたいで続けるか、作り直すかを決める） ----------
  * 最後の返事の usage（prompt_tokens + completion_tokens）に、そのあと足したメッセージの字数×（トークン/字）を足す。
  * トークン/字は、送った字数（ツールの定義も含む）と prompt_tokens から測り、少し多めに見る。usage が無いサーバーでは 1字=1トークンで数える */
-const TOOLS_CHARS = JSON.stringify(tools).length;
+const TOOLS_CHARS_OF = new Map([[tools, JSON.stringify(tools).length], [liteTools, JSON.stringify(liteTools).length]]);
+const toolsChars = () => TOOLS_CHARS_OF.get(activeTools());
 const charsOf = (ms) => ms.reduce((t, m) => t + (typeof m.content === "string" ? m.content.length : 0) + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0);
 const sizeOf = {
   last: null, perChar: null, // perChar：トークン/字（まだ測っていなければ null で、1字=1トークンとして数える）
   seen(messages, usage) {
     if (!usage?.prompt_tokens) { this.last = null; return; }
     this.last = { messages, count: messages.length, tokens: usage.prompt_tokens + (usage.completion_tokens ?? 0) };
-    const r = usage.prompt_tokens / (charsOf(messages) + TOOLS_CHARS);
+    const r = usage.prompt_tokens / (charsOf(messages) + toolsChars());
     if (r > 0.2 && r < 3) this.perChar = Math.max(this.perChar ?? 0, r * 1.1);
   },
   // messages を送ったときのトークン数の見積もり
   of(messages) {
     const l = this.last;
     if (l && messages.length >= l.count && l.messages.every((m, i) => messages[i] === m)) return l.tokens + Math.ceil(charsOf(messages.slice(l.count)) * (this.perChar ?? 1));
-    return Math.ceil((charsOf(messages) + TOOLS_CHARS) * (this.perChar ?? 1));
+    return Math.ceil((charsOf(messages) + toolsChars()) * (this.perChar ?? 1));
   },
 };
 /* コンテキスト長：--ctx がなければサーバーに聞く（Ollama は読み込み中のモデルの context_length、古い Ollama ならモデルの num_ctx。
@@ -333,7 +381,32 @@ async function detectCtx() {
   if (!CTX && !llm.info) { const r = await serverCtx(BASE, MODEL, KEY).catch(() => null); if (r) { CTX = r.ctx; source = r.source; } }
   log(CTX ? `コンテキスト長 ${CTX}${source && source !== "Ollama" ? `（${source}）` : ""}：収まる間はターンをまたいで会話を続けます` : "コンテキスト長が分からないので、毎ターン会話を作り直します（--ctx <トークン数> で指定すると続けられます）");
   plog.write("ctx", { ctx: CTX || null, ...(source ? { source } : {}) });
+  liteFor(CTX, source ?? "サーバー");
 }
+
+/* ---------- 軽量モード（--lite） ---------- */
+function logBase() {
+  const sys = SYSTEM().length, t = textMode ? TEXT_GUIDE().length : toolsChars();
+  log(`プロンプトの土台：約${sys + t}字（システム ${sys}字・${textMode ? "手の書き方" : "ツールの定義"} ${t}字）${lite ? "・軽量モード" : ""}`);
+}
+/* --lite auto で、コンテキスト長が LITE_CTX より短いと分かったら軽量モードにする。ゲームの途中で分かったときは、次のターンに会話を作り直す
+ *（システムプロンプトが変わるので startTurn が続けずに作り直す） */
+function liteFor(ctx, from) {
+  if (LITE_MODE !== "auto" || lite || !ctx || ctx >= LITE_CTX) return false;
+  lite = true;
+  log(`コンテキスト長 ${ctx}（${from}）は短いので、軽量モードにします（短いルールとツールの説明。使わないなら --lite off）`);
+  plog.write("lite", { on: true, ctx, from });
+  logBase();
+  return true;
+}
+// 始める前に分かるコンテキスト長で決める：--ctx、Ollama は Modelfile の num_ctx、ほかのサーバーは llm-info.mjs の serverCtx。
+// 読み込まれていないと分からないことが多いので、最初の返事のあと（detectCtx）にもう一度見る
+if (LITE_MODE === "auto") {
+  const hint = CTX ? [CTX, "--ctx"]
+    : llm.info ? [llm.info.numCtx, "Ollama"]
+    : [(await serverCtx(BASE, MODEL, KEY).catch(() => null))?.ctx, "サーバー"];
+  if (!liteFor(...hint)) logBase();
+} else logBase();
 
 /* ---------- LLM 呼び出し ---------- */
 async function chat(messages, { withTools = true, kind = withTools ? "play" : "reflect" } = {}) {
@@ -343,7 +416,7 @@ async function chat(messages, { withTools = true, kind = withTools ? "play" : "r
   if (THINK) body.reasoning_effort = THINK;
   // 振り返り（反省メモ）は箇条書きで長くなる（上限 1200字）ので、少なくとも 1024
   if (maxTokens) body.max_tokens = kind === "reflect" ? Math.max(maxTokens, 1024) : maxTokens;
-  if (native) Object.assign(body, { tools, tool_choice: "auto" });
+  if (native) Object.assign(body, { tools: activeTools(), tool_choice: "auto" });
   else if (!withTools) body.temperature = Math.min(TEMP, 0.4);
   const t0 = Date.now();
   // LLM まわりの失敗は「LLM API」で始まるエラーにそろえる。何度やっても同じになる失敗（つながらない・モデルがない・ツール非対応）には fatal をつける。

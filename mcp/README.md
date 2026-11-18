@@ -110,6 +110,7 @@ node ai-player.mjs --model qwen3:14b --persona noa.txt -- --pace 900 --size 1920
 | `--log-name <名前>` | `NOA_LOG_NAME` | `<名前>_<日時>`（プレイログ `logs/<名前>.jsonl` の名前。操作盤からは録画と同じ名前） |
 | `--log-dir <dir>` | `NOA_LOG_DIR` | `logs` |
 | `--no-log` | | プレイログを残さない |
+| `--lite [auto\|on\|off]` | `NOA_LITE` | auto。小さなモデル向けの軽量モード。ルールを短縮版（約900字。ふだんは約3,500字）に、配信のしかたを短く、ツールの説明を最初の1文に（ツールの定義 約7,900→4,800字。`dismiss_dialog`・`demolish_facility` は渡さない）、反省メモを600字までにする。システムプロンプトは約4,500→1,300字。`auto` はコンテキスト長が 12288 より短いと分かったときだけ使う（始める前に分からなければ、最初の返事のあとに分かった時点で次のターンから）。`--lite` だけなら `on` |
 | `--tool-mode <auto\|native\|text>` | `LLM_TOOL_MODE` | auto。`native` は API のツール呼び出し（`tools`）を使う。`text` はツールを送らずに、システムプロンプトに手の一覧（`move_fleet(fleet_id, to, say?)：…`）と書き方を足し、返事に関数の形で書かれた手を実行する（ツール呼び出しに対応していないモデルや、呼び出しの書式が崩れやすいモデル向け。会話の中の呼び出しは関数の形の行、結果は【名前 の結果】の発言にして送る）。`auto` はふだん `native` で、サーバーが「ツール非対応」と断ったら `text` に切り替えて続ける |
 | `--ctx <n>` | `LLM_CTX` | 省くとサーバーに聞く（Ollama の `/api/ps`・古い Ollama ならモデルの `num_ctx`、llama.cpp の `/props`、LM Studio の `/api/v0/models`、`/v1/models` の `max_model_len` など）。分かればターンをまたいで会話を続ける |
 | `--gpu <名前>` | `LLM_GPU` | なし（Ollama が使う GPU の名前。ログに出すだけ。Ollama の API では機種名が分からないため。Ollama が同じ PC なら省いても nvidia-smi で調べる） |

@@ -41,6 +41,8 @@ const DEFAULTS = {
   baseUrl: "http://127.0.0.1:11434/v1", model: "", name: "のあ", think: "none",
   // ツール呼び出しの渡し方（auto：ふだんは API のツール呼び出し、ツール非対応なら文字で書いてもらう／native／text）
   toolMode: "auto",
+  // 小さなモデル向けの軽量モード（auto：コンテキスト長が 12288 より短いと分かったときだけ／on／off）
+  lite: "auto",
   trials: 3, turns: "", record: true, recordDir: "recordings", headless: false,
   notesMode: "grow", maxSteps: 40, reflectEvery: 10, temperature: 0.6, pace: 300, size: "1280x720", persona: "",
   // 戦闘・ターン処理の演出の速さ（倍）。AIプレイの時間の6〜7割は戦闘の演出なので、既定は2倍
@@ -64,6 +66,7 @@ function clean(input) {
   s.name = String(s.name || "").trim() || "のあ";
   s.think = ["none", "low", "medium", "high"].includes(s.think) ? s.think : "";
   s.toolMode = ["auto", "native", "text"].includes(s.toolMode) ? s.toolMode : "auto";
+  s.lite = ["auto", "on", "off"].includes(s.lite) ? s.lite : "auto";
   s.trials = int(s.trials, 1, 999, 3);
   s.turns = s.turns === "" || s.turns == null ? "" : int(s.turns, 1, 999, "");
   s.record = !!s.record; s.headless = !!s.headless;
@@ -103,6 +106,7 @@ function playerArgs(s, n) {
     "--max-steps", String(s.maxSteps), "--reflect-every", String(s.reflectEvery), "--temperature", String(s.temperature)];
   if (s.think) a.push("--think", s.think);
   if (s.toolMode !== "auto") a.push("--tool-mode", s.toolMode);
+  if (s.lite !== "auto") a.push("--lite", s.lite);
   if (s.turns) a.push("--turns", String(s.turns));
   if (s.persona) a.push("--persona", path.resolve(HERE, s.persona));
   if (s.gpu) a.push("--gpu", s.gpu);
