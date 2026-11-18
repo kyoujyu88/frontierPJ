@@ -140,6 +140,11 @@ eq(newEvents(["[4001] a"], ["[4001] a"]), [], "出来事：増えていなけれ
     { role: "assistant", content: "", tool_calls: [call("a1", "invest_research", { amount: 30 }, false)] }];
   eq(foldSayOnly(ms, 5), 3, "1つの返事に say が2つでも、結果がそろっていればまとめる");
   eq(JSON.parse(ms[2].tool_calls[0].function.arguments).say, "やるよ 研究！", "セリフは並びどおりにつなぐ");
+  ms = [...head, ...sayOnly("s1", "まずは"), { role: "assistant", content: "", tool_calls: [call("s2", "say", { text: "研究！" }), call("a1", "invest_research", { amount: 30 })] }];
+  foldSayOnly(ms, 4);
+  eq(shape(ms), ["S", "U", 'A:|say{"text":"まずは 研究！"},invest_research{"amount":30}'], "この返事にも say の呼び出しがあれば（say＋手）、その text の前に足す");
+  ms = [...head, ...sayOnly("s1", "最初"), { role: "assistant", content: "", tool_calls: [call("a1", "end_turn", {})] }];
+  eq(foldSayOnly(ms, 4, 2), 0, "messages[min] は外さない");
   ms = [...head, ...sayOnly("s1", "行くよ"), { role: "assistant", content: "", tool_calls: [{ id: "a1", type: "function", function: { name: "end_turn", arguments: {} } }] }];
   foldSayOnly(ms, 4);
   eq(ms[2].tool_calls[0].function.arguments, { say: "行くよ" }, "引数がオブジェクトのときはオブジェクトのまま");

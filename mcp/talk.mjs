@@ -314,7 +314,7 @@ export function splitRecordedTalk(text, who = "") {
  *（2026-11-18 20:26 のログ：セリフだけの返事 49回のうち 27回がターン24〜28に固まり、1つの返事で話して手も打った返事は 53→13回に減っていた）。
  * そこで、セリフだけの返事（と、その「表示しました」の結果）を会話から外し、そのセリフを次の手の say 引数に移す。
  * 手にもう say があれば、地の文（content）の前に足す。会話には「話しながら1回で手を打った」返事だけが残る。
- * messages[at] は手を打った返事（tool_calls に say 以外がある assistant）。外してよいのは min より後ろだけ
+ * messages[at] は手を打った返事（tool_calls に say 以外がある assistant）。外してよいのは messages[min] より後ろだけ
  *（前のターンから続けている部分を書き換えると、送るプロンプトの先頭が変わって全部の読み直しになるため）。
  * 外したメッセージの数を返す（0 ならまとめていない）。tool_calls は差し替える（元の呼び出しの物は書き換えない） */
 export function foldSayOnly(messages, at, min = 0) {
@@ -332,7 +332,7 @@ export function foldSayOnly(messages, at, min = 0) {
     let j = from - 1;
     while (j > min && messages[j]?.role === "tool") j--;
     const a = messages[j];
-    if (j < min || a?.role !== "assistant" || !a.tool_calls?.length || !a.tool_calls.every(c => c.function?.name === "say")) break;
+    if (j <= min || a?.role !== "assistant" || !a.tool_calls?.length || !a.tool_calls.every(c => c.function?.name === "say")) break;
     const ids = new Set(a.tool_calls.map(c => c.id));
     const results = messages.slice(j + 1, from);
     if (results.length !== a.tool_calls.length || !results.every(m => m.role === "tool" && ids.has(m.tool_call_id))) break;
@@ -340,15 +340,17 @@ export function foldSayOnly(messages, at, min = 0) {
     from = j;
   }
   if (from === at) return 0;
+  // say の引数が壊れていて text が取れないセリフだけの返事も外す（字幕はもう出ているか、出せなかったかのどちらかで、会話に残しても手がかりにならない）
   const text = texts.join(" ");
+  const withArgs = (i, na) => { cur.tool_calls = cur.tool_calls.map((x, k) => k === i ? { ...x, function: { ...x.function, arguments: typeof x.function.arguments === "string" ? JSON.stringify(na) : na } } : x); };
   if (text) {
+    // この返事にも say の呼び出しがあれば（say＋手）、その text の前に足す（セリフを1か所にまとめる）
+    const si = cur.tool_calls.findIndex(c => c.function?.name === "say" && str(argsOf(c).text));
     const i = cur.tool_calls.findIndex(c => c.function?.name !== "say");
-    const c = cur.tool_calls[i], a = argsOf(c);
-    if (str(a.say)) cur.content = [text, str(cur.content)].filter(Boolean).join("\n");
-    else {
-      const na = { ...a, say: text };
-      cur.tool_calls = cur.tool_calls.map((x, k) => k === i ? { ...x, function: { ...x.function, arguments: typeof x.function.arguments === "string" ? JSON.stringify(na) : na } } : x);
-    }
+    const a = argsOf(cur.tool_calls[i]);
+    if (si >= 0) { const sa = argsOf(cur.tool_calls[si]); withArgs(si, { ...sa, text: `${text} ${str(sa.text)}` }); }
+    else if (str(a.say)) cur.content = [text, str(cur.content)].filter(Boolean).join("\n");
+    else withArgs(i, { ...a, say: text });
   }
   messages.splice(from, at - from);
   return at - from;
