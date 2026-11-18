@@ -113,10 +113,15 @@ const llm = http.createServer(async (req, res) => {
         : mode === "bare" ? reply({ content: "内政はおしまい！\nend_turn" })
         // 2026-11-17 のプレイログで出た形：ツール呼び出しを使わずに、手を JSON の配列で書く
         : mode === "json" ? reply({ content: '```json\n[\n  {"say": "さあ、新しいターン！"},\n  {"invest_research": {"amount": 30}, "say": "研究に少しだけ！"},\n  {"end_turn": {}}\n]\n```' })
+        : mode === "repeat" ? reply({ content: "", tool_calls: [callOf(`m${prompts.length}`, "move_fleet", { fleet_id: 1, to: 0 })] })
         : mode === "think" ? { choices: [{ index: 0, message: { role: "assistant", content: "", reasoning_content: "まずは状況を整理しよう。資金は…" }, finish_reason: "length" }] }
         : mode === "cut" ? { choices: [{ index: 0, message: { role: "assistant", content: "", tool_calls: [callOf(`r${prompts.length}`, "invest_research", { amount: 30, say: "研究するよ！" }),
           { id: `x${prompts.length}`, type: "function", function: { name: "move_fleet", arguments: '{"fleet_id":1,"' } }] }, finish_reason: "length" }] }
         : reply({ content: "ターンを終えるよ！", tool_calls: [{ id: `c${prompts.length}`, type: "function", function: { name: "end_turn", arguments: "{}" } }] });
+    } else if (mode === "repeat") {
+      // 断られた手を、say だけ変えてもう一度呼ぶ。同じ手だと断られたら end_turn
+      out = /さっき断られた手と同じ/.test(String(last.content)) ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
+        : reply({ content: "", tool_calls: [callOf(`m${toolSeen.length}`, "move_fleet", { to: 0, fleet_id: 1, say: "もう一回！" })] });
     } else out = mode === "empty" || mode === "play" || mode === "cut" || mode === "think" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
       : mode === "keep" ? reply({ content: "", tool_calls: [callOf(`k${sentAll.length}`, "end_turn", { say: "ターン終了！" })] })
       : reply({ content: "様子を見るね" });
@@ -455,6 +460,16 @@ l = await run(2, ["--no-notes", "--max-steps", "8"]);
   const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
   check(ev.filter(e => e.type === "empty").length === 6 && !ev.some(e => e.type === "auto") && ev.filter(e => e.type === "tool" && e.name === "end_turn").every(e => e.by === "ai"),
     `空の返事が話した返事をはさんで3回あっても、続いていなければ自動進行にしない（空 ${ev.filter(e => e.type === "empty").length} 回）`);
+}
+// 断られた手と同じ手（引数の順や say が違っても）をもう一度呼んだら、実行せずに前の理由で断る
+mode = "repeat"; prompts = [];
+l = await run(1, ["--no-notes"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const moves = ev.filter(e => e.type === "tool" && e.name === "move_fleet");
+  check(moves.length === 1 && moves[0].ok === false && ev.some(e => e.type === "refuse" && e.name === "move_fleet" && /さっき断られた手と同じ/.test(e.reason))
+    && ev.some(e => e.type === "tool" && e.name === "end_turn" && e.by === "ai"),
+    `断られた手と同じ手をもう一度呼んだら、実行せずに前の理由で断る（実行 ${moves.length} 回）`);
 }
 mode = "flaky"; prompts = [];
 l = await run(3, ["--no-notes"]);

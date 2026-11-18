@@ -653,6 +653,11 @@ async function playTurn(turn) {
   let messages = await startTurn(turn);
   convo = null; // 最後まで普通に終わったターンだけ、次のターンに続ける
   let ended = false, over = false, idle = 0, empty = 0, wasted = 0, lastName = "", auto = false;
+  /* 断られた手（名前と引数。say は除く）→ 断りの理由。次に何かの操作が成功するまで、同じ手は実行せずに前の理由で断る
+   *（資金不足・行動済み・いまいる星への移動などは、何も変わらなければ同じ理由で断られる。2026-11-15 のログで同じ失敗の繰り返しが目立った）。
+   * 操作が1つでも成功したら忘れる（施設の撤去でスロットが空く、のように、ほかの手で通るようになることがあるため） */
+  const failed = new Map();
+  const sameKey = (name, a) => `${name}(${Object.keys(a).filter(k => k !== "say").sort().map(k => `${k}=${JSON.stringify(a[k])}`).join(",")})`;
   // 考える回数は、作戦卓ではこのターンの合計、戦闘では1戦ごとに数える（攻める戦闘と防衛戦が重なっても途中で自動進行にならないように）
   let step = 0, mapSteps = 0, battleSteps = 0, inBattle = false;
   while (mapSteps < MAX_STEPS && wasted < 6) {
@@ -751,7 +756,8 @@ async function playTurn(turn) {
       // 渡していないツールや、同じ情報の取り直しは実行せずに次の手を促す（読み直しのループを防ぐ）
       const refuse = !TOOL_NAMES.has(c.function.name)
         ? `失敗：${c.function.name} は使えません。ルールはシステムプロンプトに、今の状況は最初のメッセージに書いてあります。使えるツール：${[...TOOL_NAMES].join("、")}`
-        : c.function.name === "get_summary" && lastName === "get_summary" ? "状況はさっきと同じです。操作のツールを選んでください。" : null;
+        : c.function.name === "get_summary" && lastName === "get_summary" ? "状況はさっきと同じです。操作のツールを選んでください。"
+        : failed.has(sameKey(c.function.name, args)) ? `失敗：さっき断られた手と同じです（${failed.get(sameKey(c.function.name, args))}）。そのあと何も変わっていないので、同じ理由で断られます。「のこりの手」や「選べるもの」から別の手を選んでください。` : null;
       lastName = c.function.name;
       if (refuse) { wasted++; log("  ✗ " + refuse.split("。")[0]); plog.write("refuse", { name: c.function.name, args, reason: refuse.split("。")[0] }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: refuse }); continue; }
       if (c.function.name !== "get_summary") wasted = 0;
@@ -772,8 +778,11 @@ async function playTurn(turn) {
         const stop = await checkEndPhase();
         if (stop) { log("  ✗ まだ動ける艦があるので、フェイズ終了を止めました"); plog.write("refuse", { name: c.function.name, args, reason: "まだ動ける艦があるので、フェイズ終了を止めました" }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: stop }); continue; }
       } else if (c.function.name.startsWith("battle_")) endPhaseNagged = false;
+      const key = sameKey(c.function.name, args);
       const r = await tool(c.function.name, args);
       noteDone(c.function.name, args, r.json);
+      if (r.json?.ok === false) failed.set(key, String(r.json.message ?? "").split(/[。\n]/)[0].slice(0, 80));
+      else if (r.json?.ok === true && !QUIET.has(c.function.name) && c.function.name !== "get_next") failed.clear();
       if (c.function.name === "end_turn" && r.json?.ok) ended = true;
       if (r.json?.mode === "over") { over = true; break; } // 勝敗がついた（結果の画面は配信用に出したまま、振り返りへ）
       if (r.json?.mode) { const b = r.json.mode === "battle" || r.json.mode === "battle_ended"; if (b && !inBattle) battleSteps = 0; inBattle = b; }
