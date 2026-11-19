@@ -128,7 +128,7 @@ export function statsOf(events) {
     name: start.name ?? null, model: start.model ?? null, baseUrl: start.baseUrl ?? null,
     outcome: end?.outcome ?? (over ? ({ win: "勝利", lose: "敗北" }[over.result] ?? over.result) : "途中"), startedAt: start.t ?? null,
     settings: { think: start.think ?? null, maxTokens: start.maxTokens ?? null, temperature: start.temperature ?? null,
-      battleSpeed: arg("battle-speed"), pace: arg("pace"), ctx: ctxEv?.ctx ?? loaded?.ctx ?? null,
+      notes: start.notes ?? null, battleSpeed: arg("battle-speed"), pace: arg("pace"), ctx: ctxEv?.ctx ?? loaded?.ctx ?? null,
       gpuPct: loaded?.gpuPct ?? null, quantization: model?.quantization ?? null, parameterSize: model?.parameterSize ?? null },
     turns: nTurns, playSec: r0(playSec), secPerTurn: r1(per(playSec)),
     time: {
@@ -172,6 +172,7 @@ const kinds = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) 
 const ROWS = [
   ["結果", s => `${s.outcome}（${s.turns}ターン・${Math.round(s.playSec / 60)}分）`],
   ["モデル", s => `${s.model ?? "—"}${s.settings.ctx ? `・ctx ${s.settings.ctx}` : ""}${s.settings.gpuPct != null ? `・GPU ${s.settings.gpuPct}%` : ""}`],
+  ["反省メモ", s => ({ grow: "使う（書き直す）", readonly: "読むだけ", off: "使わない" })[s.settings.notes] ?? "—"],
   ["1ターン", s => fmt(s.secPerTurn, "秒")],
   ["  LLM", s => `${fmt(s.time.llmPerTurn, "秒")}（${fmt(s.time.llmShare, "%")}）`],
   ["  移動・戦闘の演出", s => `${fmt(s.time.battlePerTurn, "秒")}（${fmt(s.time.battleShare, "%")}）${s.settings.battleSpeed ? `・倍速${s.settings.battleSpeed}` : ""}`],
