@@ -54,7 +54,7 @@ import { PlayLog, LOG_DIR, subtitlesBeside, readLog } from "./playlog.mjs";
 import { statsOf, statsLine } from "./logstats.mjs";
 import { makeTalk, stripThink, foldSayOnly } from "./talk.mjs";
 import { summaryDelta } from "./sumdiff.mjs";
-import { PLAN_TOOL, PLAN_TOOL_NAME, newPlan, applyPlan, checkPlan, planBlock } from "./plan.mjs";
+import { PLAN_TOOL, PLAN_TOOL_NAME, PLAN_FIELD, newPlan, applyPlan, checkPlan, planBlock } from "./plan.mjs";
 import { modelInfo, loadedInfo, serverCtx, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
 
 const sep = process.argv.indexOf("--");
@@ -622,11 +622,13 @@ let lastSum = ""; // 最後に渡した状況テキスト（全文）。次の�
  * 作戦はシステムプロンプトには入れず、毎ターンの最初のメッセージ（会話の後ろに足すもの）に入れる。書き直すたびにプロンプトの先頭が変わると、
  * ローカルLLMが全部を読み直すため。会話を作り直しても、作り直した最初のメッセージに入るので残る */
 let plan = newPlan();
+/* このターンの始まりの状態（メインループが前のターンの終わりに取った get_state）。作戦の突き合わせと set_plan の星の確かめに使い、
+ * 作戦のためだけに get_state を取り直さない（ブラウザ越しに状態を取るので、1回ごとに時間がかかる） */
+let planSt = null;
 const planAge = (t, turn) => t == null ? null : turn - t;
-async function planForTurn(turn) {
-  if (!USE_PLAN) return "";
-  const st = (await tool("get_state").catch(() => null))?.json;
-  if (!st?.planets) return "";
+async function planForTurn(turn, st) {
+  planSt = st?.planets ? st : null;
+  if (!USE_PLAN || !planSt) return "";
   const { cues, hits } = checkPlan(plan, st, turn);
   for (const h of hits) plog.write("plan_hit", { turn, id: h.id, name: h.name });
   plog.write("plan_turn", { turn, has: plan.sets > 0, cues: cues.map(c => c.kind), longAge: planAge(plan.longTurn, turn), shortAge: planAge(plan.shortTurn, turn), targets: plan.targets });
@@ -634,21 +636,17 @@ async function planForTurn(turn) {
   if (shown.length) log(`作戦の見直しの合図：${shown.map(c => c.text).join("")}`);
   return planBlock(plan, st, cues);
 }
-// ターンの途中で会話を作り直すとき：作戦だけを見せる（合図は出さない）
-async function planNow() {
-  if (!USE_PLAN) return "";
-  const st = (await tool("get_state").catch(() => null))?.json;
-  return st?.planets ? planBlock(plan, st) : "";
-}
+// ターンの途中で会話を作り直すとき：作戦だけを見せる（合図は出さない。持ち主と防衛力はターンの始まりのもの）
+const planNow = () => USE_PLAN && planSt ? planBlock(plan, planSt) : "";
 function freshTurn(text, sum) {
   const first = { role: "user", content: `${text}\n\n${sum}` };
   shortOf.set(first, `${text}\n${OLD_NOTE}`);
   convoTurns = 1; keepFrom = 0; lastSum = sum;
   return [{ role: "system", content: SYSTEM() }, first];
 }
-async function startTurn(turn) {
+async function startTurn(turn, st) {
   const sum = await summary();
-  const pb = await planForTurn(turn);
+  const pb = await planForTurn(turn, st);
   // 続ける：前のターンの会話の後ろに、新しい状況を足すだけ（前のメッセージは書き換えない）。
   // 状況テキストは、惑星と出来事を前から変わった行だけにする（会話の前のほうに前の状況テキストがある）
   if (KEEP && CTX && convo && !MANUAL_BATTLE && convoTurns < KEEP_TURNS && convo[0].content === SYSTEM()) {
@@ -684,16 +682,16 @@ async function compactIfLong(messages) {
   plog.write("context", { compact: true, est: sizeOf.of(messages), ctx: CTX });
   turnStartTokens = null; // このターンの伸びは測れなくなった
   const r = recapText();
-  const pb = await planNow();
+  const pb = planNow();
   const head = `${r ? `${r}\n` : ""}${done.length ? `このターンにしたこと：${done.join("、")}\n` : ""}${pb ? `${pb}\n` : ""}`;
   return freshTurn(`${head ? `${head}\n` : ""}（会話が長くなったので、まとめ直しました。このターンの続きです）\n${START}`, await summary());
 }
 
 /* ---------- 1ターン ---------- */
 let turnTalk = "";
-async function playTurn(turn) {
+async function playTurn(turn, cur) {
   turnTalk = "";
-  let messages = await startTurn(turn);
+  let messages = await startTurn(turn, cur);
   convo = null; // 最後まで普通に終わったターンだけ、次のターンに続ける
   let ended = false, over = false, idle = 0, empty = 0, wasted = 0, lastName = "", auto = false;
   /* 断られた手（名前と引数。say は除く）→ 断りの理由。次に何かの操作が成功するまで、同じ手は実行せずに前の理由で断る
@@ -820,11 +818,10 @@ async function playTurn(turn) {
       } else delete args.say;
       if (c.function.name === PLAN_TOOL_NAME) {
         // 作戦を書く手：ここで覚える（MCPサーバーには送らない。ゲームは進まないので、断った手の記録や「のこりの手」には関わらない）
-        const pst = (await tool("get_state").catch(() => null))?.json;
-        const r = applyPlan(plan, args, { turn, st: pst });
+        const r = applyPlan(plan, args, { turn, st: planSt });
         if (r.ok) {
           plog.write("plan", r.entry);
-          log(`  作戦${r.changed.length ? `（${r.changed.map(k => ({ long: "長期", short: "短期", targets: "攻める順" })[k]).join("・")}を変更）` : "（変更なし）"}：長期「${plan.long}」短期「${plan.short}」攻める順 ${plan.targets.join("→") || "なし"}`);
+          log(`  作戦${r.changed.length ? `（${r.changed.map(k => PLAN_FIELD[k]).join("・")}を変更）` : "（変更なし）"}：長期「${plan.long}」短期「${plan.short}」攻める順 ${plan.targets.join("→") || "なし"}`);
         } else {
           if (r.refused) wasted++;
           log("  ✗ " + r.content.split("。")[0]);
@@ -949,7 +946,7 @@ for (let n = 0; n < TURNS; n++) {
   log(`=== ターン${turn} 資金${st.funds} ===`);
   plog.write("turn", { turn, funds: st.funds }); lastTurn = turn;
   let auto = false;
-  try { ({ st, auto } = await playTurn(turn)); llmErrors = 0; }
+  try { ({ st, auto } = await playTurn(turn, st)); llmErrors = 0; }
   catch (e) {
     if (stopping) await new Promise(() => {});
     log("エラー：" + e.message);

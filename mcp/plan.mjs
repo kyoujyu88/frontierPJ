@@ -41,8 +41,10 @@ export const PLAN_TOOL = {
 };
 
 export function newPlan() {
-  return { long: "", short: "", targets: [], longTurn: null, shortTurn: null, sets: 0, hits: [], last: null, setsThisTurn: 0, turn: null };
+  return { long: "", short: "", targets: [], longTurn: null, shortTurn: null, sets: 0, hits: [], last: null, setsThisTurn: 0, turn: null, staleAt: null };
 }
+// 作戦の欄の日本語名（ai-player.mjs のログと playlog.mjs の台本で使う）
+export const PLAN_FIELD = { long: "長期", short: "短期", targets: "攻める順" };
 
 const clip = (s) => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > TEXT_LEN ? t.slice(0, TEXT_LEN) + "…" : t; };
 const planetMap = (st) => new Map((st?.planets ?? []).map(p => [p.id, p]));
@@ -68,7 +70,7 @@ export function parseTargets(v, st) {
   return { ids: out.slice(0, MAX_TARGETS), unknown };
 }
 
-/* set_plan を当てる。args は {long?, short?, targets?}。st はいまの get_state。
+/* set_plan を当てる。args は {long?, short?, targets?}。st はこのターンの始まりの get_state（星の名前と持ち主を見るだけなので、ターンの途中で取り直さない）。
  * 返り値 { ok, content（のあに返す文）, changed（変えた欄）, entry（プレイログに残すもの）} */
 export function applyPlan(plan, args, { turn, st }) {
   const has = (k) => args?.[k] != null && String(Array.isArray(args[k]) ? args[k].join(",") : args[k]).trim() !== "";
@@ -78,15 +80,20 @@ export function applyPlan(plan, args, { turn, st }) {
     return { ok: false, refused: true, content: `失敗：このターンはもう${MAX_SETS_PER_TURN}回作戦を書きました。作戦は覚えているので、ゲームの手を打ってください。`, changed: [] };
   const changed = [], notes = [];
   if (has("long")) { const t = clip(args.long); if (t !== plan.long) { plan.long = t; plan.longTurn = turn; changed.push("long"); } }
-  if (has("short")) { const t = clip(args.short); if (t !== plan.short) { plan.short = t; changed.push("short"); } plan.shortTurn = turn; } // 同じ文でも「見直した」として数え直す
+  if (has("short")) { const t = clip(args.short); if (t !== plan.short) { plan.short = t; changed.push("short"); } plan.shortTurn = turn; plan.staleAt = null; } // 同じ文でも「見直した」として数え直す
   if (has("targets")) {
-    const { ids, unknown } = parseTargets(args.targets, st);
-    const pm = planetMap(st);
-    const mine = ids.filter(id => pm.get(id)?.owner === "P");
-    const next = ids.filter(id => !mine.includes(id));
-    if (unknown.length) notes.push(`星のIDとして読めないもの（${unknown.slice(0, 3).join("・")}）は外しました`);
-    if (mine.length) notes.push(`${mine.map(id => label(pm.get(id))).join("・")}はもう自国の星なので外しました`);
-    if (next.join(",") !== plan.targets.join(",")) { plan.targets = next; changed.push("targets"); }
+    if (!st?.planets?.length) notes.push("いまは星を確かめられないので、攻める順は前のままにしました（次の手でもう一度 targets を書いてください）");
+    else {
+      const { ids, unknown } = parseTargets(args.targets, st);
+      const pm = planetMap(st);
+      const mine = ids.filter(id => pm.get(id)?.owner === "P");
+      const next = ids.filter(id => !mine.includes(id));
+      if (unknown.length) notes.push(`星のIDとして読めないもの（${unknown.slice(0, 3).join("・")}）は外しました`);
+      if (mine.length) notes.push(`${mine.map(id => label(pm.get(id))).join("・")}はもう自国の星なので外しました`);
+      // 攻められる星が1つも残らなかったとき（誤字・無い星・自国の星だけ）は、前の攻める順を消さずに残す
+      if (!next.length) notes.push(`攻める星が残らなかったので、攻める順は前のまま（${plan.targets.length ? plan.targets.map(id => label(pm.get(id))).join(" → ") : "なし"}）にしました`);
+      else if (next.join(",") !== plan.targets.join(",")) { plan.targets = next; changed.push("targets"); }
+    }
   }
   if (plan.turn !== turn) { plan.turn = turn; plan.setsThisTurn = 0; }
   plan.setsThisTurn++;
@@ -114,6 +121,8 @@ export function checkPlan(plan, st, turn) {
   const last = plan.last;
   if (!plan.sets) cues.push({ kind: "none", text: "まだ作戦がありません。" });
   else {
+    // 盤面に無い星（ありえないが、古い状態で書いたときなど）は黙って外す
+    if (pm.size) plan.targets = plan.targets.filter(id => pm.has(id));
     for (const id of [...plan.targets]) {
       if (pm.get(id)?.owner !== "P") continue;
       hits.push({ id, name: pm.get(id)?.name ?? null, turn });
@@ -129,8 +138,14 @@ export function checkPlan(plan, st, turn) {
       if (!!sit.truceWithVarga !== !!last.truce) cues.push({ kind: "event", text: sit.truceWithVarga ? "ヴァルガと休戦しました。" : "ヴァルガとの休戦が終わりました。" });
     }
     if (!plan.targets.length && (hits.length || last?.targets?.length)) cues.push({ kind: "empty", text: "攻める星がもう残っていません。" });
-    const age = plan.shortTurn != null ? turn - plan.shortTurn : null;
-    if (age != null && age >= STALE_TURNS && age % STALE_TURNS === 0) cues.push({ kind: "stale", text: `短期の作戦はターン${plan.shortTurn}に立てたものです。` });
+    /* 短期の作戦が古い（立ててから STALE_TURNS ターン）・まだない（長期だけ書いた）。最後に合図を出してから STALE_TURNS ターンごとに出す
+     *（ちょうど3の倍数のターンだけにすると、状態が取れずに突き合わせを飛ばしたターンがあると次まで間が空くため） */
+    const since = (t) => t == null || turn - t >= STALE_TURNS;
+    if (plan.short && plan.shortTurn != null && turn - plan.shortTurn >= STALE_TURNS && since(plan.staleAt)) {
+      cues.push({ kind: "stale", text: `短期の作戦はターン${plan.shortTurn}に立てたものです。` }); plan.staleAt = turn;
+    } else if (!plan.short && since(plan.staleAt)) {
+      cues.push({ kind: "stale", text: "短期の作戦（このターンから2〜3ターンの手）がまだありません。" }); plan.staleAt = turn;
+    }
   }
   plan.last = { turn, owned, xeno: !!sit.xenoAppeared, evolved: !!sit.xenoEvolved, truce: !!sit.truceWithVarga, targets: [...plan.targets] };
   return { cues, hits };

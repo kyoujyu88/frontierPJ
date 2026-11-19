@@ -32,6 +32,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { splitRecordedTalk } from "./talk.mjs";
 import { describeModel, describeLoaded } from "./llm-info.mjs";
 import { statsOf, statsText, compareText } from "./logstats.mjs";
+import { PLAN_FIELD } from "./plan.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const LOG_DIR = path.join(HERE, "logs");
@@ -174,7 +175,6 @@ export function toChapters(events) {
   for (const [ms, t] of L) { if (out.length && Math.floor(out.at(-1)[0] / 1000) === Math.floor(ms / 1000)) out.pop(); out.push([ms, t]); }
   return out.map(([ms, t]) => `${clock(ms)} ${t}`).join("\n") + "\n";
 }
-const PLAN_FIELD = { long: "長期", short: "短期", targets: "攻める順" };
 export const PLAN_CUE = { none: "作戦なし", hit: "攻める星を落とした", lost: "星を失った", event: "情勢の変化", empty: "攻める星がなくなった", stale: "短期の作戦が古い" };
 /* 1件を人が読む1行にする（台本・操作盤の表示で共通）。LLM とのやり取りは all のときだけ */
 export function describe(e, { all = false } = {}) {

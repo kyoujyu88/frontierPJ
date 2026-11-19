@@ -44,6 +44,29 @@ const stOf = (owners, sit = {}) => ({ planets: [P(0, "リュネ", owners[0]), P(
   check(applyPlan(plan, { short: "y".repeat(300) }, { turn: 2, st }).ok && plan.short.length <= 101 && plan.shortTurn === 2 && plan.longTurn === 1, "次のターンにはまた書ける・長すぎる文は切る・変えない欄のターンはそのまま");
 }
 {
+  // レビューの指摘：攻める星が1つも残らない targets・状態が取れないときは、前の攻める順を消さない
+  const plan = newPlan();
+  const st = stOf(["P", "P", "N", "E"]);
+  applyPlan(plan, { targets: "5,7" }, { turn: 1, st });
+  let r = applyPlan(plan, { targets: "99,なぞ" }, { turn: 1, st });
+  check(r.ok && plan.targets.join() === "5,7" && !r.changed.includes("targets") && /攻める順は前のまま（5ミラ → 7ゼタ）/.test(r.content), "読めない星だけの targets では、前の攻める順を残す");
+  r = applyPlan(plan, { targets: "0,1" }, { turn: 2, st });
+  check(r.ok && plan.targets.join() === "5,7" && /もう自国の星なので外しました/.test(r.content) && /前のまま/.test(r.content), "自国の星だけの targets でも、前の攻める順を残す");
+  r = applyPlan(plan, { targets: "3", short: "S" }, { turn: 2, st: null });
+  check(r.ok && plan.targets.join() === "5,7" && plan.short === "S" && /いまは星を確かめられないので、攻める順は前のまま/.test(r.content), "状態が取れないときは targets を変えない（ほかの欄は覚える）");
+  plan.targets.push(42);
+  checkPlan(plan, st, 3);
+  check(plan.targets.join() === "5,7", "盤面に無い星は、ターンの始まりに攻める順から外す");
+  const lo = newPlan();
+  applyPlan(lo, { long: "L" }, { turn: 1, st });
+  const k = [2, 3, 4, 5].map(t => checkPlan(lo, st, t).cues.map(x => x.kind).join());
+  check(k.join("|") === "stale|||stale" && /短期の作戦（このターンから2〜3ターンの手）がまだありません/.test(checkPlan(lo, st, 8).cues[0]?.text ?? ""), `長期だけの作戦なら、短期を書くよう${STALE_TURNS}ターンごとに促す（${k.join("|")}）`);
+  const sk = newPlan();
+  applyPlan(sk, { long: "L", short: "S" }, { turn: 1, st });
+  const k2 = [2, 5, 6, 7, 8].map(t => checkPlan(sk, st, t).cues.map(x => x.kind).join());
+  check(k2.join("|") === "|stale|||stale", `突き合わせを飛ばしたターン（3・4）があっても、短期の古さの合図は取りこぼさない（${k2.join("|")}）`);
+}
+{
   const plan = newPlan();
   let st = stOf(["P", "P", "N", "E"]);
   let c = checkPlan(plan, st, 1);
