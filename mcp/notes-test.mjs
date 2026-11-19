@@ -9,12 +9,14 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { loadNotes } from "./notes.mjs";
+import { loadNotes, saveNotes, parseGoal, parseReflection, applyReflection, checkGoals, goalText, numbersTable } from "./notes.mjs";
 import { readLog, toSrt, toChapters, listLogs, toText } from "./playlog.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LESSON = "爆装を2以上積んだ艦隊で惑星を攻める";
 let prompts = [], reflections = 0;
+// 振り返りの返事を差し替える（null ならふだんの箇条書き）。送られてきた振り返りの問い合わせも残す
+let reflectReply = null, reflectPrompts = [];
 // LLM のふるまい：normal／empty（黙った返事を返す）／flaky（2ターン目の最初だけ 400）／notools（ツール非対応の 400）／always400（毎回 400）
 // ／play（ひとこと付きの操作・記号つきの名前・無い名前・名前で書いたIDを混ぜて呼ぶ）／emptytalk（空と地の文だけの返事を交互に返す）
 // ／emptyall（ツールを渡されると必ず空を返す。ツールなしで手を文字で頼まれたら、文字で end_turn() を書く）
@@ -88,8 +90,9 @@ const llm = http.createServer(async (req, res) => {
   } else if (!b.tools) {
     // 振り返り：考える部分つき・余計な前置きつきで返して、箇条書きだけ拾えるか見る
     reflections++;
+    reflectPrompts.push(b.messages.at(-1).content);
     if (process.env.SHOW_REFLECT) console.log(b.messages.at(-1).content);
-    out = reply({ content: `<think>うーん</think>\n反省します！\n- ${LESSON}\n- 状況テキストのIDだけを使う\n1. 研究に早めに投資する\n感想：次こそ勝つよ！` });
+    out = reflectReply ? reply({ content: reflectReply }) : reply({ content: `<think>うーん</think>\n反省します！\n- ${LESSON}\n- 状況テキストのIDだけを使う\n1. 研究に早めに投資する\n感想：次こそ勝つよ！` });
   } else {
     const last = b.messages.at(-1);
     const starts = last.role === "user" && last.content.includes("今の状況です");
@@ -150,7 +153,7 @@ let logNo = 0;
 function run(turns, extra = [], serverExtra = []) {
   return new Promise((ok, ng) => {
     const p = spawn(process.execPath, [path.join(HERE, "ai-player.mjs"), "--model", "mock", "--base-url", BASE, "--name", "テスト",
-      "--notes", notesFile, "--turns", String(turns), ...(extra.includes("--max-steps") ? [] : ["--max-steps", "4"]), "--log-dir", logDir, "--log-name", `run${++logNo}`, ...extra, "--", "--headless", "--pace", "0", ...serverExtra], { stdio: ["ignore", "pipe", "inherit"] });
+      ...(extra.includes("--notes") ? [] : ["--notes", notesFile]), "--turns", String(turns), ...(extra.includes("--max-steps") ? [] : ["--max-steps", "4"]), "--log-dir", logDir, "--log-name", `run${++logNo}`, ...extra, "--", "--headless", "--pace", "0", ...serverExtra], { stdio: ["ignore", "pipe", "inherit"] });
     let log = ""; p.stdout.on("data", d => { log += d; });
     p.on("exit", code => code === 0 ? ok(log) : ng(new Error(`exit ${code}\n${log}`)));
   });
@@ -201,12 +204,88 @@ prompts = [];
 await run(1, ["--no-notes"]);
 check(!prompts[0].includes("反省メモ"), "--no-notes ではプロンプトに入らない");
 
-// 5回目：ゲームが終わったら気づいて止まる（結果の画面を閉じても、新しいゲームを勝手に始めない）
-// 主星以外をヴァルガ領にした練習用のゲームで、数ターンで負けさせる
+// 主星以外をヴァルガ領にした練習用のゲーム（数ターンで負ける）。勝敗が決まったゲームの振り返りと、5回目で使う
 const loseGame = path.join(path.dirname(notesFile), "lose-fast.html");
 const html = await fs.readFile(path.join(HERE, "../game/frontier-war.html"), "utf8");
 const i = html.lastIndexOf("</body>");
 await fs.writeFile(loseGame, html.slice(0, i) + `<script>(()=>{const weak=()=>{for(const p of S.planets)if(p.id!==HOME&&p.id!==HIVE)p.owner="E";planet(HOME).def=planet(HOME).maxDef=1;S.fleets=S.fleets.filter(f=>f.side!=="P");render()};const ng=newGame;newGame=function(){ng();weak()};weak()})();</script>` + html.slice(i));
+
+// 数字つき・差分更新（2026-11-19）：まず関数だけで確かめる
+{
+  const g = (t) => { const x = parseGoal(t); return x ? goalText(x) : null; };
+  check(g("資金不足 3回以下") === "資金不足 3回以下" && g("勝利ターン：28ターン以内") === "勝利ターン 28ターン以下" && g("最大星 10") === "最大星 10星以上"
+    && g("操作失敗を５回未満") === "操作失敗 4回以下" && g("内政なしのターン 0") === "内政なしのターン 0ターン以下" && g("もっと上手に戦う") === null,
+    "目標：決まった物差しと数字だけを拾う（全角数字・以内・未満も）");
+  const L = ["項目A", "項目B", "項目C"];
+  const d = parseReflection("<think>x</think>\n消す 2：役に立たなかった\n- 消す ３：重なる\n消す 9：無い番号\n足す：新しい項目D\n2. 足す：新しい項目E\n足す：新しい項目F\n目標：資金不足 3回以下、最大星 10以上\n目標：釣りをする\n感想：次は早く勝つ！", L);
+  const a = applyReflection(L, d, 1200);
+  check(a.removed.join() === "項目B,項目C" && a.added.join() === "新しい項目D,新しい項目E" && a.lessons.join() === "項目A,新しい項目D,新しい項目E",
+    `差分：消す・足すはそれぞれ2つまで、書かなかった項目は残る（${a.lessons.join("・")}）`);
+  check(d.goals.map(goalText).join() === "資金不足 3回以下,最大星 10星以上" && d.comment === "次は早く勝つ！", "差分：目標と感想を拾う（物差しにない目標は捨てる）");
+  const full = parseReflection("- 項目A\n- 項目B\n- まったく新しいこと\n- もうひとつ新しい\n- さらに新しい", L);
+  const fa = applyReflection(L, full, 1200);
+  check(fa.removed.length === 0 && fa.added.join() === "まったく新しいこと,もうひとつ新しい" && fa.lessons.length === 5, "丸ごと書いた返事は、いまのメモにない項目だけを2つまで足す");
+  const first = applyReflection([], parseReflection("- あ一つ目\n- い二つ目\n- う三つ目\n- え四つ目\n- お五つ目\n- か六つ目", []), 1200);
+  check(first.lessons.length === 5, "メモが空のときだけ、最初に5つまで足せる");
+  const ten = Array.from({ length: 10 }, (_, i) => `もとの項目${i}`);
+  const over = applyReflection(ten, parseReflection("足す：新しいX\n足す：新しいY", ten), 1200);
+  check(over.lessons.length === 10 && over.lessons.slice(-2).join() === "新しいX,新しいY" && over.dropped.join() === "もとの項目8,もとの項目9", "10項目を超えるときは、新しい項目を残し、もとの項目を後ろから落とす（落とした項目も返す）");
+  const nums = { turn: 30, won: true, over: "win", fails: 7, failKinds: { "資金不足": 2 }, noDevTurns: 1, battleLosses: 3, peak: 9, income: 40 };
+  const cg = checkGoals([parseGoal("資金不足 3回以下"), parseGoal("勝利ターン 28以下"), parseGoal("最大星 10以上")], nums).map(x => x.ok);
+  const lost = checkGoals([parseGoal("勝利ターン 28以下")], { ...nums, won: false, over: "lose" })[0];
+  check(numbersTable(nums, { "勝利ターン": 33, "操作失敗": 12 }).startsWith("- 勝利ターン：30（前回 33）\n- 操作失敗：7（前回 12）\n- 資金不足：2（前回 —）"), "数字の表：今回と前回を並べる");
+  const mid = checkGoals([parseGoal("資金不足 3回以下")], { ...nums, won: false, over: null })[0];
+  check(cg.join() === "true,false,false" && lost.ok === false && /勝てなかった/.test(lost.text), "目標の答え合わせ（負けたら勝利ターンは未達成）");
+  check(mid.ok === null && /途中なので判定しない/.test(mid.text), "勝敗が決まる前は答え合わせしない（少ない方が良い物差しが早く止めただけで達成にならない）");
+  // 古い形式（丸ごと書き直していたころ）のファイル：項目は読まず、戦績は引き継ぐ。新しい形式は目標と前回の数字も読み書きできる
+  const dir = path.dirname(notesFile), oldFile = path.join(dir, "古い.md");
+  await fs.writeFile(oldFile, "# 古いの反省メモ\n\nai-player.mjs がプレイのたびに書き換えます。\n\n## 反省メモ（大事な順）\n- 操作ミス厳禁！ダイアログは必ず閉じてから次へ進む。\n- 研究への過剰投資を避ける。\n\n## 戦績（新しい順）\n- 2026-11-14 noa-game:latest 勝利 ターン30 最大9星\n");
+  const old = await loadNotes(oldFile);
+  check(old.lessons.length === 0 && old.legacy.length === 2 && old.records.length === 1, "古い形式のメモは項目を読まず、戦績は引き継ぐ");
+  const rt = path.join(dir, "往復.md");
+  await saveNotes(rt, "往復", { lessons: ["項目A"], goals: [parseGoal("資金不足 3回以下")], records: ["r1"], prev: { "操作失敗": 7, "勝利ターン": 30 } });
+  const back = await loadNotes(rt);
+  check(back.lessons.join() === "項目A" && back.goals.map(goalText).join() === "資金不足 3回以下" && back.prev["操作失敗"] === 7 && back.prev["勝利ターン"] === 30 && back.legacy.length === 0,
+    "新しい形式は項目・目標・前回の数字を保存して読み戻せる");
+  // ai-player：古い形式のファイルは控え（.v1.bak）を残し、項目をプロンプトに入れない
+  prompts = [];
+  const lg = await run(1, ["--notes", oldFile]);
+  const bak = await fs.readFile(`${oldFile}.v1.bak`, "utf8").catch(() => "");
+  check(/古い形式の反省メモ（2項目）は読み込みません/.test(lg) && bak.includes("ダイアログは必ず閉じて") && !prompts[0].includes("ダイアログは必ず閉じて") && (await loadNotes(oldFile)).records.length === 2,
+    "ai-player：古い形式は控えを残して項目を読まず、新しい形式で書き直す（戦績は2件に）");
+}
+// ai-player での差分の振り返り：番号つきのメモ・数字を渡し、返事の差分だけを当てる。目標は次のゲームで答え合わせ
+{
+  reflectReply = "消す 2：もう要らない\n足す：攻める前に修理を済ませる\n目標：資金不足 3回以下\n感想：数字で振り返ったよ！";
+  prompts = []; reflectPrompts = [];
+  await run(30, ["--reflect-every", "0"], ["--game", loseGame]);
+  let rp = reflectPrompts.at(-1) ?? "";
+  n = await loadNotes(notesFile);
+  check(/# いまの反省メモ（番号つき）\n1\. 爆装を2以上積んだ艦隊で惑星を攻める\n2\. 状況テキストのIDだけを使う/.test(rp) && /# 数字（今回）\n- 勝利ターン：—\n- 操作失敗：0\n/.test(rp) && /目標：物差し 数字/.test(rp),
+    "振り返りに番号つきのメモと、今回の数字を渡す");
+  check(n.lessons.join() === "爆装を2以上積んだ艦隊で惑星を攻める,研究に早めに投資する,攻める前に修理を済ませる" && n.goals.map(goalText).join() === "資金不足 3回以下" && n.prev?.["操作失敗"] === 0,
+    `返事の差分だけを当て、目標と前回の数字を残す（${n.lessons.join("・")}）`);
+  reflectReply = "感想：目標どおり！";
+  prompts = []; reflectPrompts = [];
+  await run(30, ["--reflect-every", "0"], ["--game", loseGame]);
+  rp = reflectPrompts.at(-1) ?? "";
+  check(prompts[0].includes("今回の目標：資金不足 3回以下") && /前に決めた目標の答え合わせ\n- 資金不足 3回以下 → 今回 0回：達成/.test(rp) && /# 数字（今回と、前回のゲーム）\n- 勝利ターン：—（前回 —）\n- 操作失敗：0（前回 0）/.test(rp),
+    "次のゲームのプロンプトに目標が入り、振り返りで答え合わせして前回の数字と並べる");
+  n = await loadNotes(notesFile);
+  check(n.lessons.length === 3 && n.goals.length === 1 && /敗北.*目標1\/1達成/.test(n.records[0]), "消す・足すがなければメモも目標もそのまま、戦績に目標の達成が残る");
+  // 途中で止めた（--turns）ゲーム：答え合わせも前回との比較もせず、目標も変えない
+  reflectReply = "目標：操作失敗 1回以下\n感想：途中だよ";
+  prompts = []; reflectPrompts = [];
+  await run(2, ["--reflect-every", "0"]);
+  rp = reflectPrompts.at(-1) ?? "";
+  n = await loadNotes(notesFile);
+  check(/途中なので判定しない/.test(rp) && /# 数字（今回の途中まで）\n- 勝利ターン：—\n/.test(rp) && !/目標：物差し 数字/.test(rp) && n.goals.map(goalText).join() === "資金不足 3回以下" && /途中終了/.test(n.records[0]) && !/目標/.test(n.records[0]),
+    "途中で止めたゲームは答え合わせ・前回との比較をせず、目標も変えない（戦績に目標を残さない）");
+  reflectReply = null;
+}
+
+// 5回目：ゲームが終わったら気づいて止まる（結果の画面を閉じても、新しいゲームを勝手に始めない）
+// 主星以外をヴァルガ領にした練習用のゲームで、数ターンで負けさせる
 const log = await run(30, ["--reflect-every", "0"], ["--game", loseGame]);
 n = await loadNotes(notesFile);
 check(/ゲーム終了：lose/.test(log) && n.records[0]?.includes("敗北"), "負けたら「ゲーム終了」を出し、戦績に敗北が残る");

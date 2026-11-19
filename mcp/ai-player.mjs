@@ -48,7 +48,7 @@ import fs from "node:fs/promises";
 import readline from "node:readline/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName } from "./notes.mjs";
+import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName, checkGoals, goalText, numbersToPrev } from "./notes.mjs";
 import { PlayLog, LOG_DIR, subtitlesBeside, readLog } from "./playlog.mjs";
 import { statsOf, statsLine } from "./logstats.mjs";
 import { makeTalk, stripThink } from "./talk.mjs";
@@ -817,22 +817,32 @@ async function playTurn(turn) {
 
 /* ---------- 反省メモ ---------- */
 let reflectedAt = 0;
-async function writeNotes(outcome, final) {
+/* final：戦績に残す結果（勝利・敗北・途中終了）。ゲームの途中の振り返りでは null。over：勝敗が決まったときの "win" | "lose" */
+async function writeNotes(outcome, final, over = null) {
   if (!WRITE_NOTES || !journal.turns.length) return;
-  if (final) notes.records.unshift(recordLine({ date: new Date().toLocaleDateString("sv-SE"), model: MODEL, outcome: final, journal }));
+  // 目標の答え合わせは勝敗が決まったゲームだけ（途中で止めた試合は戦績に残さない）
+  if (final) notes.records.unshift(recordLine({ date: new Date().toLocaleDateString("sv-SE"), model: MODEL, outcome: final, journal, goalResults: over ? checkGoals(notes.goals, journal.numbers(over)) : [] }));
   if (journal.turns.length >= 2 && journal.turns.length > reflectedAt) {
     log(`${NAME}が反省メモを書いています…`);
     try {
       const r = await reflect({
         chat: async (m) => { plog.sentMessages(m, "reflect"); return (await chat(m, { withTools: false })).content ?? ""; },
-        name: NAME, persona, notes, journal, outcome, maxChars: NOTES_CHARS, stripThink,
+        name: NAME, persona, notes, journal, outcome, maxChars: NOTES_CHARS, stripThink, final: !!over, over,
       });
-      if (r.lessons) { notes.lessons = r.lessons; log("反省メモ：\n  - " + r.lessons.join("\n  - ")); }
-      else log("反省メモをうまく書けなかったので、前のメモを残します");
-      plog.write("reflect", { outcome, lessons: r.lessons, comment: r.comment || null });
+      if (r.goalResults.length) log("目標の答え合わせ：\n  - " + r.goalResults.map(g => g.text).join("\n  - "));
+      if (r.lessons) {
+        notes.lessons = r.lessons;
+        log(`反省メモ（消した${r.removed.length}・足した${r.added.length}${r.dropped.length ? `・上限で落とした${r.dropped.length}` : ""}）：\n  - ` + r.lessons.map(l => r.added.includes(l) ? `${l}（新）` : l).join("\n  - ")
+          + (r.removed.length ? `\n  消した項目：${r.removed.join(" ／ ")}` : "") + (r.dropped.length ? `\n  上限（10項目・文字数）で落とした項目：${r.dropped.join(" ／ ")}` : ""));
+      } else log("反省メモをうまく書けなかったので、前のメモを残します");
+      if (r.goals) { notes.goals = r.goals; log(`次の目標：${r.goals.map(goalText).join("、")}`); }
+      plog.write("reflect", { outcome, lessons: r.lessons, removed: r.removed, added: r.added, dropped: r.dropped, goals: r.goals?.map(goalText) ?? null,
+        goalResults: r.goalResults.map(g => ({ goal: goalText(g), value: g.value, ok: g.ok })), comment: r.comment || null });
       if (r.comment && !stopping) await say(r.comment);
     } catch (e) { log("振り返りに失敗：" + e.message); plog.write("error", { message: "振り返りに失敗：" + e.message }); }
   }
+  // 次のゲームの振り返りで「前回」と比べる数字（勝敗が決まったゲームだけ）
+  if (over) notes.prev = numbersToPrev(journal.numbers(over));
   reflectedAt = journal.turns.length;
   await saveNotes(NOTES_FILE, NAME, notes);
   log(`反省メモを保存しました：${NOTES_FILE}`);
@@ -855,7 +865,16 @@ process.on("message", m => { if (m?.type === "stop") process.emit("SIGINT"); });
 
 /* ---------- メインループ ---------- */
 log(`${NAME}（${MODEL} @ ${BASE}）がプレイを始めます`);
-if (USE_NOTES) log(notes.lessons.length ? `反省メモ ${notes.lessons.length}項目を読み込みました（${NOTES_FILE}）` : `反省メモはまだありません。プレイ後に ${NOTES_FILE} に書きます`);
+if (USE_NOTES && notes.legacy.length) {
+  // 丸ごと書き直していたころのメモは一般論が多く、今のプロンプトと食い違う項目もあるので、項目は読まない（戦績は引き継ぐ）
+  const bak = `${NOTES_FILE}.v1.bak`;
+  let bakNote = "";
+  if (WRITE_NOTES) bakNote = await fs.copyFile(NOTES_FILE, bak, fs.constants?.COPYFILE_EXCL ?? 1).then(() => `。もとのファイルの控え：${bak}`,
+    e => e.code === "EEXIST" ? `。もとのファイルの控えは前に作ったもの：${bak}` : `。控えを作れませんでした（${e.message}）。最初の保存で古い項目は消えます`);
+  log(`古い形式の反省メモ（${notes.legacy.length}項目）は読み込みません。戦績は引き継ぎます${bakNote}${WRITE_NOTES ? "" : "（読むだけのモードなので、メモなしと同じ状態で遊びます）"}`);
+}
+if (USE_NOTES) log((notes.lessons.length ? `反省メモ ${notes.lessons.length}項目を読み込みました（${NOTES_FILE}）` : `反省メモはまだありません。プレイ後に ${NOTES_FILE} に書きます`)
+  + (notes.goals.length ? `\n目標：${notes.goals.map(goalText).join("、")}` : ""));
 let st = (await tool("get_state")).json;
 journal.begin(st);
 log("最初の返事を待っています（モデルの読み込みと長い指示の読み取りで、数分かかることがあります）");
@@ -864,7 +883,7 @@ for (let n = 0; n < TURNS; n++) {
   if (st.over) {
     log(`ゲーム終了：${st.over}`);
     plog.write("over", { result: st.over, turn: st.turn });
-    if (reflectedAt !== -1) await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over));
+    if (reflectedAt !== -1) await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over), st.over);
     reflectedAt = -1;
     if (!LOOP) break;
     await tool("new_game", { confirm: true }); recaps = []; done = []; convo = null; lastSum = "";
@@ -897,7 +916,7 @@ for (let n = 0; n < TURNS; n++) {
   if (!st.over && REFLECT_EVERY > 0 && journal.turns.length - reflectedAt >= REFLECT_EVERY)
     await writeNotes(`ゲームの途中（ターン${turn}まで）`, null);
 }
-if (st.over && reflectedAt !== -1) { log(`ゲーム終了：${st.over}`); plog.write("over", { result: st.over, turn: st.turn }); await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over)); }
+if (st.over && reflectedAt !== -1) { log(`ゲーム終了：${st.over}`); plog.write("over", { result: st.over, turn: st.turn }); await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over), st.over); }
 else if (!st.over && !llmDown) await writeNotes(`プレイを途中でやめたところ（ターン${st.turn - 1}まで）`, "途中終了");
 else if (!st.over && llmDown && WRITE_NOTES && journal.turns.length) {
   notes.records.unshift(recordLine({ date: new Date().toLocaleDateString("sv-SE"), model: MODEL, outcome: "途中終了", journal }));
