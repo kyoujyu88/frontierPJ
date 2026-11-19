@@ -51,7 +51,7 @@ import { fileURLToPath } from "node:url";
 import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeName, checkGoals, goalText, numbersToPrev } from "./notes.mjs";
 import { PlayLog, LOG_DIR, subtitlesBeside, readLog } from "./playlog.mjs";
 import { statsOf, statsLine } from "./logstats.mjs";
-import { makeTalk, stripThink } from "./talk.mjs";
+import { makeTalk, stripThink, foldSayOnly } from "./talk.mjs";
 import { summaryDelta } from "./sumdiff.mjs";
 import { modelInfo, loadedInfo, serverCtx, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
 
@@ -607,7 +607,8 @@ let convo = null, convoTurns = 0;
 const RESERVE0 = 3000, grew = [];
 const reserve = () => { const r = grew.slice(-3); return r.length ? Math.min(4500, Math.max(1000, Math.ceil(r.reduce((a, b) => a + b, 0) / r.length * 1.1))) : RESERVE0; };
 let turnStartTokens = null;
-const START = "今の状況です。操作を始めてください。";
+// ターンの最初の返事は、状況にひとこと触れる say だけになりやすい（2026-11-18 20:26 のログでセリフだけの返事 49回のうち 13回）ので、最初の手と一緒に話すよう添える
+const START = "今の状況です。操作を始めてください（ひとこと話すなら、最初の手の say 引数に）。";
 let lastSum = ""; // 最後に渡した状況テキスト（全文）。次のターンに会話を続けるとき、ここからの差分だけを渡す
 function freshTurn(text, sum) {
   const first = { role: "user", content: `${text}\n\n${sum}` };
@@ -732,6 +733,7 @@ async function playTurn(turn) {
     if (!calls.length && (calls = written).length) log(`  （文字で書かれたツール呼び出しを実行します：${calls.map(c => c.function.name).join(", ")}）`);
     empty = 0; // 「空の返事が3回続いたら」なので、話した返事でも数え直す
     // content は必ず文字列にする（null だと Ollama が「invalid message content type: <nil>」の 400 で断る）
+    const replyAt = messages.length;
     messages.push({ role: "assistant", content: talk, ...(calls.length ? { tool_calls: calls } : {}) });
     if (!calls.length) {
       if (++idle >= 3) break;
@@ -802,6 +804,10 @@ async function playTurn(turn) {
       if (short) shortOf.set(m, short);
       messages.push(m);
     }
+    /* この返事の前がセリフだけの返事（say だけ）なら、そのセリフをこの返事の手の say 引数に移して、セリフだけの返事は会話から外す（talk.mjs foldSayOnly）。
+     * 会話に「say だけ → 次の返事で手」の流れが残ると、モデルがまねてその流れを続けるため。字幕はもう出してあるので、変えるのは会話の記録だけ */
+    const folded = foldSayOnly(messages, replyAt, keepFrom);
+    if (folded) plog.write("fold", { removed: folded });
     if (over) return { st: (await tool("get_state")).json, auto };
     if (ended) {
       // 通信が開いていても次のターンへ進む（次のターンの状況テキストに出て、最初の操作で自動的に閉じる）
