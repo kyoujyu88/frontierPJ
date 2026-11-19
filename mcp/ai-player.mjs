@@ -820,22 +820,23 @@ let reflectedAt = 0;
 /* final：戦績に残す結果（勝利・敗北・途中終了）。ゲームの途中の振り返りでは null。over：勝敗が決まったときの "win" | "lose" */
 async function writeNotes(outcome, final, over = null) {
   if (!WRITE_NOTES || !journal.turns.length) return;
-  if (final) notes.records.unshift(recordLine({ date: new Date().toLocaleDateString("sv-SE"), model: MODEL, outcome: final, journal, goalResults: checkGoals(notes.goals, journal.numbers(over)) }));
+  // 目標の答え合わせは勝敗が決まったゲームだけ（途中で止めた試合は戦績に残さない）
+  if (final) notes.records.unshift(recordLine({ date: new Date().toLocaleDateString("sv-SE"), model: MODEL, outcome: final, journal, goalResults: over ? checkGoals(notes.goals, journal.numbers(over)) : [] }));
   if (journal.turns.length >= 2 && journal.turns.length > reflectedAt) {
     log(`${NAME}が反省メモを書いています…`);
     try {
       const r = await reflect({
         chat: async (m) => { plog.sentMessages(m, "reflect"); return (await chat(m, { withTools: false })).content ?? ""; },
-        name: NAME, persona, notes, journal, outcome, maxChars: NOTES_CHARS, stripThink, final: !!final, over,
+        name: NAME, persona, notes, journal, outcome, maxChars: NOTES_CHARS, stripThink, final: !!over, over,
       });
       if (r.goalResults.length) log("目標の答え合わせ：\n  - " + r.goalResults.map(g => g.text).join("\n  - "));
       if (r.lessons) {
         notes.lessons = r.lessons;
-        log(`反省メモ（消した${r.removed.length}・足した${r.added.length}）：\n  - ` + r.lessons.map(l => r.added.includes(l) ? `${l}（新）` : l).join("\n  - ")
-          + (r.removed.length ? `\n  消した項目：${r.removed.join(" ／ ")}` : ""));
+        log(`反省メモ（消した${r.removed.length}・足した${r.added.length}${r.dropped.length ? `・上限で落とした${r.dropped.length}` : ""}）：\n  - ` + r.lessons.map(l => r.added.includes(l) ? `${l}（新）` : l).join("\n  - ")
+          + (r.removed.length ? `\n  消した項目：${r.removed.join(" ／ ")}` : "") + (r.dropped.length ? `\n  上限（10項目・文字数）で落とした項目：${r.dropped.join(" ／ ")}` : ""));
       } else log("反省メモをうまく書けなかったので、前のメモを残します");
       if (r.goals) { notes.goals = r.goals; log(`次の目標：${r.goals.map(goalText).join("、")}`); }
-      plog.write("reflect", { outcome, lessons: r.lessons, removed: r.removed, added: r.added, goals: r.goals?.map(goalText) ?? null,
+      plog.write("reflect", { outcome, lessons: r.lessons, removed: r.removed, added: r.added, dropped: r.dropped, goals: r.goals?.map(goalText) ?? null,
         goalResults: r.goalResults.map(g => ({ goal: goalText(g), value: g.value, ok: g.ok })), comment: r.comment || null });
       if (r.comment && !stopping) await say(r.comment);
     } catch (e) { log("振り返りに失敗：" + e.message); plog.write("error", { message: "振り返りに失敗：" + e.message }); }
@@ -867,8 +868,10 @@ log(`${NAME}（${MODEL} @ ${BASE}）がプレイを始めます`);
 if (USE_NOTES && notes.legacy.length) {
   // 丸ごと書き直していたころのメモは一般論が多く、今のプロンプトと食い違う項目もあるので、項目は読まない（戦績は引き継ぐ）
   const bak = `${NOTES_FILE}.v1.bak`;
-  if (WRITE_NOTES) await fs.copyFile(NOTES_FILE, bak, fs.constants?.COPYFILE_EXCL ?? 1).catch(() => {});
-  log(`古い形式の反省メモ（${notes.legacy.length}項目）は読み込みません。戦績は引き継ぎます${WRITE_NOTES ? `。もとのファイルの控え：${bak}` : ""}`);
+  let bakNote = "";
+  if (WRITE_NOTES) bakNote = await fs.copyFile(NOTES_FILE, bak, fs.constants?.COPYFILE_EXCL ?? 1).then(() => `。もとのファイルの控え：${bak}`,
+    e => e.code === "EEXIST" ? `。もとのファイルの控えは前に作ったもの：${bak}` : `。控えを作れませんでした（${e.message}）。最初の保存で古い項目は消えます`);
+  log(`古い形式の反省メモ（${notes.legacy.length}項目）は読み込みません。戦績は引き継ぎます${bakNote}${WRITE_NOTES ? "" : "（読むだけのモードなので、メモなしと同じ状態で遊びます）"}`);
 }
 if (USE_NOTES) log((notes.lessons.length ? `反省メモ ${notes.lessons.length}項目を読み込みました（${NOTES_FILE}）` : `反省メモはまだありません。プレイ後に ${NOTES_FILE} に書きます`)
   + (notes.goals.length ? `\n目標：${notes.goals.map(goalText).join("、")}` : ""));

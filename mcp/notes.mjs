@@ -138,10 +138,12 @@ export function parseGoal(text) {
   return null;
 }
 export const goalText = (g) => `${g.key} ${g.n}${metric(g.key)?.unit ?? ""}${g.dir === "ge" ? "以上" : "以下"}`;
-/* 目標の答え合わせ。nums は Journal.numbers()。{ text, ok: true|false|null（測れない） } の配列 */
+/* 目標の答え合わせ。nums は Journal.numbers()。{ text, ok: true|false|null（測れない・まだ決まらない） } の配列
+ * 勝敗が決まっていない（途中の振り返り・途中で止めた）ときは判定しない（少ない方が良い物差しは、早く止めるほど「達成」に見えるため） */
 export function checkGoals(goals, nums) {
   return (goals ?? []).map(g => {
     const m = metric(g.key), v = m?.get(nums);
+    if (!nums.over) return { ...g, value: v ?? null, ok: null, text: `${goalText(g)} → ここまで ${v ?? "—"}${v == null ? "" : m?.unit ?? ""}（途中なので判定しない）` };
     if (v == null) return { ...g, value: null, ok: g.key === "勝利ターン" && nums.over ? false : null, text: `${goalText(g)} → 今回は${g.key === "勝利ターン" ? (nums.over ? "勝てなかった" : "まだ勝っていない") : "測れない"}` };
     const ok = g.dir === "ge" ? v >= g.n : v <= g.n;
     return { ...g, value: v, ok, text: `${goalText(g)} → 今回 ${v}${m.unit}：${ok ? "達成" : "未達成"}` };
@@ -286,9 +288,9 @@ export function parseReflection(raw, lessons) {
 }
 
 /* 差分をいまのメモに当てる。消すのも足すのも MAX_CHANGES まで（メモが空のときだけ足すを FIRST_ADDS まで）。
- * 項目が多すぎる・文字数を超えるときは、新しく足した項目は残し、もとの項目を後ろ（大事でない方）から落とす */
+ * 項目が多すぎる・文字数を超えるときは、新しく足した項目は残し、もとの項目を後ろ（大事でない方）から落とす（dropped） */
 export function applyReflection(lessons, diff, maxChars) {
-  const removed = diff.removes.slice(0, MAX_CHANGES).map(k => lessons[k]);
+  const removed = diff.removes.slice(0, MAX_CHANGES).map(k => lessons[k]), dropped = [];
   const kept = lessons.filter(l => !removed.includes(l));
   const seen = new Set(lessons), added = [];
   for (const l of diff.adds) {
@@ -297,14 +299,15 @@ export function applyReflection(lessons, diff, maxChars) {
     seen.add(l); added.push(l);
   }
   const chars = (ls) => ls.reduce((n, l) => n + l.length + 3, 0);
-  while (kept.length && (kept.length + added.length > MAX_LESSONS || chars([...kept, ...added]) > maxChars)) kept.pop();
-  return { lessons: capLessons([...kept, ...added], maxChars), removed, added };
+  while (kept.length && (kept.length + added.length > MAX_LESSONS || chars([...kept, ...added]) > maxChars)) dropped.unshift(kept.pop());
+  return { lessons: capLessons([...kept, ...added], maxChars), removed, added, dropped };
 }
 
 /* chat(messages) はツールなしで呼べる関数。
- * final：ゲームの終わり（勝敗が決まった・止めた）なら true。目標の更新と、次のゲームのための「前回の数字」はこのときだけ
+ * final：勝敗が決まったゲームの終わりなら true。前回との比較・目標の答え合わせ・目標の更新はこのときだけ
+ *       （途中の振り返りや途中で止めたときは、途中までの数字を前のゲーム全体と比べると良くなったように見えるので並べない）
  * over："win" | "lose" | null
- * 返り値 { lessons, goals, comment, removed, added, goalResults, nums, raw }（何も拾えなかったら lessons は null） */
+ * 返り値 { lessons, goals, comment, removed, added, dropped, goalResults, nums, raw }（何も拾えなかったら lessons は null） */
 export async function reflect({ chat, name, persona, notes, journal, outcome, maxChars, stripThink, final = true, over = null }) {
   const nums = journal.numbers(over);
   const goalResults = checkGoals(notes.goals, nums);
@@ -320,8 +323,8 @@ ${cur}
 # ${notes.goals?.length ? "前に決めた目標の答え合わせ" + (final ? "" : "（ゲームの途中までの数字）") : "目標"}
 ${goalResults.length ? goalResults.map(r => `- ${r.text}`).join("\n") : "- （まだありません）"}
 
-# 数字（今回${notes.prev ? "と、前回のゲーム" : ""}）
-${numbersTable(nums, notes.prev)}
+# 数字（${final ? `今回${notes.prev ? "と、前回のゲーム" : ""}` : "今回の途中まで"}）
+${numbersTable(nums, final ? notes.prev : null)}
 
 # 今回のプレイ記録
 ${journal.text()}
@@ -342,7 +345,7 @@ ${final ? `目標：物差し 数字     … 次のゲームの目標を1〜${MA
   const r = applyReflection(notes.lessons, diff, maxChars);
   const changed = r.removed.length || r.added.length;
   const goals = final && diff.goals.length ? diff.goals.slice(0, MAX_GOALS) : null;
-  return { lessons: changed ? r.lessons : (diff.comment || goals ? notes.lessons : null), goals, comment: diff.comment, removed: r.removed, added: r.added,
+  return { lessons: changed ? r.lessons : (diff.comment || goals ? notes.lessons : null), goals, comment: diff.comment, removed: r.removed, added: r.added, dropped: r.dropped,
     goalResults, nums, raw };
 }
 
