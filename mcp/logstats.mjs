@@ -127,6 +127,19 @@ export function statsOf(events) {
   const keep = ctx.filter(e => e.keep === true).length, rebuild = ctx.filter(e => e.keep === false).length, compact = ctx.filter(e => e.compact).length;
   const empty = events.filter(e => e.type === "empty");
 
+  /* 作戦（plan.mjs）：書いた回数・作戦があったターン・攻める星を落とした数・攻める星への出撃・見直しの合図に応えたか */
+  const plans = events.filter(e => e.type === "plan"), planTurns = events.filter(e => e.type === "plan_turn");
+  let curTargets = [], moves = 0, toTarget = 0, cueTurns = 0, cueFollowed = 0, waiting = false;
+  for (const e of events) {
+    if (e.type === "turn") waiting = false;
+    else if (e.type === "plan_turn") { curTargets = e.targets ?? []; if ((e.cues ?? []).length) { cueTurns++; waiting = true; } }
+    else if (e.type === "plan") { curTargets = (e.targets ?? []).map(t => t.id); if (waiting) { cueFollowed++; waiting = false; } }
+    else if (e.type === "tool" && e.by === "ai" && e.name === "move_fleet" && e.ok === true) { moves++; if (curTargets.includes(Number(e.args?.to))) toTarget++; }
+  }
+  const plan = { mode: start.plan ?? null, sets: plans.length, long: plans.filter(e => e.changed?.includes("long")).length, short: plans.filter(e => e.changed?.includes("short")).length,
+    turnsWithPlan: planTurns.filter(e => e.has).length, turns: planTurns.length, firstTurn: plans[0]?.turn ?? null,
+    hits: events.filter(e => e.type === "plan_hit").length, cueTurns, cueFollowed, moves, toTarget };
+
   return {
     name: start.name ?? null, model: start.model ?? null, baseUrl: start.baseUrl ?? null,
     outcome: end?.outcome ?? (over ? ({ win: "勝利", lose: "敗北" }[over.result] ?? over.result) : "途中"), startedAt: start.t ?? null,
@@ -156,6 +169,7 @@ export function statsOf(events) {
     cut: events.filter(e => e.type === "cut").length, refuse: events.filter(e => e.type === "refuse").length,
     auto: events.filter(e => e.type === "auto").length, errors: events.filter(e => e.type === "error").length,
     context: { keep, rebuild, compact },
+    plan,
   };
 }
 /* 各ターンの最初の返事が読み直しだった回数（読み直しの回数と同じく、プレイの返事だけを見る） */
@@ -171,11 +185,19 @@ function turnFirstRereads(events, isPlay) {
 /* ---------- 文字にする ---------- */
 const fmt = (v, unit = "") => (v == null ? "—" : `${v}${unit}`);
 const kinds = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}${v}`).join("・") || "なし";
+/* 作戦の行。古いログ（作戦の入る前）は start に plan がない */
+function planText(p) {
+  if (!p || p.mode == null) return "—（作戦の仕組みが入る前のログ）";
+  if (p.mode === "off") return "使わない";
+  return `書いた ${p.sets}回（長期を変えた ${p.long}・短期を変えた ${p.short}${p.firstTurn != null ? `・最初はターン${p.firstTurn}` : ""}）・作戦ありのターン ${p.turnsWithPlan}/${p.turns}`
+    + `・落とした攻める星 ${p.hits}・攻める星への出撃 ${p.toTarget}/${p.moves}・見直しの合図 ${p.cueTurns}ターン→書き直した ${p.cueFollowed}`;
+}
 /* 1本ぶん・何本かを横に並べた表の行（見出し, 値を出す関数） */
 const ROWS = [
   ["結果", s => `${s.outcome}（${s.turns}ターン・${Math.round(s.playSec / 60)}分）`],
   ["モデル", s => `${s.model ?? "—"}${s.settings.ctx ? `・ctx ${s.settings.ctx}` : ""}${s.settings.gpuPct != null ? `・GPU ${s.settings.gpuPct}%` : ""}`],
   ["反省メモ", s => ({ grow: "使う（書き直す）", readonly: "読むだけ", off: "使わない" })[s.settings.notes] ?? "—"],
+  ["作戦", s => planText(s.plan)],
   ["1ターン", s => fmt(s.secPerTurn, "秒")],
   ["  LLM", s => `${fmt(s.time.llmPerTurn, "秒")}（${fmt(s.time.llmShare, "%")}）`],
   ["  移動・戦闘の演出", s => `${fmt(s.time.battlePerTurn, "秒")}（${fmt(s.time.battleShare, "%")}）${s.settings.battleSpeed ? `・倍速${s.settings.battleSpeed}` : ""}`],
@@ -213,5 +235,6 @@ export function statsLine(s) {
     s.llm.cacheKnown ? `読み直し${s.llm.reread}回×${fmt(s.llm.rereadAvgSec, "秒")}` : null,
     s.llm.promptTps ? `読み込み${s.llm.promptTps}トークン/秒` : null,
     s.ops.failRate != null ? `失敗${s.ops.failRate.toFixed(1)}%` : null, `空の返事${s.empty}`,
-    `会話継続${s.context.keep}/${s.context.keep + s.context.rebuild}`].filter(Boolean).join("・");
+    `会話継続${s.context.keep}/${s.context.keep + s.context.rebuild}`,
+    s.plan?.mode === "on" ? `作戦${s.plan.sets}回・攻める星${s.plan.hits}を落とした` : null].filter(Boolean).join("・");
 }

@@ -174,6 +174,8 @@ export function toChapters(events) {
   for (const [ms, t] of L) { if (out.length && Math.floor(out.at(-1)[0] / 1000) === Math.floor(ms / 1000)) out.pop(); out.push([ms, t]); }
   return out.map(([ms, t]) => `${clock(ms)} ${t}`).join("\n") + "\n";
 }
+const PLAN_FIELD = { long: "長期", short: "短期", targets: "攻める順" };
+export const PLAN_CUE = { none: "作戦なし", hit: "攻める星を落とした", lost: "星を失った", event: "情勢の変化", empty: "攻める星がなくなった", stale: "短期の作戦が古い" };
 /* 1件を人が読む1行にする（台本・操作盤の表示で共通）。LLM とのやり取りは all のときだけ */
 export function describe(e, { all = false } = {}) {
   const j = (v) => JSON.stringify(v ?? {});
@@ -198,6 +200,10 @@ export function describe(e, { all = false } = {}) {
     case "error": return { kind: "err", text: `エラー：${e.message}` };
     case "over": return { kind: "sys", text: `ゲーム終了：${e.result === "win" ? "勝利" : e.result === "lose" ? "敗北" : e.result}` };
     case "reflect": return { kind: "sys", text: `反省メモ${e.lessons ? `\n  - ${e.lessons.join("\n  - ")}` : "：うまく書けなかったので前のメモを残しました"}${e.comment ? `\n  感想：${e.comment}` : ""}` };
+    case "plan": return { kind: "sys", text: `作戦${e.turn != null ? `（ターン${e.turn}` : "（"}${e.changed?.length ? `・${e.changed.map(k => PLAN_FIELD[k] ?? k).join("・")}を変更）` : "・変更なし）"}`
+      + `${e.long ? `\n  長期：${e.long}` : ""}${e.short ? `\n  短期：${e.short}` : ""}\n  攻める順：${e.targets?.length ? e.targets.map(t => `${t.id}${t.name ?? ""}`).join(" → ") : "なし"}` };
+    case "plan_hit": return { kind: "sys", text: `作戦の攻める星 ${e.id}${e.name ?? ""} を落としました` };
+    case "plan_turn": { const c = (e.cues ?? []).filter(k => k !== "none"); return c.length ? { kind: "sys", text: `作戦の見直しの合図：${c.map(k => PLAN_CUE[k] ?? k).join("・")}` } : null; }
     case "end": return { kind: "sys", text: `試行の終わり：${e.outcome ?? ""}${e.turn ? `（ターン${e.turn}）` : ""}${e.video ? `　録画 ${e.video}` : ""}` };
     case "send": return all ? { kind: "llm", text: `［LLMへ・${e.role}${e.name ? ` ${e.name}` : ""}］\n${e.content}` } : null;
     case "llm": return all ? { kind: "llm", text: `［LLMの返事・${e.sec}秒${e.usage?.total_tokens ? `・${e.usage.total_tokens}トークン` : ""}］${e.reasoning ? `\n（考えた部分）${e.reasoning}` : ""}${e.content ? `\n${e.content}` : ""}${e.calls?.length ? `\n${e.calls.map(c => `${c.name} ${c.arguments}`).join("\n")}` : ""}` } : null;

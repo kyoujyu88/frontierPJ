@@ -47,6 +47,8 @@ const DEFAULTS = {
   notesMode: "grow", maxSteps: 40, reflectEvery: 10, temperature: 0.6, pace: 300, size: "1280x720", persona: "",
   // 戦闘・ターン処理の演出の速さ（倍）。AIプレイの時間の6〜7割は戦闘の演出なので、既定は2倍
   battleSpeed: 2,
+  // 作戦（長期と短期）を書かせてターンをまたいで覚える（plan.mjs）。外すと --no-plan
+  plan: true,
   // ターンをまたいで会話を続ける（コンテキスト長が分かるときだけ。毎ターン最初の読み直し 約11秒を省く）
   keepContext: true,
   // Ollama が使う GPU の名前（ログに出すだけ。Ollama の API では機種名が分からない）
@@ -78,6 +80,7 @@ function clean(input) {
   s.pace = int(s.pace, 0, 5000, 300);
   s.battleSpeed = [1, 1.5, 2, 3, 4].includes(Number(s.battleSpeed)) ? Number(s.battleSpeed) : 2;
   s.keepContext = s.keepContext !== false && s.keepContext !== "false";
+  s.plan = s.plan !== false && s.plan !== "false";
   s.size = /^\d{3,4}x\d{3,4}$/.test(s.size) ? s.size : "1280x720";
   s.persona = String(s.persona || "").trim();
   s.gpu = String(s.gpu || "").replace(/[\r\n]/g, " ").trim().slice(0, 80);
@@ -113,6 +116,7 @@ function playerArgs(s, n) {
   if (s.notesMode === "readonly") a.push("--notes-readonly");
   if (s.notesMode === "off") a.push("--no-notes");
   if (!s.keepContext) a.push("--no-keep-context");
+  if (!s.plan) a.push("--no-plan");
   // プレイログと録画は同じ名前にそろえる（ログ：logs/<名前>.jsonl、録画：recordings/<名前>.webm）
   const base = trialName(s, n);
   a.push("--log-name", base);

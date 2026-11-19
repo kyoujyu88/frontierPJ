@@ -29,6 +29,7 @@
  *   --reflect-every <n> 何ターンごとにゲームの途中でも振り返るか（既定 10、0で終了時だけ） NOA_REFLECT_EVERY
  *   --notes-readonly   反省メモを読むだけで書き換えない（腕前を固定して見せたいとき）
  *   --no-notes         反省メモを使わない（毎回はじめて遊ぶ状態）
+ *   --no-plan          作戦（set_plan で書く長期・短期の作戦。plan.mjs）を使わない（作戦ありとなしを比べるとき）  NOA_PLAN=off
  *   --tool-mode <auto|native|text>  ツール呼び出しの渡し方（既定 auto）。native＝API のツール呼び出し、text＝ツールを渡さずに手を関数の形で文字に書いてもらう
  *                      （ツール非対応のモデルや、ツール呼び出しの書式が崩れやすいモデル向け）。auto はふだん native で、サーバーが「ツール非対応」と断ったら text に切り替える  LLM_TOOL_MODE
  *   --lite [auto|on|off]  小さなモデル向けの軽量モード（既定 auto）。ルールを短縮版に、配信のしかたとツールの説明を短く、反省メモを600字までにする。
@@ -53,6 +54,7 @@ import { PlayLog, LOG_DIR, subtitlesBeside, readLog } from "./playlog.mjs";
 import { statsOf, statsLine } from "./logstats.mjs";
 import { makeTalk, stripThink, foldSayOnly } from "./talk.mjs";
 import { summaryDelta } from "./sumdiff.mjs";
+import { PLAN_TOOL, PLAN_TOOL_NAME, newPlan, applyPlan, checkPlan, planBlock } from "./plan.mjs";
 import { modelInfo, loadedInfo, serverCtx, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
 
 const sep = process.argv.indexOf("--");
@@ -124,6 +126,8 @@ const NOTES_CHARS = Number(opt("notes-chars", "NOA_NOTES_CHARS", 1200));
 const NOTES_CHARS_GIVEN = argv.includes("--notes-chars") || process.env.NOA_NOTES_CHARS != null;
 const LITE_NOTES_CHARS = 600; // 軽量モードでプロンプトに入れる反省メモ（--notes-chars を指定したらそちら）
 const REFLECT_EVERY = Number(opt("reflect-every", "NOA_REFLECT_EVERY", 10));
+/* 作戦（plan.mjs）：長期と短期の作戦を set_plan で書かせ、毎ターンの最初のメッセージで見せる */
+const USE_PLAN = !argv.includes("--no-plan") && String(process.env.NOA_PLAN ?? "on").trim().toLowerCase() !== "off";
 // 字幕の名前をプレイヤー名にそろえる（-- の後ろで --speaker を指定したらそちらが優先）
 if (!serverArgs.includes("--speaker") && !process.env.GAME_SPEAKER) serverArgs.push("--speaker", NAME);
 if (!MODEL) { console.error("--model を指定してください（例: --model qwen3:14b）"); process.exit(1); }
@@ -141,7 +145,7 @@ if (TOOL_MODE !== TOOL_MODE_RAW) log(`--tool-mode の値「${TOOL_MODE_RAW}」�
 if (MAX_TOKENS === 512 && !/^\s*512(\.\d+)?\s*$/.test(String(MAX_TOKENS_RAW))) log(`--max-tokens の値「${MAX_TOKENS_RAW}」が数ではないので、512 にします（送らないときは 0）`);
 const logUrl = (() => { try { const u = new URL(BASE); return u.origin + u.pathname; } catch { return "(URLを読めません)"; } })();
 plog.write("start", { name: NAME, model: MODEL, baseUrl: logUrl, think: THINK, toolMode: TOOL_MODE, lite: LITE_MODE, temperature: TEMP, maxTokens: maxTokens || null, maxSteps: MAX_STEPS, turns: Number.isFinite(TURNS) ? TURNS : null,
-  notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", serverArgs, pid: process.pid });
+  notes: USE_NOTES ? (WRITE_NOTES ? "grow" : "readonly") : "off", plan: USE_PLAN ? "on" : "off", serverArgs, pid: process.pid });
 if (LOG_FILE) log(`プレイログ：${LOG_FILE}`);
 
 /* ---------- 使っている LLM の詳細（llm-info.mjs）。Ollama なら系統・パラメータ数・量子化・コンテキスト長、
@@ -243,6 +247,8 @@ const tools = mcpTools.filter(t => !HIDDEN.has(t.name)).map(t => ({
   type: "function",
   function: { name: t.name, description: t.description, parameters: { type: "object", properties: {}, ...llmSchema(t.inputSchema) } },
 }));
+// 作戦を書く手（MCPサーバーではなく、ここで受ける。ゲームは進まない）
+if (USE_PLAN) tools.push(PLAN_TOOL);
 
 /* 軽量モードで渡すツール：説明は最初の1文、引数の説明は括弧の前まで、JSON Schema の付けたし（$schema など）は外す。
  * ふだん使わない手（dismiss_dialog・demolish_facility）は渡さない（呼ばれたら実行はする） */
@@ -270,7 +276,7 @@ const TOOL_NAMES = new Set(tools.map(t => t.function.name));
 const MANUAL_BATTLE = TOOL_NAMES.has("battle_attack");
 // 文字で書かれたツール呼び出し（dismiss_dialog()・call:name{…}・say{text:「…」} など）を拾い、字幕からは記法を外す（talk.mjs）
 // 渡していないツール（get_state など）も拾って字幕から外す。実行はせずに断る
-const { cleanTalk, splitReply } = makeTalk({ toolNames: mcpTools.map(t => t.name), name: NAME });
+const { cleanTalk, splitReply } = makeTalk({ toolNames: [...mcpTools.map(t => t.name), ...(USE_PLAN ? [PLAN_TOOL_NAME] : [])], name: NAME });
 
 /* ---------- プロンプト ---------- */
 const persona = PERSONA_FILE ? (await fs.readFile(PERSONA_FILE, "utf8")).trim()
@@ -286,7 +292,8 @@ const GUIDE_LITE = () => `# 配信のしかた
 - セリフは操作ツールの say 引数に書く。
 - 操作の返り値の「のこりの手」から次の手を選ぶ。「打てる手はもうありません」と出たら end_turn。
 - 戦闘はオートで決着する。勝てる相手を選び、傷ついた艦隊は修理してから出す。
-- IDは状況テキストの数字だけを使う。断られたら、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。`;
+- IDは状況テキストの数字だけを使う。断られたら、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。${USE_PLAN ? `
+- 作戦（長期と短期）を set_plan で書いておく。毎ターンの最初に「■今の作戦」が届く。作戦どおりに手を打ち、「見直しの合図」が出たときだけ書き直す。` : ""}`;
 const notesChars = () => lite && !NOTES_CHARS_GIVEN ? Math.min(NOTES_CHARS, LITE_NOTES_CHARS) : NOTES_CHARS;
 const SYSTEM = () => lite && !MANUAL_BATTLE ? `${persona}
 
@@ -306,7 +313,8 @@ ${USE_NOTES ? `\n${notesPrompt(notes, notesChars())}` : ""}`.trimEnd() : `${pers
 ${MANUAL_BATTLE ? `- 戦闘中は、攻撃候補（予測ダメージつき）と移動先から1隻ずつ battle_attack / battle_move を選ぶ。動かしたくない艦（傷ついていて前に出したくない・射程外で近づくと不利など）は battle_wait で待機させる。全艦が動く（待機も含む）と自動で敵の番になるので、「敵の動きを見る」ために battle_end_phase を使わない。終わったら battle_close。
 - 惑星の攻略戦では、中枢と防衛衛星はその場から動かない。待っていても撃たれるだけなので、毎ターン近づいて攻撃する。中枢は爆装（射程1）でしか壊せないので、爆装を持つ艦を中枢の隣まで進める（深淵の巣の中枢はセラフ級の爆装でしか壊せない）。` : `- 戦闘はオートで進む。攻め込む（move_fleet）か襲われると、戦闘は自動で決着して「出来事」に結果が出る。結果をひとこと実況する。
 - あなたの仕事は戦う前の準備：勝てる相手を選ぶ、傷ついた艦隊は修理してから出す、惑星の攻略には爆装を持つ艦を入れる（中枢は爆装でしか壊せない。深淵の巣の中枢はセラフ級の爆装でしか壊せない）、相手に合わせて陣形を選ぶ（移動先の「陣形の目安」）、旗艦は打たれ強い艦にする。オートの戦い方はルールの「オートの戦い方」のとおりで、改装の配分がそのまま戦い方になる。`}
-- IDは状況テキストに書かれた数字だけを使う（艦隊は「ID」の後ろの数字、星は名前の前の数字）。断られたときは、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。
+- IDは状況テキストに書かれた数字だけを使う（艦隊は「ID」の後ろの数字、星は名前の前の数字）。断られたときは、理由と一緒に出る「選べるもの」から選び直す。同じ操作を繰り返さない。${USE_PLAN ? `
+- 作戦を持って戦う：set_plan で、長期の作戦（ゲームの終わりまでの方針と攻め取る星の順番）と短期の作戦（このターンから2〜3ターンの具体的な手）、次に攻める星のID（targets）を書いておく。作戦はターンをまたいで覚えていて、毎ターンの最初に「■今の作戦」として届く。毎ターン一から考え直さず、短期の作戦を進める手を打つ。「見直しの合図」（攻める星を落とした・星を失った・情勢が変わった・短期の作戦が古くなった）が出たときや、作戦が状況に合わなくなったときだけ書き直す。` : ""}
 
 ${rules}
 ${USE_NOTES ? `\n${notesPrompt(notes, notesChars())}` : ""}`.trimEnd();
@@ -610,6 +618,28 @@ let turnStartTokens = null;
 // ターンの最初の返事は、状況にひとこと触れる say だけになりやすい（2026-11-18 20:26 のログでセリフだけの返事 49回のうち 13回）ので、最初の手と一緒に話すよう添える
 const START = "今の状況です。操作を始めてください（ひとこと話すなら、最初の手の say 引数に）。";
 let lastSum = ""; // 最後に渡した状況テキスト（全文）。次のターンに会話を続けるとき、ここからの差分だけを渡す
+/* ---------- 作戦（plan.mjs） ----------
+ * 作戦はシステムプロンプトには入れず、毎ターンの最初のメッセージ（会話の後ろに足すもの）に入れる。書き直すたびにプロンプトの先頭が変わると、
+ * ローカルLLMが全部を読み直すため。会話を作り直しても、作り直した最初のメッセージに入るので残る */
+let plan = newPlan();
+const planAge = (t, turn) => t == null ? null : turn - t;
+async function planForTurn(turn) {
+  if (!USE_PLAN) return "";
+  const st = (await tool("get_state").catch(() => null))?.json;
+  if (!st?.planets) return "";
+  const { cues, hits } = checkPlan(plan, st, turn);
+  for (const h of hits) plog.write("plan_hit", { turn, id: h.id, name: h.name });
+  plog.write("plan_turn", { turn, has: plan.sets > 0, cues: cues.map(c => c.kind), longAge: planAge(plan.longTurn, turn), shortAge: planAge(plan.shortTurn, turn), targets: plan.targets });
+  const shown = cues.filter(c => c.kind !== "none");
+  if (shown.length) log(`作戦の見直しの合図：${shown.map(c => c.text).join("")}`);
+  return planBlock(plan, st, cues);
+}
+// ターンの途中で会話を作り直すとき：作戦だけを見せる（合図は出さない）
+async function planNow() {
+  if (!USE_PLAN) return "";
+  const st = (await tool("get_state").catch(() => null))?.json;
+  return st?.planets ? planBlock(plan, st) : "";
+}
 function freshTurn(text, sum) {
   const first = { role: "user", content: `${text}\n\n${sum}` };
   shortOf.set(first, `${text}\n${OLD_NOTE}`);
@@ -618,11 +648,12 @@ function freshTurn(text, sum) {
 }
 async function startTurn(turn) {
   const sum = await summary();
+  const pb = await planForTurn(turn);
   // 続ける：前のターンの会話の後ろに、新しい状況を足すだけ（前のメッセージは書き換えない）。
   // 状況テキストは、惑星と出来事を前から変わった行だけにする（会話の前のほうに前の状況テキストがある）
   if (KEEP && CTX && convo && !MANUAL_BATTLE && convoTurns < KEEP_TURNS && convo[0].content === SYSTEM()) {
     const delta = summaryDelta(lastSum, sum);
-    const add = { role: "user", content: `【ターン${turn}】前のターンが終わりました。ここまでの「のこりの手」は古くなっています（資金・艦隊・星が変わっています）。下の新しい状況を見てください。\n${START}\n\n${delta ?? sum}` };
+    const add = { role: "user", content: `【ターン${turn}】前のターンが終わりました。ここまでの「のこりの手」は古くなっています（資金・艦隊・星が変わっています）。下の新しい状況を見てください。\n${pb ? `${pb}\n` : ""}${START}\n\n${delta ?? sum}` };
     const est = sizeOf.of([...convo, add]), res = reserve();
     if (est + res <= CTX * 0.9) {
       keepFrom = convo.length; convo.push(add); convoTurns++; lastSum = sum; turnStartTokens = est;
@@ -632,7 +663,7 @@ async function startTurn(turn) {
     plog.write("context", { keep: false, est, reserve: res, ctx: CTX });
   }
   const r = recapText();
-  const msgs = freshTurn(`${r ? `${r}\n\n` : ""}${START}`, sum);
+  const msgs = freshTurn(`${r ? `${r}\n\n` : ""}${pb ? `${pb}\n\n` : ""}${START}`, sum);
   turnStartTokens = sizeOf.of(msgs); // 最初の返事の prompt_tokens（実測）で置き換える
   return msgs;
 }
@@ -653,7 +684,8 @@ async function compactIfLong(messages) {
   plog.write("context", { compact: true, est: sizeOf.of(messages), ctx: CTX });
   turnStartTokens = null; // このターンの伸びは測れなくなった
   const r = recapText();
-  const head = `${r ? `${r}\n` : ""}${done.length ? `このターンにしたこと：${done.join("、")}\n` : ""}`;
+  const pb = await planNow();
+  const head = `${r ? `${r}\n` : ""}${done.length ? `このターンにしたこと：${done.join("、")}\n` : ""}${pb ? `${pb}\n` : ""}`;
   return freshTurn(`${head ? `${head}\n` : ""}（会話が長くなったので、まとめ直しました。このターンの続きです）\n${START}`, await summary());
 }
 
@@ -772,7 +804,7 @@ async function playTurn(turn) {
         : failed.has(sameKey(c.function.name, args)) ? `失敗：さっき断られた手と同じです（${failed.get(sameKey(c.function.name, args))}）。そのあと何も変わっていないので、同じ理由で断られます。「のこりの手」や「選べるもの」から別の手を選んでください。` : null;
       lastName = c.function.name;
       if (refuse) { wasted++; log("  ✗ " + refuse.split("。")[0]); plog.write("refuse", { name: c.function.name, args, reason: refuse.split("。")[0] }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: refuse }); continue; }
-      if (c.function.name !== "get_summary") wasted = 0;
+      if (c.function.name !== "get_summary" && c.function.name !== PLAN_TOOL_NAME) wasted = 0;
       if (c.function.name === "say") {
         // say ツールを直接呼んだとき：地の文と同じく整えて字幕に出し、プレイログのセリフにも残す
         const r = args?.text ? await say(args.text, args.seconds ? { seconds: args.seconds } : {}) : null;
@@ -786,6 +818,21 @@ async function playTurn(turn) {
         const line = args.say; delete args.say;
         if (await say(line.slice(0, 160)) && !turnTalk) turnTalk = cleanTalk(line).slice(0, 200);
       } else delete args.say;
+      if (c.function.name === PLAN_TOOL_NAME) {
+        // 作戦を書く手：ここで覚える（MCPサーバーには送らない。ゲームは進まないので、断った手の記録や「のこりの手」には関わらない）
+        const pst = (await tool("get_state").catch(() => null))?.json;
+        const r = applyPlan(plan, args, { turn, st: pst });
+        if (r.ok) {
+          plog.write("plan", r.entry);
+          log(`  作戦${r.changed.length ? `（${r.changed.map(k => ({ long: "長期", short: "短期", targets: "攻める順" })[k]).join("・")}を変更）` : "（変更なし）"}：長期「${plan.long}」短期「${plan.short}」攻める順 ${plan.targets.join("→") || "なし"}`);
+        } else {
+          if (r.refused) wasted++;
+          log("  ✗ " + r.content.split("。")[0]);
+          plog.write("refuse", { name: PLAN_TOOL_NAME, args, reason: r.content.split("。")[0] });
+        }
+        messages.push({ role: "tool", tool_call_id: c.id, name: PLAN_TOOL_NAME, content: r.content });
+        continue;
+      }
       if (c.function.name === "battle_end_phase") {
         const stop = await checkEndPhase();
         if (stop) { log("  ✗ まだ動ける艦があるので、フェイズ終了を止めました"); plog.write("refuse", { name: c.function.name, args, reason: "まだ動ける艦があるので、フェイズ終了を止めました" }); messages.push({ role: "tool", tool_call_id: c.id, name: c.function.name, content: stop }); continue; }
@@ -892,7 +939,7 @@ for (let n = 0; n < TURNS; n++) {
     if (reflectedAt !== -1) await writeNotes(`ゲームが${outcomeText(st.over)}で終わったところ`, outcomeText(st.over), st.over);
     reflectedAt = -1;
     if (!LOOP) break;
-    await tool("new_game", { confirm: true }); recaps = []; done = []; convo = null; lastSum = "";
+    await tool("new_game", { confirm: true }); recaps = []; done = []; convo = null; lastSum = ""; plan = newPlan();
     journal = new Journal(); reflectedAt = 0;
     st = (await tool("get_state")).json; journal.begin(st);
     plog.write("newgame", {});
