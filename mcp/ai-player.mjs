@@ -55,6 +55,7 @@ import { statsOf, statsLine } from "./logstats.mjs";
 import { makeTalk, stripThink, foldSayOnly } from "./talk.mjs";
 import { summaryDelta } from "./sumdiff.mjs";
 import { PLAN_TOOL, PLAN_TOOL_NAME, PLAN_FIELD, newPlan, applyPlan, checkPlan, planBlock } from "./plan.mjs";
+import { llmTools } from "./llm-tools.mjs";
 import { modelInfo, loadedInfo, serverCtx, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
 
 const sep = process.argv.indexOf("--");
@@ -233,20 +234,8 @@ async function say(text, extra = {}) {
 // ルールはシステムプロンプトに入れてあるので get_rules も外す（小さなモデルが読み直しを繰り返すため）
 const HIDDEN = new Set(["get_state", "get_screenshot", "new_game", "battle_state", "get_rules", "finish_recording", "recording_info"]);
 const mcpTools = (await mcp.listTools()).tools;
-// のあに見せる引数の形は、今までどおり整数のIDと英語キーだけにする。サーバーの公開スキーマは名前・日本語名も許す（anyOf と
-// 日本語の選択肢。Issue #28）が、小さなモデルに見せる道具の説明が長く・複雑になると、読み直しの時間や引数の書き方が変わるため。
-// 名前や日本語で書いても、サーバーは今までどおり読む
-const forLlm = p => {
-  const ints = p?.anyOf?.filter(x => x.type === "integer");
-  if (ints?.length === 1) { const { anyOf, ...rest } = p; return { ...ints[0], ...rest, ...(rest.description ? { description: rest.description.replace(/（[^（]*でもよい）$/, "") } : {}) }; }
-  if (Array.isArray(p?.enum) && p.enum.some(v => /^[a-z]+$/.test(v))) { const { description, ...rest } = p; return { ...rest, enum: p.enum.filter(v => /^[a-z]+$/.test(v)) }; } // 英語キーの意味は道具の説明に書いてある
-  return p;
-};
-const llmSchema = s => s?.properties ? { ...s, properties: Object.fromEntries(Object.entries(s.properties).map(([k, p]) => [k, forLlm(p)])) } : s;
-const tools = mcpTools.filter(t => !HIDDEN.has(t.name)).map(t => ({
-  type: "function",
-  function: { name: t.name, description: t.description, parameters: { type: "object", properties: {}, ...llmSchema(t.inputSchema) } },
-}));
+// のあに見せる引数の形は、今までどおり整数のIDと英語キーだけにする（サーバーの公開スキーマは名前・日本語名も許す。llm-tools.mjs）
+const tools = llmTools(mcpTools, HIDDEN);
 // 作戦を書く手（MCPサーバーではなく、ここで受ける。ゲームは進まない）
 if (USE_PLAN) tools.push(PLAN_TOOL);
 

@@ -2,12 +2,14 @@
  *   node api-test.mjs
  * 1. tools/list の入力スキーマが、艦隊・星の名前と、施設・陣形の日本語名を許している（#28）
  *    スキーマどおりに検証してから送り、名前で書いても数字・英語キーで書いても同じ操作になる。いない艦隊の名前は理由つきで断る
+ *    のあ（LLM）に見せる道具は、今までどおり整数のIDと英語キーだけの形に戻っている（llm-tools.mjs）
  * 2. new_fleet を応答を待たずに2件送っても、編成は1件だけ。もう1件は理由つきで断られ、3艦隊・資金-32 で止まる（#27）
  *    演出の待ちがある --pace 300 で起動する（待ちの間に2件目が検査を通り抜けていた）
  */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "node:url";
+import { llmTools, llmLeftovers } from "./llm-tools.mjs";
 
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -20,22 +22,34 @@ await client.connect(transport);
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? "  ✓" : "  ✗"} ${msg}`); if (!ok) failures++; };
 
-/* JSON Schema の小さな検証（tools/list に出る形：type・enum・anyOf・properties・required だけ） */
+/* JSON Schema の小さな検証（tools/list に出る形：type・enum・const・anyOf・oneOf・allOf・properties・required・additionalProperties・minLength）。
+ * 知らないキーワードは黙って通さずに失敗にする。SDK や zod の更新で出力の形が変わったとき（例：.pipe() が allOf や $ref になる）に、
+ * 実際のクライアントでは弾かれるのにこのテストだけ通る、を防ぐため（PR #29 のレビュー） */
+const KNOWN = new Set(["type", "enum", "const", "anyOf", "oneOf", "allOf", "properties", "required", "additionalProperties", "minLength", "description", "$schema", "default"]);
+const unknownKeys = new Set();
 function valid(schema, v) {
-  if (!schema || typeof schema !== "object") return true;
+  if (schema === true || schema === undefined) return true;
+  if (!schema || typeof schema !== "object") return false;
+  const odd = Object.keys(schema).filter(k => !KNOWN.has(k));
+  if (odd.length) { odd.forEach(k => unknownKeys.add(k)); return false; }
   if (schema.anyOf && !schema.anyOf.some(s => valid(s, v))) return false;
   if (schema.oneOf && schema.oneOf.filter(s => valid(s, v)).length !== 1) return false;
+  if (schema.allOf && !schema.allOf.every(s => valid(s, v))) return false;
   if (schema.enum && !schema.enum.includes(v)) return false;
+  if ("const" in schema && schema.const !== v) return false;
   if (schema.type) {
     const types = [].concat(schema.type);
     const is = t => t === "integer" ? Number.isInteger(v) : t === "number" ? typeof v === "number" : t === "string" ? typeof v === "string"
-      : t === "boolean" ? typeof v === "boolean" : t === "object" ? v && typeof v === "object" && !Array.isArray(v) : t === "array" ? Array.isArray(v) : t === "null" ? v === null : true;
+      : t === "boolean" ? typeof v === "boolean" : t === "object" ? v && typeof v === "object" && !Array.isArray(v) : t === "array" ? Array.isArray(v) : t === "null" ? v === null : false;
     if (!types.some(is)) return false;
   }
   if (typeof v === "string" && schema.minLength != null && v.length < schema.minLength) return false;
-  if (schema.properties && v && typeof v === "object") {
+  if (v && typeof v === "object" && !Array.isArray(v)) {
     for (const k of schema.required ?? []) if (!(k in v)) return false;
-    for (const [k, x] of Object.entries(v)) if (schema.properties[k] && !valid(schema.properties[k], x)) return false;
+    for (const [k, x] of Object.entries(v)) {
+      const sub = schema.properties?.[k];
+      if (sub ? !valid(sub, x) : schema.additionalProperties === false ? true : schema.additionalProperties && typeof schema.additionalProperties === "object" && !valid(schema.additionalProperties, x)) return false;
+    }
   }
   return true;
 }
@@ -59,6 +73,28 @@ try {
     check(["line", "wedge", "square", "crane", "rear", "横陣", "楔形", "方陣", "鶴翼", "後衛陣"].every(v => valid(sf.formation, v)) && !valid(sf.formation, "円陣"), "formation は英語キーと日本語名（それ以外は不可）");
     check(["mine", "yard", "sats", "lab", "flak", "採掘所", "造船所", "防衛衛星群", "研究所", "対空砲台"].every(v => valid(bf.facility, v)), "facility は英語キーと日本語名");
     check(!!sf.fleet_id.description && !!sf.formation.description, "fleet_id・formation に説明が付いている");
+    // 検証そのもの：知らないキーワードは失敗、allOf は全部、const は一致だけ
+    check(!valid({ $ref: "#/x" }, 1) && !valid({ not: { type: "string" } }, 1) && !valid({ allOf: [{ type: "integer" }, { type: "string" }] }, 1)
+      && valid({ allOf: [{ type: "integer" }, { type: "number" }] }, 1) && valid({ const: true }, true) && !valid({ const: true }, false), "検証：知らないキーワード（$ref・not）は失敗、allOf は全部を満たすときだけ、const は一致だけ");
+    unknownKeys.clear();
+    const walk = (x) => { if (Array.isArray(x)) return x.forEach(walk); if (x && typeof x === "object") for (const [k, v] of Object.entries(x)) { if (k === "properties") Object.values(v).forEach(walk); else { if (!KNOWN.has(k)) unknownKeys.add(k); walk(v); } } };
+    Object.values(tools).forEach(t => walk(t.inputSchema));
+    check(!unknownKeys.size, `tools/list のスキーマはこの検証が知っているキーワードだけ${unknownKeys.size ? `（知らない：${[...unknownKeys].join("・")}）` : ""}`);
+    unknownKeys.clear();
+  }
+
+  console.log("1b. のあ（LLM）に見せる道具の形（llm-tools.mjs）");
+  {
+    const llm = llmTools(Object.values(tools));
+    const left = llmLeftovers(llm);
+    check(!left.length, `公開スキーマの広げた部分（anyOf・日本語の選択肢・「でもよい」）が残っていない${left.length ? `：${left.join("、")}` : ""}`);
+    const P = Object.fromEntries(llm.map(t => [t.function.name, t.function.parameters.properties]));
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+    check(same(P.set_formation.fleet_id, { type: "integer", description: "自軍艦隊のID" }) && same(P.new_fleet.planet_id, { type: "integer", description: "自国の惑星のID" })
+      && same(P.move_fleet.to, { type: "integer", description: "行き先の惑星ID" }), "ID の引数は整数だけで、説明から名前の案内を外す");
+    check(same(P.set_formation.formation, { type: "string", enum: ["line", "wedge", "square", "crane", "rear"] }) && same(P.build_facility.facility, { type: "string", enum: ["mine", "yard", "sats", "lab", "flak"] }),
+      "施設・陣形の選択肢は英語キーだけ（引数の説明なし）");
+    check(same(P.move_fleet.say, tools.move_fleet.inputSchema.properties.say), "ほかの引数（say など）はそのまま");
   }
 
   const s0 = await state();
