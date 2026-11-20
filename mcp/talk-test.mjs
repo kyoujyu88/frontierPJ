@@ -32,6 +32,9 @@ eq(lines("I'm ready! end_turn()"), ["I'm ready!"], "英語のアポストロフ�
 // ほかのツールの呼び出しは字幕から外し、実行の候補にする
 eq(calls("よし行くよ！ move_fleet(fleet_id=1, to=2) end_turn()"), [["move_fleet", { fleet_id: 1, to: 2 }], ["end_turn", {}]], "関数の形の呼び出しを拾う");
 eq(lines("よし行くよ！ move_fleet(fleet_id=1, to=2) end_turn()"), ["よし行くよ！"], "その記法は字幕に出さない");
+// のこりの手の書き方（名前: 値）をそのまま写した呼び出しも拾う（2026-11-20 から game-api.js のヒントはこの形）
+eq(calls('進むよ move_fleet(fleet_id: 6, to: 7) build(planet_id: 3, kind: "lab", replace: true)'), [["move_fleet", { fleet_id: 6, to: 7 }], ["build", { planet_id: 3, kind: "lab", replace: true }]], "名前: 値 の形の呼び出しを拾う");
+eq(lines('進むよ move_fleet(fleet_id: 6, to: 7)'), ["進むよ"], "名前: 値 の形も字幕に出さない");
 eq(calls("<|tool_call>call:battle_move{unit_id:30,x:3,y:2}<tool_call|>前に出るよ"), [["battle_move", { unit_id: 30, x: 3, y: 2 }]], "Gemma の call:name{…} を拾う");
 eq(calls("call:move_fleet{fleet_id:1,to:3<tool_call|>"), [["move_fleet", { fleet_id: 1, to: 3 }]], "閉じ括弧の無い call:name{… も拾う");
 eq(calls("build{planet_id:2, kind:\"mine\"} say{text:「採掘所を建てたよ」}"), [["build", { planet_id: 2, kind: "mine" }]], "say 以外の name{…} の形も拾う");
