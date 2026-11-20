@@ -8,6 +8,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "node:url";
+import { llmSchema, FACILITY, FORMATION } from "./llm-schema.mjs";
 
 const transport = new StdioClientTransport({
   command: process.execPath,
@@ -20,12 +21,21 @@ await client.connect(transport);
 let failures = 0;
 const check = (ok, msg) => { console.log(`${ok ? "  ✓" : "  ✗"} ${msg}`); if (!ok) failures++; };
 
-/* JSON Schema の小さな検証（tools/list に出る形：type・enum・anyOf・properties・required だけ） */
+/* JSON Schema の小さな検証（tools/list に出る形：type・enum・const・anyOf・oneOf・allOf・properties・required・additionalProperties・minLength）。
+ * 知らないキーワード（$ref・not・pattern など）が出てきたら、黙って通さずに失敗にする（SDK や zod の更新で出力の形が変わったとき、
+ * 実際のクライアントでは弾かれるのにこのテストだけ通る、を防ぐ。PR #29 のレビュー） */
+const CHECKED = new Set(["type", "enum", "const", "anyOf", "oneOf", "allOf", "properties", "required", "additionalProperties", "minLength"]);
+const IGNORED = new Set(["description", "$schema", "title", "default", "examples"]); // 検証には関わらない
+const unknownKeywords = new Set();
 function valid(schema, v) {
   if (!schema || typeof schema !== "object") return true;
+  const unknown = Object.keys(schema).filter(k => !CHECKED.has(k) && !IGNORED.has(k));
+  if (unknown.length) { unknown.forEach(k => unknownKeywords.add(k)); return false; }
+  if (schema.allOf && !schema.allOf.every(s => valid(s, v))) return false;
   if (schema.anyOf && !schema.anyOf.some(s => valid(s, v))) return false;
   if (schema.oneOf && schema.oneOf.filter(s => valid(s, v)).length !== 1) return false;
   if (schema.enum && !schema.enum.includes(v)) return false;
+  if ("const" in schema && schema.const !== v) return false;
   if (schema.type) {
     const types = [].concat(schema.type);
     const is = t => t === "integer" ? Number.isInteger(v) : t === "number" ? typeof v === "number" : t === "string" ? typeof v === "string"
@@ -35,7 +45,11 @@ function valid(schema, v) {
   if (typeof v === "string" && schema.minLength != null && v.length < schema.minLength) return false;
   if (schema.properties && v && typeof v === "object") {
     for (const k of schema.required ?? []) if (!(k in v)) return false;
-    for (const [k, x] of Object.entries(v)) if (schema.properties[k] && !valid(schema.properties[k], x)) return false;
+    for (const [k, x] of Object.entries(v)) {
+      if (schema.properties[k]) { if (!valid(schema.properties[k], x)) return false; }
+      else if (schema.additionalProperties === false) return false;
+      else if (schema.additionalProperties && typeof schema.additionalProperties === "object" && !valid(schema.additionalProperties, x)) return false;
+    }
   }
   return true;
 }
@@ -59,6 +73,27 @@ try {
     check(["line", "wedge", "square", "crane", "rear", "横陣", "楔形", "方陣", "鶴翼", "後衛陣"].every(v => valid(sf.formation, v)) && !valid(sf.formation, "円陣"), "formation は英語キーと日本語名（それ以外は不可）");
     check(["mine", "yard", "sats", "lab", "flak", "採掘所", "造船所", "防衛衛星群", "研究所", "対空砲台"].every(v => valid(bf.facility, v)), "facility は英語キーと日本語名");
     check(!!sf.fleet_id.description && !!sf.formation.description, "fleet_id・formation に説明が付いている");
+    check(!valid({ type: "integer", not: { const: 3 } }, 1) && unknownKeywords.has("not"), "知らないキーワード（not）は黙って通さない");
+    unknownKeywords.delete("not");
+    check(!valid({ allOf: [{ type: "integer" }, { enum: [1, 2] }] }, 3) && valid({ allOf: [{ type: "integer" }, { enum: [1, 2] }] }, 2), "allOf は全部を満たすときだけ通る");
+  }
+
+  console.log("1b. のあに見せる引数の形（llm-schema.mjs）：整数のIDと英語キーだけ");
+  {
+    const en = new Set([...Object.values(FACILITY), ...Object.values(FORMATION)]);
+    const bad = [];
+    for (const t of Object.values(tools)) {
+      for (const [k, p] of Object.entries(llmSchema(t.inputSchema)?.properties ?? {})) {
+        if (p.anyOf || p.oneOf || p.allOf) bad.push(`${t.name}.${k} に anyOf などが残る`);
+        if (/^(fleet_id|planet_id|to)$/.test(k) && p.type !== "integer") bad.push(`${t.name}.${k} が integer でない`);
+        if (/でもよい）$/.test(p.description ?? "")) bad.push(`${t.name}.${k} の説明に「でもよい」が残る`);
+        if (Array.isArray(p.enum) && p.enum.some(v => !en.has(v))) bad.push(`${t.name}.${k} の選択肢に英語キー以外：${p.enum.join(",")}`);
+      }
+    }
+    check(!bad.length, `IDは integer だけ・説明の書き添えなし・選択肢は英語キーだけ${bad.length ? `：${bad.join("／")}` : ""}`);
+    const lf = llmSchema(tools.set_formation.inputSchema).properties, lb = llmSchema(tools.build_facility.inputSchema).properties;
+    check(lf.formation.enum.join() === "line,wedge,square,crane,rear" && lb.facility.enum.join() === "mine,yard,sats,lab,flak", "陣形・施設の選択肢は英語キーの5つずつ");
+    check(lf.fleet_id.description === "自軍艦隊のID" && llmSchema(tools.move_fleet.inputSchema).properties.to.description === "行き先の惑星ID", "IDの説明は名前の書き添えを外した形");
   }
 
   const s0 = await state();
@@ -107,4 +142,5 @@ try {
 } finally {
   await client.close();
 }
+if (unknownKeywords.size) check(false, `検証できない JSON Schema のキーワード：${[...unknownKeywords].join("・")}（valid() に足す）`);
 if (failures) { console.log(`✗ テスト失敗（${failures} 件）`); process.exitCode = 1; } else console.log("✓ テスト成功");

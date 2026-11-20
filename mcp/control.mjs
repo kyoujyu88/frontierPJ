@@ -47,6 +47,8 @@ const DEFAULTS = {
   notesMode: "grow", maxSteps: 40, reflectEvery: 10, temperature: 0.6, pace: 300, size: "1280x720", persona: "",
   // 戦闘・ターン処理の演出の速さ（倍）。AIプレイの時間の6〜7割は戦闘の演出なので、既定は2倍
   battleSpeed: 2,
+  // オート戦闘を飛ばして結果だけを見せる（--skip-battle）。録画・配信で戦闘を見せたいときのため、既定は切っておく
+  skipBattle: false,
   // 作戦（長期と短期）を書かせてターンをまたいで覚える（plan.mjs）。外すと --no-plan
   plan: true,
   // ターンをまたいで会話を続ける（コンテキスト長が分かるときだけ。毎ターン最初の読み直し 約11秒を省く）
@@ -80,6 +82,7 @@ function clean(input) {
   s.pace = int(s.pace, 0, 5000, 300);
   s.battleSpeed = [1, 1.5, 2, 3, 4].includes(Number(s.battleSpeed)) ? Number(s.battleSpeed) : 2;
   s.keepContext = s.keepContext !== false && s.keepContext !== "false";
+  s.skipBattle = s.skipBattle === true || s.skipBattle === "true";
   s.plan = s.plan !== false && s.plan !== "false";
   s.size = /^\d{3,4}x\d{3,4}$/.test(s.size) ? s.size : "1280x720";
   s.persona = String(s.persona || "").trim();
@@ -121,6 +124,7 @@ function playerArgs(s, n) {
   const base = trialName(s, n);
   a.push("--log-name", base);
   a.push("--", "--pace", String(s.pace), "--battle-speed", String(s.battleSpeed), "--size", s.size);
+  if (s.skipBattle) a.push("--skip-battle");
   if (s.headless) a.push("--headless");
   if (s.record) a.push("--record", recordDir(), "--record-name", base);
   return a;

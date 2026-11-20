@@ -173,6 +173,7 @@ a { color: var(--blue); }
           <option value="off">使わない（毎回はじめて）</option>
         </select>
         <label class="check" title="長期と短期の作戦を書かせ、毎ターンの最初に見せる（外すと、毎ターン一から考える以前の動き。作戦ありとなしを比べるとき）"><input type="checkbox" id="plan" name="plan"> 作戦を持たせる（長期と短期の作戦をターンをまたいで覚える）</label>
+        <label class="check" title="オートの戦術戦闘を演出なしで一瞬で決着させ、勝敗の帯だけを見せる。結果は変わらない。艦隊の移動・敵の移動は「戦闘の演出の速さ」のまま"><input type="checkbox" id="skipBattle" name="skipBattle"> オート戦闘を飛ばす（演出を待たずに結果だけ表示。録画にも戦闘の場面は映らない）</label>
         <label class="check"><input type="checkbox" id="record" name="record"> 録画する（試行ごとに、音つきの動画と、映像だけ・音だけのファイル）</label>
         <label class="check"><input type="checkbox" id="headless" name="headless"> ゲームの窓を出さない（裏で回す）</label>
         <details>
@@ -286,7 +287,7 @@ a { color: var(--blue); }
 
 <script>
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["baseUrl", "model", "name", "think", "toolMode", "lite", "trials", "turns", "notesMode", "plan", "record", "headless", "pace", "battleSpeed", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
+const FIELDS = ["baseUrl", "model", "name", "think", "toolMode", "lite", "trials", "turns", "notesMode", "plan", "record", "headless", "pace", "battleSpeed", "skipBattle", "keepContext", "size", "maxSteps", "reflectEvery", "temperature", "recordDir", "persona", "gpu"];
 let status = {}, history = [], tick = null;
 
 async function api(path, body) {

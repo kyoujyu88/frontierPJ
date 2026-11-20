@@ -64,6 +64,7 @@ test("ターン数・1ターンの秒数・内訳", () => {
   // 移動と戦闘：move_fleet 20 + 0.3、end_turn 3 + 4 = 27.3 → 13.7/ターン（四捨五入）
   assert.equal(s.time.battlePerTurn, 13.7);
   assert.equal(s.settings.battleSpeed, "2");
+  assert.equal(s.settings.skipBattle, false);
   assert.equal(s.settings.ctx, 16384);
 });
 
