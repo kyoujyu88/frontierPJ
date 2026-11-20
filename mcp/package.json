@@ -10,6 +10,7 @@
     "http": "node server.mjs --http 3939",
     "test": "node selftest.mjs",
     "test:notes": "node notes-test.mjs",
+    "test:plan": "node plan-test.mjs",
     "test:regress": "node regress.mjs",
     "test:api": "node api-test.mjs",
     "test:recsync": "node rec-sync-test.mjs",

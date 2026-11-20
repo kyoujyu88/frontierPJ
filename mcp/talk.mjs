@@ -47,6 +47,7 @@ export const LABELS = {
   battle_retreat: "撤退", battle_close: "戦闘の終了",
   get_summary: "状況の確認", get_state: "状況の確認", get_rules: "ルールの確認", get_screenshot: "画面の確認",
   battle_state: "戦況の確認", new_game: "新しいゲーム", say: "", finish_recording: "", recording_info: "",
+  set_plan: "作戦の書き直し", // ai-player.mjs が受ける手（plan.mjs）
 };
 
 const scalar = (v) => /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v === "true" ? true : v === "false" ? false : v === "null" ? null : v;
