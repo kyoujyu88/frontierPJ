@@ -36,6 +36,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { FACILITIES, FORMATIONS, alsoName } from "./llm-tools.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
@@ -169,8 +170,8 @@ const idOrName = what => z.union([z.number().int(`${what}は整数で指定し�
 const idArg = (kind, what) => idOrName(what).pipe(z.preprocess(byName(kind), z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }).int(`${what}は整数で指定してください`)));
 const num = what => z.preprocess(numLike, z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }));
 const int = what => z.preprocess(numLike, z.number({ required_error: `${what}を指定してください`, invalid_type_error: `${what}は数字で指定してください` }).int(`${what}は整数で指定してください`));
-const fleetId = idArg("fleet", "fleet_id（自軍艦隊のID。状況テキストの「ID1」の数字）").describe("自軍艦隊のID（艦隊の名前「第2艦隊」でもよい）");
-const planetId = idArg("planet", "planet_id（惑星のID。状況テキストの「■惑星」の行の先頭の数字）").describe("自国の惑星のID（星の名前でもよい）");
+const fleetId = idArg("fleet", "fleet_id（自軍艦隊のID。状況テキストの「ID1」の数字）").describe(alsoName("自軍艦隊のID", "艦隊の名前「第2艦隊」"));
+const planetId = idArg("planet", "planet_id（惑星のID。状況テキストの「■惑星」の行の先頭の数字）").describe(alsoName("自国の惑星のID", "星の名前"));
 const shipIndex = int("ship_index（艦隊内の番号。0が旗艦）").describe("艦隊内の番号（0が旗艦）");
 const bool = z.preprocess(v => v === "true" ? true : v === "false" ? false : v, z.boolean({ invalid_type_error: "true か false で指定してください" }));
 /* 施設・陣形：公開するスキーマの選択肢は英語キーと日本語名の両方（Issue #28）。中では英語キーにそろえる。
@@ -179,8 +180,8 @@ const named = (map, what) => z.preprocess(v => { if (typeof v !== "string") retu
   z.enum([...Object.values(map), ...Object.keys(map)], { errorMap: () => ({ message: `${what}は ${Object.entries(map).map(([n, k]) => `${k}=${n}`).join("・")} のいずれかで指定してください` }) })
     .transform(v => map[v] ?? v))
   .describe(`${what.replace(/^\w+（(.+)）$/, "$1")}。英語キーか日本語名：${Object.entries(map).map(([n, k]) => `${k}=${n}`).join("・")}`);
-const facility = named({ 採掘所: "mine", 造船所: "yard", 防衛衛星群: "sats", 研究所: "lab", 対空砲台: "flak" }, "facility（施設）");
-const formation = named({ 横陣: "line", 楔形: "wedge", 方陣: "square", 鶴翼: "crane", 後衛陣: "rear" }, "formation（陣形）");
+const facility = named(FACILITIES, "facility（施設）");
+const formation = named(FORMATIONS, "formation（陣形）");
 // ゲームを操作するツールに付ける「ひとこと」。セリフだけの say を別に呼ばなくても、操作と一緒に字幕を出せる（LLM との往復が1回減る）
 const SAY = { say: z.string().optional().describe("この操作と一緒に視聴者へ言うひとこと（字幕に出る。なくてもよい）") };
 
@@ -226,8 +227,8 @@ function buildServer() {
 
   // 作戦卓
   const BATTLE_NOTE = MANUAL_BATTLE ? "" : "戦闘はオートで決着してから返る（結果は events と battles）。";
-  tool("move_fleet", "自軍艦隊を移動させる（1艦隊につき1ターンに1回）。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to=いまいる星 で攻略戦）。" + BATTLE_NOTE + "候補は状況テキストの「移動先」と、操作の返り値の「のこりの手」（get_state なら myFleets[].moveOptions）。", {
-    fleet_id: fleetId, to: idArg("planet", "to（行き先の惑星ID）").describe("行き先の惑星ID（星の名前でもよい）"), ...SAY,
+  tool("move_fleet", "自軍艦隊を移動させる（1艦隊につき1ターンに1回）。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to: いまいる星 で攻略戦）。" + BATTLE_NOTE + "候補は状況テキストの「移動先」と、操作の返り値の「のこりの手」（get_state なら myFleets[].moveOptions）。", {
+    fleet_id: fleetId, to: idArg("planet", "to（行き先の惑星ID）").describe(alsoName("行き先の惑星ID", "星の名前")), ...SAY,
   }, ({ fleet_id, to }) => call("moveFleet", fleet_id, to));
   tool("intercept", "艦隊と同じ星に居座っている敵（異生体、休戦していなければヴァルガ艦隊も）を迎撃して戦闘を始める。使えるのは、状況テキストでその艦隊に「迎撃可」と出ているときだけ（別の星の敵へ攻め込むのは move_fleet）。自国の星なら対空砲台も働く。" + BATTLE_NOTE, { fleet_id: fleetId, ...SAY }, ({ fleet_id }) => call("intercept", fleet_id));
   tool("invest_research", "資金を研究に投資する（30刻み、1ターンに合計120まで）。必要量に達すると次の艦級が完成し、改装上限も上がる。多すぎる額は、投資できる額に減らして実行する。状況テキストに「いまは投資できない」と出ているあいだは呼ばない。", {
@@ -243,7 +244,7 @@ function buildServer() {
   tool("set_formation", "艦隊の陣形を変える（行動は消費しない）。line横陣＝補正なし／wedge楔形＝1ラウンド目の移動+1／square方陣＝旗艦の隣に味方がいる間、旗艦の被ダメージ-25%／crane鶴翼＝側面・背面への攻撃+15%／rear後衛陣＝ミサイル+1。", {
     fleet_id: fleetId, formation, ...SAY,
   }, ({ fleet_id, formation }) => call("setFormation", fleet_id, formation));
-  tool("build_ship", "造船所のある自国の星にいる艦隊に艦を建造する。4隻未満なら追加（replace は付けない）。4隻いて旧式の艦がいるときだけ replace=true で、最も旧式の艦を下取りして置き換える。", {
+  tool("build_ship", "造船所のある自国の星にいる艦隊に艦を建造する。4隻未満なら追加（replace は付けない）。4隻いて旧式の艦がいるときだけ replace: true で、最も旧式の艦を下取りして置き換える。", {
     fleet_id: fleetId, class_index: int("class_index（艦級の番号）").describe("艦級 0ラーク 1ファルコ 2グレイヴ 3アークライト 4セラフ"),
     replace: bool.optional().describe("true＝旧艦と置換（4隻いるとき）"), ...SAY,
   }, ({ fleet_id, class_index, replace }) => call("buildShip", fleet_id, class_index, !!replace));
