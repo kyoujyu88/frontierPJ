@@ -224,7 +224,7 @@ function buildServer() {
 
   // 作戦卓
   const BATTLE_NOTE = MANUAL_BATTLE ? "" : "戦闘はオートで決着してから返る（結果は events と battles）。";
-  tool("move_fleet", "自軍艦隊を移動させる（1艦隊につき1ターンに1回）。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to=いまいる星 で攻略戦）。" + BATTLE_NOTE + "候補は状況テキストの「移動先」と、操作の返り値の「のこりの手」（get_state なら myFleets[].moveOptions）。", {
+  tool("move_fleet", "自軍艦隊を移動させる（1艦隊につき1ターンに1回）。隣接する星か、自国の星（亜空間移動）へ。敵のいる星や敵・中立の星へ入ると戦術戦闘が始まる（艦隊戦に勝っても星は占領されない。残った星は次のターンに to: いまいる星 で攻略戦）。" + BATTLE_NOTE + "候補は状況テキストの「移動先」と、操作の返り値の「のこりの手」（get_state なら myFleets[].moveOptions）。", {
     fleet_id: fleetId, to: idArg("planet", "to（行き先の惑星ID）").describe(alsoName("行き先の惑星ID", "星の名前")), ...SAY,
   }, ({ fleet_id, to }) => call("moveFleet", fleet_id, to));
   tool("intercept", "艦隊と同じ星に居座っている敵（異生体、休戦していなければヴァルガ艦隊も）を迎撃して戦闘を始める。使えるのは、状況テキストでその艦隊に「迎撃可」と出ているときだけ（別の星の敵へ攻め込むのは move_fleet）。自国の星なら対空砲台も働く。" + BATTLE_NOTE, { fleet_id: fleetId, ...SAY }, ({ fleet_id }) => call("intercept", fleet_id));
@@ -241,7 +241,7 @@ function buildServer() {
   tool("set_formation", "艦隊の陣形を変える（行動は消費しない）。line横陣＝補正なし／wedge楔形＝1ラウンド目の移動+1／square方陣＝旗艦の隣に味方がいる間、旗艦の被ダメージ-25%／crane鶴翼＝側面・背面への攻撃+15%／rear後衛陣＝ミサイル+1。", {
     fleet_id: fleetId, formation, ...SAY,
   }, ({ fleet_id, formation }) => call("setFormation", fleet_id, formation));
-  tool("build_ship", "造船所のある自国の星にいる艦隊に艦を建造する。4隻未満なら追加（replace は付けない）。4隻いて旧式の艦がいるときだけ replace=true で、最も旧式の艦を下取りして置き換える。", {
+  tool("build_ship", "造船所のある自国の星にいる艦隊に艦を建造する。4隻未満なら追加（replace は付けない）。4隻いて旧式の艦がいるときだけ replace: true で、最も旧式の艦を下取りして置き換える。", {
     fleet_id: fleetId, class_index: int("class_index（艦級の番号）").describe("艦級 0ラーク 1ファルコ 2グレイヴ 3アークライト 4セラフ"),
     replace: bool.optional().describe("true＝旧艦と置換（4隻いるとき）"), ...SAY,
   }, ({ fleet_id, class_index, replace }) => call("buildShip", fleet_id, class_index, !!replace));

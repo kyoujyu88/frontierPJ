@@ -728,7 +728,9 @@ async function playTurn(turn, cur) {
       const nx = (await tool("get_next").catch(() => null))?.text || "";
       if (empty === 1) {
         log("  （空の返事だったので、のこりの手を見せてもう一度聞きます）");
-        messages.push({ role: "user", content: `返事が空でした。次の手を${textMode ? "1つだけ、関数の形で1行に書いてください（セリフは短く、その手の say 引数に）" : "ツールで1つだけ呼んでください（セリフは短く、そのツールの say 引数に）"}。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
+        // ツールで呼ぶときは引数の書き方も添える。gemma4 は呼び出しの引数を planet_id=1 と書くと Ollama が読めずに捨てる（server.log の
+        // 「gemma4 tool call parsing failed」）。Ollama の読み取りは「名前:値」の形なので、ほかのモデルにも害はない
+        messages.push({ role: "user", content: `返事が空でした。次の手を${textMode ? "1つだけ、関数の形で1行に書いてください（セリフは短く、その手の say 引数に）" : "ツールで1つだけ呼んでください（引数は planet_id: 1 のように「名前: 値」で。セリフは短く、そのツールの say 引数に）"}。打てる手がなければ end_turn。${nx ? `\n${nx}` : ""}` });
         continue;
       }
       log("  （空の返事が続いたので、ツールを渡さずに手を文字で書いてもらいます）");
