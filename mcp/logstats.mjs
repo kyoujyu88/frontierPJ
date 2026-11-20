@@ -144,7 +144,7 @@ export function statsOf(events) {
     name: start.name ?? null, model: start.model ?? null, baseUrl: start.baseUrl ?? null,
     outcome: end?.outcome ?? (over ? ({ win: "勝利", lose: "敗北" }[over.result] ?? over.result) : "途中"), startedAt: start.t ?? null,
     settings: { think: start.think ?? null, maxTokens: start.maxTokens ?? null, temperature: start.temperature ?? null,
-      notes: start.notes ?? null, battleSpeed: arg("battle-speed"), pace: arg("pace"), ctx: ctxEv?.ctx ?? loaded?.ctx ?? null,
+      notes: start.notes ?? null, battleSpeed: arg("battle-speed"), skipBattle: (start.serverArgs ?? []).includes("--skip-battle"), pace: arg("pace"), ctx: ctxEv?.ctx ?? loaded?.ctx ?? null,
       gpuPct: loaded?.gpuPct ?? null, quantization: model?.quantization ?? null, parameterSize: model?.parameterSize ?? null },
     turns: nTurns, playSec: r0(playSec), secPerTurn: r1(per(playSec)),
     time: {
@@ -200,7 +200,7 @@ const ROWS = [
   ["作戦", s => planText(s.plan)],
   ["1ターン", s => fmt(s.secPerTurn, "秒")],
   ["  LLM", s => `${fmt(s.time.llmPerTurn, "秒")}（${fmt(s.time.llmShare, "%")}）`],
-  ["  移動・戦闘の演出", s => `${fmt(s.time.battlePerTurn, "秒")}（${fmt(s.time.battleShare, "%")}）${s.settings.battleSpeed ? `・倍速${s.settings.battleSpeed}` : ""}`],
+  ["  移動・戦闘の演出", s => `${fmt(s.time.battlePerTurn, "秒")}（${fmt(s.time.battleShare, "%")}）${s.settings.battleSpeed ? `・倍速${s.settings.battleSpeed}` : ""}${s.settings.skipBattle ? "・戦闘を飛ばす" : ""}`],
   ["  そのほか", s => fmt(s.time.otherPerTurn, "秒")],
   ["返事", s => `${s.llm.replies}回（${fmt(s.llm.perTurn, "回")}/ターン）・セリフだけ ${s.llm.sayOnly}回・手と一緒に話した ${s.llm.sayWith ?? "—"}回`],
   ["読み直し", s => s.llm.cacheKnown ? `${s.llm.reread}回・1回 ${fmt(s.llm.rereadAvgSec, "秒")}（ターン最初 ${s.llm.turnFirstReread}回）` : "—（サーバーがキャッシュの量を返さない）"],

@@ -14,6 +14,8 @@
  *   --pace <ms>       行動ごとの演出の間（既定 300、0で即時）                GAME_PACE
  *   --battle-speed <n> 戦闘・ターン処理（敵の移動）・艦隊の移動の演出を n 倍の速さで流す（1〜4、既定 1）。  GAME_BATTLE_SPEED
  *                     結果は変わらず、待ち時間だけが縮む（AIプレイの時間の6〜7割は戦闘の演出）
+ *   --skip-battle     オート戦闘を飛ばす：戦術戦闘の演出を待たずに決着させ、結果の帯だけを見せる          GAME_SKIP_BATTLE=1
+ *                     （結果は変わらない。艦隊の移動・敵の移動は --battle-speed のまま。--manual-battle では効かない）
  *   --speaker <名前>  字幕・行動表示の名前（既定 のあ）                       GAME_SPEAKER
  *   --size 1280x720   ウィンドウの中身の大きさ                                GAME_SIZE
  *   --record <dir>    ゲーム画面を動画（.webm、BGM・効果音つき）で dir に録画する  GAME_RECORD
@@ -53,6 +55,7 @@ const RECORD_DIR = opt("record", "GAME_RECORD", null) && path.resolve(opt("recor
 const RECORD_NAME = opt("record-name", "GAME_RECORD_NAME", null);
 const RECORD_AUDIO = !!RECORD_DIR && !argv.includes("--no-record-audio");
 const MANUAL_BATTLE = flag("manual-battle", "GAME_MANUAL_BATTLE");
+const SKIP_BATTLE = flag("skip-battle", "GAME_SKIP_BATTLE");
 const API_JS = await fs.readFile(path.join(HERE, "game-api.js"), "utf8");
 const err = (...a) => console.error("[frontier-war-mcp]", ...a); // stdout はMCP専用
 
@@ -78,7 +81,7 @@ let browser = null, page = null, opening = null;
 async function inject(pg) {
   if (await pg.evaluate(() => !!window.gameAPI).catch(() => false)) return;
   await pg.addScriptTag({ content: API_JS });
-  const r = await pg.evaluate(([pace, sp, auto, speed]) => { gameAPI.setPace(pace); gameAPI.setSpeaker(sp); gameAPI.setSpeed?.(speed); return gameAPI.setAutoBattle(auto); }, [PACE, SPEAKER, !MANUAL_BATTLE, SPEED]);
+  const r = await pg.evaluate(([pace, sp, auto, speed, skip]) => { gameAPI.setPace(pace); gameAPI.setSpeaker(sp); gameAPI.setSpeed?.(speed); gameAPI.setSkipBattle?.(skip); return gameAPI.setAutoBattle(auto); }, [PACE, SPEAKER, !MANUAL_BATTLE, SPEED, SKIP_BATTLE]);
   if (!r.ok) err(r.message);
 }
 async function openGame() {

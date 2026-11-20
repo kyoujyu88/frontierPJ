@@ -42,14 +42,22 @@ const autoResults=[];  // オートで片付けた戦闘の結果
  * 倍速の場面のあいだだけ、wait・banner のタイマーと tween・帯の長さを 1/speed にする。作戦卓の操作や通信の表示は今までどおり */
 let speed=1,moving=false;
 const sped=()=>speed>1&&!window.FAST&&(!!B||!!turnTask||moving);
+/* オート戦闘を飛ばす（setSkipBattle）：オートで戦う戦術戦闘のあいだだけ、本体の演出（wait・tween・banner）を待たずに進め、結果だけを見せる。
+ * ゲームの中身（乱数・オートの判断・結果）は変わらない。艦隊の移動・敵の移動・作戦卓の操作は、倍速の設定どおり */
+let skipBattle=false;
+const skipping=()=>skipBattle&&autoBattle&&!window.FAST&&!!B&&!!B.auto&&!B.ended;
 /* 縮めるのは本体の wait() と banner() から来たタイマーだけ（wait は const なので差し替えられず、呼び出し元で見分ける）。
  * 効果音・終わりの画面・録画などほかのタイマーは、倍速の場面でも元の長さのまま */
 const fromAnim=()=>/\bat (?:wait|banner) \(/.test(new Error().stack||"");
-window.setTimeout=function(fn,ms,...a){return realTimeout(fn,sped()&&fromAnim()?Math.max(0,Number(ms)||0)/speed:ms,...a)};
+window.setTimeout=function(fn,ms,...a){
+  if((skipping()||sped())&&fromAnim())ms=skipping()?0:Math.max(0,Number(ms)||0)/speed;
+  return realTimeout(fn,ms,...a);
+};
 if(typeof tween==="function"){
   const orig=tween;
   // 本体の tween と同じ動き（進み具合は requestAnimationFrame の時刻で数え、画面が隠れていても止まらないよう時間切れでも終える）を、長さ 1/speed で
   window.tween=function(ms,frame){
+    if(skipping()){frame(1);return Promise.resolve()}
     if(!sped())return orig(ms,frame);
     if(reduceMotion||ANIM.fast){frame(1);return Promise.resolve()}
     const d=Math.max(1,ms/speed);
@@ -64,11 +72,17 @@ if(typeof banner==="function"){
   const orig=banner;
   // 帯を消すタイマーは上の setTimeout で縮むので、帯の CSS アニメの長さ（--bn-ms）も同じだけ縮める
   window.banner=function(main,sub,side,ms){
+    if(skipping())return Promise.resolve(); // 「自軍フェイズ」「ROUND n」などの帯は出さない（本体の window.FAST と同じ）
     const on=sped(),p=orig(main,sub,side,ms);
     if(on){const m=Math.min(ms||1100,ANIM.fast?350:Infinity),inn=$("banner")?.firstElementChild;if(inn)inn.style.setProperty("--bn-ms",`${m/speed}ms`)}
     return p;
   };
 }
+
+/* 飛ばしている戦闘のあいだは、1発ごとの効果音（一度にまとめて鳴ると雑音になる）と戦闘の曲への切り替えも省く。
+ * 決着の効果音（勝利・敗北）と結果の帯は B.ended のあとに鳴る・出るので、そのまま */
+if(typeof sfx==="function"){const orig=sfx;window.sfx=function(...a){if(skipping())return;return orig(...a)}}
+if(typeof setMusic==="function"){const orig=setMusic;window.setMusic=function(...a){if(skipping())return;return orig(...a)}}
 
 class GameError extends Error{}
 const fail=m=>{throw new GameError(m)};
@@ -187,7 +201,8 @@ async function closeAutoBattle(){
   push("log",text);autoResults.push({seq,title,result:res,rounds:round,lost,ships:mine.length,downed,foes:foes.length});
   if(autoResults.length>50)autoResults.shift();
   showAction(`${title}：${res}`);
-  await sleep(Math.max(pace,window.FAST?0:600)/(speed>1?speed:1)); // 結果を見せる間も演出の倍速に合わせる
+  // 結果を見せる間も演出の倍速に合わせる。戦闘を飛ばしたときは、結果の帯がひと目で読めるだけ（1秒）は見せる
+  await sleep(window.FAST?pace:skipBattle?Math.max(pace,1000):Math.max(pace,600)/(speed>1?speed:1));
   if(B&&B.ended)closeBattle();
   await sleep(80);
 }
@@ -606,6 +621,8 @@ const api={
   setPace(ms){pace=Math.max(0,Number(ms)||0);window.FAST=pace===0;return{ok:true,pace}}, // 0なら戦闘・移動の演出も省く
   // 戦闘・ターン処理・艦隊の移動の演出を何倍の速さで流すか（1〜4。1で今までどおり）
   setSpeed(x){const v=Number(x);speed=Number.isFinite(v)?Math.min(4,Math.max(1,v)):1;return{ok:true,speed}},
+  // オート戦闘を飛ばす：true なら、オートの戦術戦闘は演出を待たずに決着させ、結果だけを見せる（艦隊の移動などは setSpeed のまま）
+  setSkipBattle(on){skipBattle=!!on;return{ok:true,skipBattle}},
   // いまの「のこりの手」（行き先も省かずに）。ai-player が、LLM が手を選べずにいるときに見せる
   nextMoves(){if(S)toldOf().clear();return nextHint()??(B?"戦闘中です":S&&S.over?"ゲームは終わっています":"")},
   setSpeaker(n){speaker=String(n||"のあ");return{ok:true,speaker}},
