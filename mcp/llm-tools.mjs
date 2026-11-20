@@ -49,7 +49,8 @@ export function llmLeftovers(tools) {
     for (const [k, p] of Object.entries(t.function.parameters?.properties ?? {})) {
       const at = `${t.function.name}.${k}`;
       if (p.anyOf || p.oneOf || p.allOf) out.push(`${at}：anyOf などが残っている`);
-      if (Array.isArray(p.enum) && p.enum.some(v => JA_NAMES.has(v))) out.push(`${at}：日本語の選択肢が残っている`);
+      // 表（FACILITIES・FORMATIONS）にある日本語名に加えて、英数字でない選択肢も見る（日本語の選択肢を足して表に入れ忘れたとき用）
+      if (Array.isArray(p.enum) && p.enum.some(v => JA_NAMES.has(v) || (typeof v === "string" && /[^\x00-\x7f]/.test(v)))) out.push(`${at}：日本語の選択肢が残っている`);
       if (typeof p.description === "string" && ALSO_RE.test(p.description)) out.push(`${at}：説明に「（…${ALSO}）」が残っている`);
     }
   }

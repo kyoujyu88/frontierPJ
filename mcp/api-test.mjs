@@ -77,7 +77,7 @@ try {
     check(!valid({ $ref: "#/x" }, 1) && !valid({ not: { type: "string" } }, 1) && !valid({ allOf: [{ type: "integer" }, { type: "string" }] }, 1)
       && valid({ allOf: [{ type: "integer" }, { type: "number" }] }, 1) && valid({ const: true }, true) && !valid({ const: true }, false), "検証：知らないキーワード（$ref・not）は失敗、allOf は全部を満たすときだけ、const は一致だけ");
     unknownKeys.clear();
-    const walk = (x) => { if (Array.isArray(x)) return x.forEach(walk); if (x && typeof x === "object") for (const [k, v] of Object.entries(x)) { if (k === "properties") Object.values(v).forEach(walk); else { if (!KNOWN.has(k)) unknownKeys.add(k); walk(v); } } };
+    const walk = (x) => { if (Array.isArray(x)) return x.forEach(walk); if (x && typeof x === "object") for (const [k, v] of Object.entries(x)) { if (k === "properties") Object.values(v).forEach(walk); else { if (!KNOWN.has(k)) unknownKeys.add(k); if (!["default", "const", "enum"].includes(k)) walk(v); } } }; // 値（default・const・enum）の中は歩かない
     Object.values(tools).forEach(t => walk(t.inputSchema));
     check(!unknownKeys.size, `tools/list のスキーマはこの検証が知っているキーワードだけ${unknownKeys.size ? `（知らない：${[...unknownKeys].join("・")}）` : ""}`);
     unknownKeys.clear();
@@ -87,6 +87,8 @@ try {
   {
     const llm = llmTools(Object.values(tools));
     const left = llmLeftovers(llm);
+    const ja = llmLeftovers([{ function: { name: "t", parameters: { properties: { a: { type: "string", enum: ["x", "新しい選択肢"] } } } } }]);
+    check(ja.length === 1, "表に無い日本語の選択肢が残っていても見つける");
     check(!left.length, `公開スキーマの広げた部分（anyOf・日本語の選択肢・「でもよい」）が残っていない${left.length ? `：${left.join("、")}` : ""}`);
     const P = Object.fromEntries(llm.map(t => [t.function.name, t.function.parameters.properties]));
     const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
