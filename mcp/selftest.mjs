@@ -83,11 +83,11 @@ const rules = await call("get_rules"); console.log("rules:", rules.length, "char
   if (!/建てられるのは：/.test(dup.message ?? "")) fail(`断るときに建てられる施設が付かない：${dup.message}`);
   // のこりの手：費用は「費用N」、艦隊・星はIDつきの呼び出しの形（「新艦隊(32)」の 32 を艦隊IDと読んだことがあった）
   const nx = await call("get_next");
-  if (typeof nx !== "string" || !/^のこりの手：資金\d+/.test(nx) || !/新艦隊 new_fleet\(planet_id: \d+\) 費用\d+/.test(nx) || /新艦隊\(\d+\)/.test(nx)) fail(`get_next の「のこりの手」の書き方が違う：${String(nx).slice(0, 200)}`);
-  if (!/施設 build_facility\(planet_id: …, facility: …\)：[a-z/]+は星\d/.test(nx) || !/未行動の艦隊：第\d艦隊 ID\d+@\d+.+ → /.test(nx)) fail(`get_next の施設（施設ごとの星）か艦隊の行き先の書き方が違う：${String(nx).slice(0, 300)}`);
+  if (typeof nx !== "string" || !/^のこりの手：資金\d+/.test(nx) || !/新艦隊 new_fleet\(planet_id=\d+\) 費用\d+/.test(nx) || /新艦隊\(\d+\)/.test(nx)) fail(`get_next の「のこりの手」の書き方が違う：${String(nx).slice(0, 200)}`);
+  if (!/施設 build_facility\(planet_id=…, facility=…\)：[a-z/]+は星\d/.test(nx) || !/未行動の艦隊：第\d艦隊 ID\d+@\d+.+ → /.test(nx)) fail(`get_next の施設（施設ごとの星）か艦隊の行き先の書き方が違う：${String(nx).slice(0, 300)}`);
   // 行き先が前と同じなら、説明を省いて呼び出しの形だけ書く（名前だけにすると、手を選べずに空の返事が続いた）
   const again = await call("build_facility", { planet_id: 0, facility: "採掘所" }, { reject: true });
-  if (!/未行動の艦隊：move_fleet\(fleet_id: \d+, to: \d+(か\d+)*(（亜空間移動なら[\d/]+も）|（亜空間移動）)?\).*（行き先の様子は前と同じ）/.test(again.next ?? "")) fail(`行き先が前と同じときの書き方が違う：${String(again.next).slice(0, 300)}`);
+  if (!/未行動の艦隊：move_fleet\(fleet_id=\d+, to=\d+(か\d+)*(（亜空間移動なら[\d/]+も）|（亜空間移動）)?\).*（行き先の様子は前と同じ）/.test(again.next ?? "")) fail(`行き先が前と同じときの書き方が違う：${String(again.next).slice(0, 300)}`);
 }
 // 資金を使って、前に「払える」と見せた手が払えなくなったら、一度だけ「資金が足りなくなった手」として書く
 // （前に見た一覧の手を資金が減ったあとに呼んで断られた。2026-11-17 のログで5回）

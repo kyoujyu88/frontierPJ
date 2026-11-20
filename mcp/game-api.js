@@ -407,7 +407,7 @@ function devSummary(st){
   if(r.next){
     const m=investMax();
     if(investRoom()<30)L.push(` 研究：このターンの投資は上限（${investCap()}）まで済み。invest_research はもう呼ばない`);
-    else if(m>=30)L.push(` 研究：invest_research(amount: ${m>30?`30〜${m}`:"30"}) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1。30刻み、投資は1ターン${investCap()}まで）。${m}入れると資金は残り${funds-m}`);
+    else if(m>=30)L.push(` 研究：invest_research(amount=${m>30?`30〜${m}`:"30"}) → あと${r.next.need-r.next.progress}で${r.next.name}完成（新しい艦級・改装上限+1。30刻み、投資は1ターン${investCap()}まで）。${m}入れると資金は残り${funds-m}`);
     // ↑ 残りを書く：研究に120入れてから、ターン最初の一覧で見た造船（費用56、資金148）を呼んで断られたことがあった（2026-11-17 のログ）
     else no.push("研究30");
   }else L.push(` 研究：いまは投資できない（${r.note}）。invest_research は呼ばない`);
@@ -419,31 +419,31 @@ function devSummary(st){
       const show=k=>BEST[p.trait]===k?`◎${k}=${FAC[k].name}${FAC[k].cost}（${FAC[k].desc(p)}）`:`${k}=${FAC[k].name}${FAC[k].cost}`;
       // 特性に合う施設がもうあるときは、そう書く（鉱物惑星＝採掘所と思い込んで、建設済みの星に何ターンも建てようとしたことがあった）
       const has=BEST[p.trait]&&hasF(p,BEST[p.trait])?`・${FAC[BEST[p.trait]].name}は建設済み`:"";
-      if(ok.length)L.push(` 施設：${p.name}（${p.trait}・空き${free}${has}）build_facility(planet_id: ${p.id}, facility: …) ${ok.map(show).join("／")}${ng.length?`（資金不足：${ng.map(k=>`${k}${FAC[k].cost}`).join("・")}）`:""}`);
+      if(ok.length)L.push(` 施設：${p.name}（${p.trait}・空き${free}${has}）build_facility(planet_id=${p.id}, facility=…) ${ok.map(show).join("／")}${ng.length?`（資金不足：${ng.map(k=>`${k}${FAC[k].cost}`).join("・")}）`:""}`);
       else if(ks.length)no.push(`${p.name}の施設${Math.min(...ks.map(k=>FAC[k].cost))}〜`);
     }
     if(p.survey>0)sv.push(p);
     if(p.def<p.maxDef)ft.push(p);
   }
   // 探査と防衛修復は星ごとに1行ずつだと長くなる（自国の星が増えると10行近く）ので、1行にまとめる
-  if(sv.length)add(40,` 探査：survey(planet_id: ${sv.map(p=>p.id).join("か")}) 費用40 → 45%で収入+15（星ごとの残り回数は■惑星の「探査余地」）`,"探査");
-  if(ft.length)add(30,` 防衛修復：fortify(planet_id: ${ft.map(p=>p.id).join("か")}) 費用30で防衛+15（${ft.map(p=>`${p.name}${p.def}/${p.maxDef}`).join("・")}）`,"防衛修復");
+  if(sv.length)add(40,` 探査：survey(planet_id=${sv.map(p=>p.id).join("か")}) 費用40 → 45%で収入+15（星ごとの残り回数は■惑星の「探査余地」）`,"探査");
+  if(ft.length)add(30,` 防衛修復：fortify(planet_id=${ft.map(p=>p.id).join("か")}) 費用30で防衛+15（${ft.map(p=>`${p.name}${p.def}/${p.maxDef}`).join("・")}）`,"防衛修復");
   for(const f of st.myFleets){
-    if(f.repairCost)add(f.repairCost,` 修理：${f.name} repair_fleet(fleet_id: ${f.id}) 費用${f.repairCost}`,`${f.name}の修理`);
+    if(f.repairCost)add(f.repairCost,` 修理：${f.name} repair_fleet(fleet_id=${f.id}) 費用${f.repairCost}`,`${f.name}の修理`);
     if(f.atShipyard){
       const yp=planet(f.at),cc=bcost(S.tier,yp),rp=replaceOf(S.fleets.find(x=>x.id===f.id),S.tier,yp);
-      if(f.ships.length<4)add(cc,` 造船：${f.name}（${f.ships.length}/4隻）build_ship(fleet_id: ${f.id}, class_index: ${S.tier}) で${CLASSES[S.tier].name}を追加 費用${cc}`,`${f.name}に${CLASSES[S.tier].name}を追加`);
-      else if(rp)add(rp.net,` 造船：${f.name} build_ship(fleet_id: ${f.id}, class_index: ${S.tier}, replace: true) で旧艦を${CLASSES[S.tier].name}に置換 実費${rp.net}`,`${f.name}の旧艦を置換`);
+      if(f.ships.length<4)add(cc,` 造船：${f.name}（${f.ships.length}/4隻）build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${CLASSES[S.tier].name}を追加 費用${cc}`,`${f.name}に${CLASSES[S.tier].name}を追加`);
+      else if(rp)add(rp.net,` 造船：${f.name} build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で旧艦を${CLASSES[S.tier].name}に置換 実費${rp.net}`,`${f.name}の旧艦を置換`);
     }
     const bo=f.ships.reduce((s,x)=>s+(x.alloc?.bo||0),0);
     if(!bo&&f.moveOptions.some(o=>/攻略|突入/.test(o.kind))){
       const x=f.ships[f.ships.length-1],a=x.alloc,ch={bo:1};
       if(x.points.used>=x.points.max){const k=["ca","sh","sp","mi"].sort((p,q)=>a[q]-a[p])[0];ch[k]=a[k]-1} // 空きがなければ一番多い項目から1つ回す
-      L.push(` 改装：${f.name} は爆装0なので惑星を落とせない → refit_ship(fleet_id: ${f.id}, ship_index: ${x.index}, ${Object.entries(ch).map(([k,v])=>`${k}: ${v}`).join(", ")})（書かない項目は今の値のまま）`);
+      L.push(` 改装：${f.name} は爆装0なので惑星を落とせない → refit_ship(fleet_id=${f.id}, ship_index=${x.index}, ${Object.entries(ch).map(([k,v])=>`${k}=${v}`).join(", ")})（書かない項目は今の値のまま）`);
     }
   }
   const yards=S.planets.filter(p=>p.owner==="P"&&p.yard);
-  if(st.myFleets.length<3&&yards.length)add(bcost(0,yards[0]),` 新艦隊：new_fleet(planet_id: ${yards[0].id}) 費用${bcost(0,yards[0])}（ラーク級1隻の艦隊が増える。編成したターンは動けない）`,"新艦隊");
+  if(st.myFleets.length<3&&yards.length)add(bcost(0,yards[0]),` 新艦隊：new_fleet(planet_id=${yards[0].id}) 費用${bcost(0,yards[0])}（ラーク級1隻の艦隊が増える。編成したターンは動けない）`,"新艦隊");
   if(no.length)L.push(` 資金不足でいまは打てない（呼ばない）：${no.join("、")}`);
   return L.length?`■内政の候補（資金${funds}・収入+${st.incomePerTurn}/ターン。いま払えるものだけ。◎はその星の特性に合う施設）\n${L.join("\n")}`:"";
 }
@@ -464,7 +464,7 @@ function fleetBrief(f){
   if(!opts.length)return`${f.name} ID${f.id}（行ける星なし）`;
   // to には星のIDだけを書く（「自国の星」のような言葉を書くと、そのまま真似されて失敗する）。亜空間移動の行き先もIDで添える
   const to=near.length?`${near.join("か")}${warp.length?`（亜空間移動なら${warp.join("/")}も）`:""}`:`${warp.join("か")}（亜空間移動）`;
-  return`move_fleet(fleet_id: ${f.id}, to: ${to})${intruder(f)?"（迎撃可）":""}`;
+  return`move_fleet(fleet_id=${f.id}, to=${to})${intruder(f)?"（迎撃可）":""}`;
 }
 // 艦隊ごとに、このターンに知らせた行き先（fleetNext の文）。同じなら次からは呼び出しの形だけにする
 let idleTold={turn:null,told:new Map()};
@@ -474,22 +474,22 @@ const toldOf=()=>{if(idleTold.turn!==S.turn)idleTold={turn:S.turn,told:new Map()
 function payItems(){
   const funds=S.funds,out=[],own=S.planets.filter(p=>p.owner==="P"),mine=myFleets();
   const add=(key,cost,text,short,fac)=>out.push({key,cost,ok:cost<=funds,text,short,...(fac?{fac}:{})});
-  if(researchOpen()&&investRoom()>=30)add("research",30,`研究 invest_research(amount: ${investMax()>30?`30〜${investMax()}`:"30"})`,"研究");
+  if(researchOpen()&&investRoom()>=30)add("research",30,`研究 invest_research(amount=${investMax()>30?`30〜${investMax()}`:"30"})`,"研究");
   const free=own.filter(p=>p.fac.length<p.slots);
   for(const k of FAC_KEYS){const ids=free.filter(p=>!hasF(p,k)).map(p=>p.id).join("/");if(ids)add(`fac:${k}`,FAC[k].cost,"",`施設 ${k} 費用${FAC[k].cost}`,{k,ids})}
-  const sv=own.filter(p=>p.survey>0);if(sv.length)add("survey",40,`探査 survey(planet_id: ${sv.map(p=>p.id).join("か")}) 費用40`,"探査 費用40");
-  const ft=own.filter(p=>p.def<p.maxDef);if(ft.length)add("fortify",30,`防衛修復 fortify(planet_id: ${ft.map(p=>p.id).join("か")}) 費用30`,"防衛修復 費用30");
+  const sv=own.filter(p=>p.survey>0);if(sv.length)add("survey",40,`探査 survey(planet_id=${sv.map(p=>p.id).join("か")}) 費用40`,"探査 費用40");
+  const ft=own.filter(p=>p.def<p.maxDef);if(ft.length)add("fortify",30,`防衛修復 fortify(planet_id=${ft.map(p=>p.id).join("か")}) 費用30`,"防衛修復 費用30");
   for(const f of mine){
     const p=planet(f.node);if(p.owner!=="P")continue;
-    if(fleetDamage(f))add(`repair:${f.id}`,repairCost(f),`修理 repair_fleet(fleet_id: ${f.id}) 費用${repairCost(f)}`,`${f.name}の修理 費用${repairCost(f)}`);
+    if(fleetDamage(f))add(`repair:${f.id}`,repairCost(f),`修理 repair_fleet(fleet_id=${f.id}) 費用${repairCost(f)}`,`${f.name}の修理 費用${repairCost(f)}`);
     if(p.yard){
       const cc=bcost(S.tier,p),rp=replaceOf(f,S.tier,p);
-      if(f.ships.length<4)add(`build:${f.id}`,cc,`造船 build_ship(fleet_id: ${f.id}, class_index: ${S.tier}) で${f.name}に${CLASSES[S.tier].name}を追加 費用${cc}`,`${f.name}に${CLASSES[S.tier].name}を追加 費用${cc}`);
-      else if(rp)add(`build:${f.id}`,rp.net,`造船 build_ship(fleet_id: ${f.id}, class_index: ${S.tier}, replace: true) で${f.name}の旧艦を置換 実費${rp.net}`,`${f.name}の旧艦を置換 実費${rp.net}`);
+      if(f.ships.length<4)add(`build:${f.id}`,cc,`造船 build_ship(fleet_id=${f.id}, class_index=${S.tier}) で${f.name}に${CLASSES[S.tier].name}を追加 費用${cc}`,`${f.name}に${CLASSES[S.tier].name}を追加 費用${cc}`);
+      else if(rp)add(`build:${f.id}`,rp.net,`造船 build_ship(fleet_id=${f.id}, class_index=${S.tier}, replace=true) で${f.name}の旧艦を置換 実費${rp.net}`,`${f.name}の旧艦を置換 実費${rp.net}`);
     }
   }
   const yards=own.filter(p=>p.yard);
-  if(mine.length<3&&yards.length)add("newfleet",bcost(0,yards[0]),`新艦隊 new_fleet(planet_id: ${yards[0].id}) 費用${bcost(0,yards[0])}`,`新艦隊 費用${bcost(0,yards[0])}`);
+  if(mine.length<3&&yards.length)add("newfleet",bcost(0,yards[0]),`新艦隊 new_fleet(planet_id=${yards[0].id}) 費用${bcost(0,yards[0])}`,`新艦隊 費用${bcost(0,yards[0])}`);
   return out;
 }
 /* このターンに「払える」と知らせた内政の手（key → short）。資金を使ったあと、知らせた手が払えなくなったら一度だけ「払えなくなった手」として書く。
@@ -508,7 +508,7 @@ function notePay(items){
   for(const it of items)if(it.ok)told.set(it.key,it.short);
   return lost;
 }
-/* 費用は「費用N」と書き、艦隊・星はIDつきの呼び出しの形で書く（「新艦隊(32)」の 32 を艦隊IDと読んで build_ship(fleet_id: 32) を呼んだことがあった）。
+/* 費用は「費用N」と書き、艦隊・星はIDつきの呼び出しの形で書く（「新艦隊(32)」の 32 を艦隊IDと読んで build_ship(fleet_id=32) を呼んだことがあった）。
  * 操作のたびに付くので短く保つ（1ターンに8回ほど付き、会話を続けるとそのぶんコンテキストが伸びる） */
 function nextHint(){
   if(!S||S.over||B)return null;
@@ -521,7 +521,7 @@ function nextHint(){
     if(facAt<0){facAt=pay.length;pay.push("")}
     byIds.set(it.fac.ids,[...(byIds.get(it.fac.ids)??[]),it.fac.k]);
   }
-  if(facAt>=0)pay[facAt]=`施設 build_facility(planet_id: …, facility: …)：${[...byIds].map(([ids,ks])=>`${ks.join("/")}は星${ids}`).join("、")}`;
+  if(facAt>=0)pay[facAt]=`施設 build_facility(planet_id=…, facility=…)：${[...byIds].map(([ids,ks])=>`${ks.join("/")}は星${ids}`).join("、")}`;
   const idle=mine.filter(f=>!f.moved),told=toldOf();
   const L=[`のこりの手：資金${funds}。払える内政：${pay.join("、")||"なし"}`];
   if(lost.length){
@@ -673,7 +673,7 @@ const api={
     if(!researchOpen())fail(`いまは研究に投資できません（${researchInfo().note}）。資金は施設・造船・修理などに回してください`);
     // 額は30刻みに丸め、1ターンの上限と手持ちに収まる分だけ投資する（30・60・120 以外の額や、多すぎる額で断らない）
     let v=Math.floor(Number(amount)/30)*30;
-    if(!(v>=30))fail(`投資額は 30 以上の数で指定してください（30刻み、1ターンに${investCap()}まで。例：amount: 60）`);
+    if(!(v>=30))fail(`投資額は 30 以上の数で指定してください（30刻み、1ターンに${investCap()}まで。例：amount=60）`);
     if(investRoom()<30)fail(`研究への投資は1ターンに${investCap()}まで。このターンはもう投資できません（次のターンに）`);
     if(S.funds<30)fail(`資金不足：研究投資には 30 必要（現在 ${S.funds}）`);
     const m=investMax();
@@ -720,13 +720,13 @@ const api={
       const at=myFleets().filter(x=>{const q=planet(x.node);return q.owner==="P"&&q.yard}).map(x=>`${x.name}=ID${x.id}`);
       fail(`${f.name} のいる ${yp.name} には自国の造船所がありません（造船は、造船所のある自国の星にいる艦隊だけ）。${at.length?`造船所にいる艦隊：${at.join("、")}`:"いま造船所にいる艦隊はありません"}`);
     }
-    if(!c||!Number.isInteger(ci))fail(`艦級は class_index: 0〜${S.tier} で指定してください（いま造れるいちばん新しい艦級は ${S.tier}=${CLASSES[S.tier].name}）`);
-    if(ci>S.tier)fail(`${c.name} はまだ開発されていません。いま造れるのは class_index: 0〜${S.tier}（${S.tier}=${CLASSES[S.tier].name}）`);
+    if(!c||!Number.isInteger(ci))fail(`艦級は class_index=0〜${S.tier} で指定してください（いま造れるいちばん新しい艦級は ${S.tier}=${CLASSES[S.tier].name}）`);
+    if(ci>S.tier)fail(`${c.name} はまだ開発されていません。いま造れるのは class_index=0〜${S.tier}（${S.tier}=${CLASSES[S.tier].name}）`);
     const cc=bcost(ci,yp);
     focusPlanet(f.node,f.id);
     if(replace){
       const worst=f.ships.reduce((m,s,i)=>s.cls<ci&&(m<0||s.cls<=f.ships[m].cls)?i:m,-1); // 同じ艦級なら随伴艦から（ゲームの造船所と同じ）
-      if(worst<0)fail(`${f.name} に ${c.name} より旧式の艦がいません（置換するものがない）。${f.ships.length<4?`追加で造るなら replace を付けずに build_ship(fleet_id: ${f.id}, class_index: ${ci})（${cc}）`:"この艦隊は4隻とも最新なので、造船は要りません"}`);
+      if(worst<0)fail(`${f.name} に ${c.name} より旧式の艦がいません（置換するものがない）。${f.ships.length<4?`追加で造るなら replace を付けずに build_ship(fleet_id=${f.id}, class_index=${ci})（${cc}）`:"この艦隊は4隻とも最新なので、造船は要りません"}`);
       const refund=Math.floor(CLASSES[f.ships[worst].cls].cost/2);
       if(S.funds+refund<cc)fail(`資金不足：実費 ${cc-refund} 必要（現在 ${S.funds}）`);
       showAction(`${f.name} の旧艦を ${c.name} に置換`);openYard(f);await sleep(pace);
@@ -734,7 +734,7 @@ const api={
       openYard(f);await sleep(pace);closeModal();
       return`${CLASSES[old.cls].name} を ${c.name} に置換（実費 ${cc-refund}）。新しい艦は標準配分なので必要なら改装を`;
     }
-    if(f.ships.length>=4)fail(`艦隊は最大4隻です。${f.ships.some(x=>x.cls<ci)?`旧艦と置換するなら build_ship(fleet_id: ${f.id}, class_index: ${ci}, replace: true)`:`${f.name} は4隻とも ${c.name} 以上なので、造船は要りません`}`);
+    if(f.ships.length>=4)fail(`艦隊は最大4隻です。${f.ships.some(x=>x.cls<ci)?`旧艦と置換するなら build_ship(fleet_id=${f.id}, class_index=${ci}, replace=true)`:`${f.name} は4隻とも ${c.name} 以上なので、造船は要りません`}`);
     needFunds(cc,`${c.name}の建造`);
     showAction(`${f.name} に ${c.name} を建造`);openYard(f);await sleep(pace);
     S.funds-=cc;f.ships.push(makeShip(ci,"P"));log(`${f.name}に${c.name}を配備。`);
@@ -845,7 +845,7 @@ const AUTO_RULE=`- 戦術戦闘はオート（自動）で進む。艦隊を攻�
 /* 短いルール（オート戦闘のとき・小さなモデル向け）。RULES と AUTO_RULE を変えたら、こちらも合わせる */
 const RULES_BRIEF=`# 辺境星系戦記 ルール（短縮版）
 目的：北東の「深淵の巣」の中枢を破壊すれば勝利。主星アステリア（ID 0）を奪われたら敗北。
-- 自軍艦隊（最大3つ・各最大4隻）は1ターンに1回、隣の星か自国の星へ移動できる。敵艦隊のいる星へ入ると艦隊戦、敵・中立の星へ入ると惑星攻略戦。攻略戦に勝てば占領（艦隊戦に勝って残った星は、次のターンに to: いまいる星 で攻略戦）。
+- 自軍艦隊（最大3つ・各最大4隻）は1ターンに1回、隣の星か自国の星へ移動できる。敵艦隊のいる星へ入ると艦隊戦、敵・中立の星へ入ると惑星攻略戦。攻略戦に勝てば占領（艦隊戦に勝って残った星は、次のターンに to=いまいる星 で攻略戦）。
 - 戦闘はオートで決着する。勝敗は準備で決まる：戦力（修理・造船）、改装、陣形、旗艦、勝てる相手を選ぶこと。負けると艦隊は主星へ戻る。
 - 星の中枢は爆装でしか壊せない（攻略には爆装を持つ艦が必須）。深淵の巣の中枢はセラフ級の爆装でしか壊せない。
 - end_turn で収入と研究が入り、敵が動く。敵の艦級はターン7・13・19で上がる。ターン18かヴァルガ本星（ID 6）の占領で異生体ゾアが出現する（そのときヴァルガ本星がヴァルガ領なら休戦）。

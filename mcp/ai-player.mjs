@@ -53,7 +53,6 @@ import { loadNotes, saveNotes, notesPrompt, Journal, reflect, recordLine, safeNa
 import { PlayLog, LOG_DIR, subtitlesBeside, readLog } from "./playlog.mjs";
 import { statsOf, statsLine } from "./logstats.mjs";
 import { makeTalk, stripThink, foldSayOnly } from "./talk.mjs";
-import { llmSchema } from "./llm-schema.mjs";
 import { summaryDelta } from "./sumdiff.mjs";
 import { PLAN_TOOL, PLAN_TOOL_NAME, PLAN_FIELD, newPlan, applyPlan, checkPlan, planBlock } from "./plan.mjs";
 import { modelInfo, loadedInfo, serverCtx, localGpus, gpuText, isLocalHost, describeModel, describeLoaded, loadWarnings } from "./llm-info.mjs";
@@ -234,7 +233,16 @@ async function say(text, extra = {}) {
 // ルールはシステムプロンプトに入れてあるので get_rules も外す（小さなモデルが読み直しを繰り返すため）
 const HIDDEN = new Set(["get_state", "get_screenshot", "new_game", "battle_state", "get_rules", "finish_recording", "recording_info"]);
 const mcpTools = (await mcp.listTools()).tools;
-// のあに見せる引数の形は、今までどおり整数のIDと英語キーだけにする（llm-schema.mjs。サーバーは名前・日本語名も読む）
+// のあに見せる引数の形は、今までどおり整数のIDと英語キーだけにする。サーバーの公開スキーマは名前・日本語名も許す（anyOf と
+// 日本語の選択肢。Issue #28）が、小さなモデルに見せる道具の説明が長く・複雑になると、読み直しの時間や引数の書き方が変わるため。
+// 名前や日本語で書いても、サーバーは今までどおり読む
+const forLlm = p => {
+  const ints = p?.anyOf?.filter(x => x.type === "integer");
+  if (ints?.length === 1) { const { anyOf, ...rest } = p; return { ...ints[0], ...rest, ...(rest.description ? { description: rest.description.replace(/（[^（]*でもよい）$/, "") } : {}) }; }
+  if (Array.isArray(p?.enum) && p.enum.some(v => /^[a-z]+$/.test(v))) { const { description, ...rest } = p; return { ...rest, enum: p.enum.filter(v => /^[a-z]+$/.test(v)) }; } // 英語キーの意味は道具の説明に書いてある
+  return p;
+};
+const llmSchema = s => s?.properties ? { ...s, properties: Object.fromEntries(Object.entries(s.properties).map(([k, p]) => [k, forLlm(p)])) } : s;
 const tools = mcpTools.filter(t => !HIDDEN.has(t.name)).map(t => ({
   type: "function",
   function: { name: t.name, description: t.description, parameters: { type: "object", properties: {}, ...llmSchema(t.inputSchema) } },
@@ -323,9 +331,9 @@ function toolLine(t) {
   return `- ${f.name}(${Object.entries(props).map(([k, p]) => arg(k, p)).join(", ")})${desc ? `：${desc}` : ""}`;
 }
 const TEXT_GUIDE = () => `# 手の書き方（この配信では、ツール呼び出しの機能は使わずに手を文字で書く）
-- 手は1行に1つ、関数の形で書く。例：move_fleet(fleet_id: 6, to: 7)　build_facility(planet_id: 3, facility: "lab")　end_turn()
+- 手は1行に1つ、関数の形で書く。例：move_fleet(fleet_id=6, to=7)　build_facility(planet_id=3, facility="lab")　end_turn()
 - 文字の値は "…" で囲む。数は囲まない。引数名の後ろに ? が付いたものは省いてよい
-- セリフは手の say 引数に書く：invest_research(amount: 60, say: "研究を進めるよ！")。手でない行は、そのまま字幕に出る
+- セリフは手の say 引数に書く：invest_research(amount=60, say="研究を進めるよ！")。手でない行は、そのまま字幕に出る
 - 1回の返事に書く手は1〜3個まで。結果は次のメッセージ（【手の名前 の結果】）で届く
 # 使える手
 ${activeTools().map(toolLine).join("\n")}`;
@@ -721,8 +729,6 @@ async function playTurn(turn, cur) {
        * 2026-11-17 のログでは1ゲーム13回、ターン8で3回続いて3艦隊が動かないままになった。トークンは出ているので、
        * ツール呼び出しを書こうとして Ollama が読み取れずに捨てたと見ている（2回目に「のこりの手」を見せても空のままだった）。
        * 空の返事は会話に積まない（積むと、空の返事を続けやすくなる）。
-       * 原因（2026-11-17 に Ollama の server.log で確認）：gemma4 が数値の引数を call:survey{planet_id=1,…} と key=value で書き、Ollama の gemma4 の読み取りが
-       * 捨てていた。「のこりの手」などに survey(planet_id=1) の形で書いていたのをまねたと見て、呼び出しの形は planet_id: 1 に変えた（2026-11-20）。
        * 1回目は「のこりの手」（行き先も全部）を見せて、ツールを1つだけ呼ぶよう頼む。
        * 2回目はツールを渡さずに聞き、手を文字で書いてもらう（Ollama のツール呼び出しの読み取りを通らない。文字の呼び出しはこちらで拾う）。
        * それでも空なら自動進行に切り替える。
@@ -737,7 +743,7 @@ async function playTurn(turn, cur) {
         continue;
       }
       log("  （空の返事が続いたので、ツールを渡さずに手を文字で書いてもらいます）");
-      messages.push({ role: "user", content: `返事がまた空でした（ツールの呼び出しがこちらに届いていません）。次の手を1つだけ、関数の形で1行に書いてください。例：move_fleet(fleet_id: 6, to: 7) / build_facility(planet_id: 3, facility: "lab") / end_turn()${nx ? `\n${nx}` : ""}` });
+      messages.push({ role: "user", content: `返事がまた空でした（ツールの呼び出しがこちらに届いていません）。次の手を1つだけ、関数の形で1行に書いてください。例：move_fleet(fleet_id=6, to=7) / build_facility(planet_id=3, facility="lab") / end_turn()${nx ? `\n${nx}` : ""}` });
       msg = await chat(slim(messages), { withTools: false, kind: "text" });
       ({ lines, calls: written } = splitReply(stripThink(msg.content)));
       if (!written.length) {
