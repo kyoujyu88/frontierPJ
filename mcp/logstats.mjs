@@ -34,6 +34,11 @@ const FAIL_KINDS = [
   ["引数の形", /引数が正しくありません|invalid|Invalid/],
   ["通信が開いている", /通信/],
 ];
+/* 同じ手か：名前と引数（say は除く・キーの順は見ない）。ai-player.mjs の sameKey と同じ見方 */
+const moveKey = (e) => `${e.name}(${Object.keys(e.args ?? {}).filter(k => k !== "say").sort().map(k => `${k}=${JSON.stringify(e.args[k])}`).join(",")})`;
+export const sameMove = (a, b) => moveKey(a) === moveKey(b);
+// 成功のまま続けて呼んでも普通の手（「成功のまま同じ手」に数えない）
+const REPEAT_OK = new Set(["end_turn", "invest_research"]);
 export function failKind(message = "") {
   for (const [k, re] of FAIL_KINDS) if (re.test(message)) return k;
   return "そのほか";
@@ -114,17 +119,20 @@ export function statsOf(events) {
   const battleSec = sum(dur.move_fleet) + sum(dur.end_turn);
 
   /* 操作の成否 */
-  const ai = events.filter(e => e.type === "tool" && e.by === "ai");
+  let turnNo = 0;
+  const ai = [];
+  for (const e of events) { if (e.type === "turn") turnNo++; else if (e.type === "tool" && e.by === "ai") ai.push({ ...e, turnNo }); }
   const judged = ai.filter(e => e.ok === true || e.ok === false);
   const fails = judged.filter(e => e.ok === false);
   const failKinds = {};
   for (const e of fails) { const k = failKind(e.message); failKinds[k] = (failKinds[k] ?? 0) + 1; }
   // 同じ手（名前と引数が同じ）を、失敗した直後にもう一度呼んだ回数
   let repeatFails = 0;
-  for (let i = 1; i < ai.length; i++) if (ai[i].ok === false && ai[i - 1].ok === false && ai[i].name === ai[i - 1].name && JSON.stringify(ai[i].args) === JSON.stringify(ai[i - 1].args)) repeatFails++;
-  // 同じ手を、成功した直後にもう一度呼んだ回数（2026-11-21 のログで set_formation を成功のまま23回続けて呼んだ。失敗の繰り返しには数えられない）
+  for (let i = 1; i < ai.length; i++) if (ai[i].ok === false && ai[i - 1].ok === false && sameMove(ai[i], ai[i - 1])) repeatFails++;
+  // 同じ手を、同じターンの中で成功した直後にもう一度呼んだ回数（2026-11-21 のログで set_formation を成功のまま23回続けて呼んだ。失敗の繰り返しには数えられない）。
+  // 続けて呼ぶのが普通の手（研究の投資を30ずつ、ターン終了）は数えない
   let repeatOks = 0;
-  for (let i = 1; i < ai.length; i++) if (ai[i].ok === true && ai[i - 1].ok === true && ai[i].name === ai[i - 1].name && JSON.stringify(ai[i].args) === JSON.stringify(ai[i - 1].args)) repeatOks++;
+  for (let i = 1; i < ai.length; i++) if (ai[i].ok === true && ai[i - 1].ok === true && ai[i].turnNo === ai[i - 1].turnNo && !REPEAT_OK.has(ai[i].name) && sameMove(ai[i], ai[i - 1])) repeatOks++;
 
   /* 会話 */
   const ctx = events.filter(e => e.type === "context");

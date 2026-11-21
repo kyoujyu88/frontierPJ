@@ -102,6 +102,13 @@ test("成功のまま同じ手を続けた回数・陣形の「変更なし」",
   assert.equal(s.ops.repeatOks, 2);         // 1回目の成功のあとの2回
   assert.equal(s.ops.failKinds["変更なし（すでにその陣形）"], 1);
   assert.equal(statsOf(makeLog()).ops.repeatOks, 0);
+  // 研究の投資を30ずつ続ける・ターンをまたいだ同じ手は数えない。say とキーの順は見ない
+  const ev2 = makeLog(), at2 = ev2.findIndex(e => e.type === "tool" && e.name === "move_fleet"), t2 = ev2[at2], tool = (name, args) => ({ t: t2.t, ms: t2.ms, type: "tool", by: "ai", name, args, ok: true });
+  ev2.splice(at2, 0, tool("invest_research", { amount: 30 }), tool("invest_research", { amount: 30 }), tool("set_formation", { formation: "line", fleet_id: 1, say: "横陣で！" }), tool("set_formation", { fleet_id: 1, formation: "line" }));
+  const last = ev2.findLastIndex(e => e.type === "tool" && e.name === "end_turn");
+  ev2.splice(last, 0, tool("set_formation", { fleet_id: 1, formation: "square" }));
+  ev2.splice(ev2.findIndex(e => e.type === "turn" && e.turn === 2) + 1, 0, tool("set_formation", { fleet_id: 1, formation: "square" }));
+  assert.equal(statsOf(ev2).ops.repeatOks, 1); // set_formation の say 違い・キーの順違いの1回だけ
   assert.match(statsText(s), /成功のまま同じ手\s+2/);
 });
 

@@ -708,7 +708,7 @@ const api={
   setFormation:(fleetId,key)=>act("form",async()=>{
     ensureMap();const f=myFleet(fleetId);
     if(typeof FORM==="undefined")fail("このバージョンのゲームには陣形がありません");
-    if(!FORM[key])key=FORM_KEYS.find(k=>FORM[k].name===String(key??"").trim())||fail(`陣形は ${FORM_KEYS.map(k=>`${k}=${FORM[k].name}`).join("・")} のいずれかです`);
+    if(!FORM_KEYS.includes(key))key=FORM_KEYS.find(k=>FORM[k].name===String(key??"").trim())||fail(`陣形は ${FORM_KEYS.map(k=>`${k}=${FORM[k].name}`).join("・")} のいずれかです`);
     /* 今と同じ陣形は変えずに断る（演出もしない）。成功と答えると同じ手を続けて呼ぶことがあり、
      * 2026-11-21 のプレイログではターン32に set_formation(66, line) を成功のまま23回続けて呼んで2分かかった。
      * 断れば ai-player の「さっき断られた手と同じ」が2回目から効く。文面は logstats.mjs の失敗の分け方「変更なし」と合わせる */
