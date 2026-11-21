@@ -21,6 +21,7 @@ const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y)
 
 /* 失敗の理由の分け方（上から順に見て、最初に当たったもの）。文面は game-api.js と server.mjs の断りの文 */
 const FAIL_KINDS = [
+  ["変更なし（すでにその陣形）", /^変更なし：/],
   ["資金不足", /資金不足|資金が足りません/],
   ["行動済みの艦隊", /行動済み/],
   ["いまいる星への移動", /はいま .+ にいます/],
@@ -121,6 +122,9 @@ export function statsOf(events) {
   // 同じ手（名前と引数が同じ）を、失敗した直後にもう一度呼んだ回数
   let repeatFails = 0;
   for (let i = 1; i < ai.length; i++) if (ai[i].ok === false && ai[i - 1].ok === false && ai[i].name === ai[i - 1].name && JSON.stringify(ai[i].args) === JSON.stringify(ai[i - 1].args)) repeatFails++;
+  // 同じ手を、成功した直後にもう一度呼んだ回数（2026-11-21 のログで set_formation を成功のまま23回続けて呼んだ。失敗の繰り返しには数えられない）
+  let repeatOks = 0;
+  for (let i = 1; i < ai.length; i++) if (ai[i].ok === true && ai[i - 1].ok === true && ai[i].name === ai[i - 1].name && JSON.stringify(ai[i].args) === JSON.stringify(ai[i - 1].args)) repeatOks++;
 
   /* 会話 */
   const ctx = events.filter(e => e.type === "context");
@@ -164,7 +168,7 @@ export function statsOf(events) {
       completionMax: play.reduce((m, e) => Math.max(m, e.usage?.completion_tokens ?? 0), 0) || null,
       finish, cutByLimit: finish.length ?? 0, sayOnly, sayWith, folded: events.filter(e => e.type === "fold").length, textAsk: llm.filter(e => e.kind === "text").length,
     },
-    ops: { total: judged.length, fails: fails.length, failRate: judged.length ? r1(fails.length / judged.length * 100) : null, failKinds, repeatFails },
+    ops: { total: judged.length, fails: fails.length, failRate: judged.length ? r1(fails.length / judged.length * 100) : null, failKinds, repeatFails, repeatOks },
     empty: empty.length, emptyText: empty.filter(e => e.text).length,
     cut: events.filter(e => e.type === "cut").length, refuse: events.filter(e => e.type === "refuse").length,
     auto: events.filter(e => e.type === "auto").length, errors: events.filter(e => e.type === "error").length,
@@ -209,6 +213,7 @@ const ROWS = [
   ["会話の継続", s => `続けた ${s.context.keep}・作り直し ${s.context.rebuild}${s.context.compact ? `・途中で作り直し ${s.context.compact}` : ""}`],
   ["失敗率", s => s.ops.failRate == null ? "—" : `${s.ops.failRate.toFixed(1)}%（${s.ops.fails}/${s.ops.total}）`],
   ["  失敗の理由", s => kinds(s.ops.failKinds) + (s.ops.repeatFails ? `／同じ失敗の繰り返し ${s.ops.repeatFails}` : "")],
+  ["  成功のまま同じ手", s => `${s.ops.repeatOks ?? 0}`],
   ["空の返事", s => `${s.empty}回${s.llm.textAsk ? `（文字で聞き直し ${s.llm.textAsk}）` : ""}`],
   ["上限で切れた", s => `${s.llm.cutByLimit}回（最長の返事 ${fmt(s.llm.completionMax)}トークン・上限 ${fmt(s.settings.maxTokens)}）`],
   ["断った・自動進行", s => `${s.refuse}・${s.auto}`],

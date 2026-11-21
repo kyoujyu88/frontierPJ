@@ -119,6 +119,7 @@ const llm = http.createServer(async (req, res) => {
         // 2026-11-17 のプレイログで出た形：ツール呼び出しを使わずに、手を JSON の配列で書く
         : mode === "json" ? reply({ content: '```json\n[\n  {"say": "さあ、新しいターン！"},\n  {"invest_research": {"amount": 30}, "say": "研究に少しだけ！"},\n  {"end_turn": {}}\n]\n```' })
         : mode === "repeat" ? reply({ content: "", tool_calls: [callOf(`m${prompts.length}`, "move_fleet", { fleet_id: 1, to: 0 })] })
+        : mode === "formrepeat" ? reply({ content: "", tool_calls: [callOf(`f${prompts.length}`, "set_formation", { fleet_id: 1, formation: "line" })] })
         : mode === "think" ? { choices: [{ index: 0, message: { role: "assistant", content: "", reasoning_content: "まずは状況を整理しよう。資金は…" }, finish_reason: "length" }] }
         : mode === "cut" ? { choices: [{ index: 0, message: { role: "assistant", content: "", tool_calls: [callOf(`r${prompts.length}`, "invest_research", { amount: 30, say: "研究するよ！" }),
           { id: `x${prompts.length}`, type: "function", function: { name: "move_fleet", arguments: '{"fleet_id":1,"' } }] }, finish_reason: "length" }] }
@@ -127,6 +128,10 @@ const llm = http.createServer(async (req, res) => {
       // 断られた手を、say だけ変えてもう一度呼ぶ。同じ手だと断られたら end_turn
       out = /さっき断られた手と同じ/.test(String(last.content)) ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
         : reply({ content: "", tool_calls: [callOf(`m${toolSeen.length}`, "move_fleet", { to: 0, fleet_id: 1, say: "もう一回！" })] });
+    } else if (mode === "formrepeat") {
+      // 今と同じ陣形（最初は横陣）を何度も指定する。同じ手だと断られたら end_turn
+      out = /さっき断られた手と同じ/.test(String(last.content)) ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
+        : reply({ content: "", tool_calls: [callOf(`f${toolSeen.length}`, "set_formation", { fleet_id: 1, formation: "line", say: "横陣で！" })] });
     } else out = mode === "empty" || mode === "play" || mode === "cut" || mode === "think" ? reply({ content: "", tool_calls: [callOf(`e${toolSeen.length}`, "end_turn", {})] })
       : mode === "keep" ? reply({ content: "", tool_calls: [callOf(`k${sentAll.length}`, "end_turn", { say: "ターン終了！" })] })
       : reply({ content: "様子を見るね" });
@@ -581,6 +586,16 @@ l = await run(1, ["--no-notes"]);
   check(moves.length === 1 && moves[0].ok === false && ev.some(e => e.type === "refuse" && e.name === "move_fleet" && /さっき断られた手と同じ/.test(e.reason))
     && ev.some(e => e.type === "tool" && e.name === "end_turn" && e.by === "ai"),
     `断られた手と同じ手をもう一度呼んだら、実行せずに前の理由で断る（実行 ${moves.length} 回）`);
+}
+// 今と同じ陣形の set_formation は「変更なし」で断られ、2回目からは実行せずに断る（2026-11-21 のログで成功のまま23回続けて呼んだ）
+mode = "formrepeat"; prompts = [];
+l = await run(1, ["--no-notes"]);
+{
+  const ev = await readLog(path.join(logDir, `run${logNo}.jsonl`));
+  const forms = ev.filter(e => e.type === "tool" && e.name === "set_formation");
+  check(forms.length === 1 && forms[0].ok === false && /^変更なし：/.test(forms[0].message) && ev.some(e => e.type === "refuse" && e.name === "set_formation" && /さっき断られた手と同じ/.test(e.reason))
+    && ev.some(e => e.type === "tool" && e.name === "end_turn" && e.by === "ai"),
+    `同じ陣形の指定は変更なしで断り、2回目からは実行しない（実行 ${forms.length} 回：${forms[0]?.message ?? ""}）`);
 }
 mode = "flaky"; prompts = [];
 l = await run(3, ["--no-notes"]);

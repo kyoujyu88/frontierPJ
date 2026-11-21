@@ -94,6 +94,17 @@ test("失敗率・理由・同じ失敗の繰り返し", () => {
   assert.equal(failKind("なにか知らない断り"), "そのほか");
 });
 
+test("成功のまま同じ手を続けた回数・陣形の「変更なし」", () => {
+  const ev = makeLog(), at = ev.findIndex(e => e.type === "tool" && e.name === "move_fleet");
+  const t = ev[at].ms, form = (ok, message) => ({ t: ev[at].t, ms: t, type: "tool", by: "ai", name: "set_formation", args: { fleet_id: 1, formation: "line" }, ok, ...(message ? { message } : {}) });
+  ev.splice(at, 0, form(true), form(true), form(true), form(false, "変更なし：第1艦隊 はすでに横陣です。陣形はこのままで、移動など次の手に進んでください"));
+  const s = statsOf(ev);
+  assert.equal(s.ops.repeatOks, 2);         // 1回目の成功のあとの2回
+  assert.equal(s.ops.failKinds["変更なし（すでにその陣形）"], 1);
+  assert.equal(statsOf(makeLog()).ops.repeatOks, 0);
+  assert.match(statsText(s), /成功のまま同じ手\s+2/);
+});
+
 test("キャッシュの量を返さないサーバーでは読み直しを数えない", () => {
   const s = statsOf(makeLog({ cache: false }));
   assert.equal(s.llm.cacheKnown, false);
