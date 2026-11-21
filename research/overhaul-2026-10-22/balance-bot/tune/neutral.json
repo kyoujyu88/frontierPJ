@@ -1,0 +1,9 @@
+{
+ "name": "neutral",
+ "edits": [
+  {
+   "find": "hp:isHive?150:isNest?36:16+p.def",
+   "replace": "hp:isHive?150:isNest?36:(p.owner===\"N\"?8:16)+p.def"
+  }
+ ]
+}

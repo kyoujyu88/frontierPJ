@@ -1,0 +1,53 @@
+{
+ "name": "rc",
+ "params": {
+  "tierEvery": 6,
+  "spawnEvery": 3,
+  "spawnMax": 3,
+  "ship4After": 10,
+  "rFalco": 160,
+  "rGrave": 300,
+  "rArc": 450,
+  "rSeraph": 600,
+  "investCap": 120,
+  "brood": 42,
+  "drone": 22,
+  "neo": 8,
+  "brArmor": 3,
+  "drArmor": 2,
+  "acid": 7,
+  "fang": 6,
+  "hive": 150,
+  "hiveGun": 7,
+  "nest": 36,
+  "initSpawn": 2,
+  "xcap": 2,
+  "xcapEvo": 3,
+  "gate": -1,
+  "mine": 15,
+  "mineRich": 30,
+  "survey": 20
+ },
+ "edits": [
+  {
+   "find": "{name:\"ファルコ級\",type:\"駆逐艦\",hp:20,pts:9,cost:70,research:120,code:\"FC-3\"}",
+   "replace": "{name:\"ファルコ級\",type:\"駆逐艦\",hp:20,pts:9,cost:70,research:160,code:\"FC-3\"}"
+  },
+  {
+   "find": "{name:\"グレイヴ級\",type:\"巡洋艦\",hp:30,pts:12,cost:110,research:220,code:\"GV-7\"}",
+   "replace": "{name:\"グレイヴ級\",type:\"巡洋艦\",hp:30,pts:12,cost:110,research:300,code:\"GV-7\"}"
+  },
+  {
+   "find": "{name:\"アークライト級\",type:\"戦艦\",hp:44,pts:16,cost:160,research:330,code:\"AL-12\"}",
+   "replace": "{name:\"アークライト級\",type:\"戦艦\",hp:44,pts:16,cost:160,research:450,code:\"AL-12\"}"
+  },
+  {
+   "find": "{name:\"セラフ級\",type:\"対異生体戦艦\",hp:56,pts:20,cost:200,research:380,code:\"SR-0\",anti:true}",
+   "replace": "{name:\"セラフ級\",type:\"対異生体戦艦\",hp:56,pts:20,cost:200,research:600,code:\"SR-0\",anti:true}"
+  },
+  {
+   "find": "function invest(v){\n  S.funds-=v;S.research+=v;checkResearch();render();\n}",
+   "replace": "function invest(v){\n  if(S.invTurn!==S.turn){S.invTurn=S.turn;S.invT=0}\n  if(S.invT+v>120){toast(\"研究への投資は1ターンに120までです。\");return}\n  S.invT+=v;S.funds-=v;S.research+=v;checkResearch();render();\n}"
+  }
+ ]
+}

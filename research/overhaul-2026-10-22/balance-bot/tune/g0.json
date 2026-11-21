@@ -1,0 +1,49 @@
+{
+ "name": "g0",
+ "params": {
+  "tierEvery": 6,
+  "spawnEvery": 3,
+  "spawnMax": 3,
+  "ship4After": 10,
+  "rFalco": 120,
+  "rGrave": 220,
+  "rArc": 330,
+  "rSeraph": 380,
+  "investCap": 0,
+  "brood": 42,
+  "drone": 22,
+  "neo": 8,
+  "brArmor": 3,
+  "drArmor": 2,
+  "acid": 7,
+  "fang": 6,
+  "hive": 150,
+  "hiveGun": 7,
+  "nest": 36,
+  "initSpawn": 2,
+  "xcap": 2,
+  "xcapEvo": 3,
+  "gate": 0,
+  "mine": 15,
+  "mineRich": 30,
+  "survey": 20
+ },
+ "edits": [
+  {
+   "find": "const HOME=0, CAPITAL=6, HIVE=12;",
+   "replace": "const HOME=0, CAPITAL=6, HIVE=12;\nconst HIVE_NONANTI=0; // 巣の中枢へのセラフ級以外の爆装の倍率（0=通らない）"
+  },
+  {
+   "find": "core={uid:uid(),side:\"E\",core:true,name:isHive?\"巣の中枢\"",
+   "replace": "core={uid:uid(),side:\"E\",core:true,hive:isHive,name:isHive?\"巣の中枢\""
+  },
+  {
+   "find": "if(t.core&&!w.core&&att.side===\"P\")continue;",
+   "replace": "if(t.core&&!w.core&&att.side===\"P\")continue;\n    if(t.hive&&att.side===\"P\"&&!att.anti&&HIVE_NONANTI<=0)continue;"
+  },
+  {
+   "find": "*(att.anti&&t.xeno?1.5:1)*(10/(10+2*t.armor));",
+   "replace": "*(att.anti&&t.xeno?1.5:1)*(t.hive&&att.side===\"P\"&&!att.anti?HIVE_NONANTI:1)*(10/(10+2*t.armor));"
+  }
+ ]
+}

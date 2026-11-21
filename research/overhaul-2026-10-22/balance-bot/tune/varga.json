@@ -1,0 +1,14 @@
+{
+ "name": "varga",
+ "desc": "ヴァルガの軍拡：艦級の上がり方を6→4ターンごと、増援を3→2ターンごと・最大3→4艦隊・4隻になるのをT11→T7から",
+ "edits": [
+  {
+   "find": "S.turn++;S.enemyTier=Math.min(3,Math.floor((S.turn-1)/6));",
+   "replace": "S.turn++;S.enemyTier=Math.min(3,Math.floor((S.turn-1)/4));"
+  },
+  {
+   "find": "if(S.turn%3===0&&S.fleets.filter(f=>f.side===\"E\").length<3){\n        const nf=vargaFleet(null,CAPITAL,3+(S.turn>10?1:0));",
+   "replace": "if(S.turn%2===0&&S.fleets.filter(f=>f.side===\"E\").length<4){\n        const nf=vargaFleet(null,CAPITAL,3+(S.turn>6?1:0));"
+  }
+ ]
+}
