@@ -112,8 +112,12 @@ try {
     const r2 = await call("set_formation", { fleet_id: f2.id, formation: "wedge" });
     const now2 = (await state()).myFleets.find(f => f.id === f2.id);
     check(r2?.ok === true && now2.formation === "wedge", `set_formation(${f2.id}, wedge) → ${now2.formation}`);
-    const r3 = await call("set_formation", { fleet_id: String(f1.id), formation: "鶴翼" });
-    check(r3?.ok === true && (await state()).myFleets.find(f => f.id === f1.id).formation === "crane", `set_formation("${f1.id}", 鶴翼)（数字の文字列）`);
+    const r3 = await call("set_formation", { fleet_id: String(f1.id), formation: "後衛陣" });
+    check(r3?.ok === true && (await state()).myFleets.find(f => f.id === f1.id).formation === "rear", `set_formation("${f1.id}", 後衛陣)（数字の文字列）`);
+    // 今と同じ陣形は「変更なし」で断る（成功と答えると同じ手を続けて呼ぶことがあった。2026-11-21 のログで23回）
+    const t0 = Date.now(), same = await call("set_formation", { fleet_id: f2.id, formation: "楔形" }), sameMs = Date.now() - t0;
+    check(same?.ok === false && /^変更なし：.+はすでに楔形です/.test(same.message) && (await state()).myFleets.find(f => f.id === f2.id).formation === "wedge",
+      `同じ陣形は変更なしで断る（${same?.message}・${sameMs}ms）`);
     const dupJa = await call("build_facility", { planet_id: home.name, facility: "造船所" });
     const dupEn = await call("build_facility", { planet_id: home.id, facility: "yard" });
     check(dupJa?.ok === false && dupEn?.ok === false && dupJa.message === dupEn.message && /既にあります/.test(dupJa.message), `build_facility(${home.name}, 造船所) と (${home.id}, yard) が同じ理由で断られる`);

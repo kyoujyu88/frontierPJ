@@ -708,7 +708,11 @@ const api={
   setFormation:(fleetId,key)=>act("form",async()=>{
     ensureMap();const f=myFleet(fleetId);
     if(typeof FORM==="undefined")fail("このバージョンのゲームには陣形がありません");
-    if(!FORM[key])key=FORM_KEYS.find(k=>FORM[k].name===String(key??"").trim())||fail(`陣形は ${FORM_KEYS.map(k=>`${k}=${FORM[k].name}`).join("・")} のいずれかです`);
+    if(!FORM_KEYS.includes(key))key=FORM_KEYS.find(k=>FORM[k].name===String(key??"").trim())||fail(`陣形は ${FORM_KEYS.map(k=>`${k}=${FORM[k].name}`).join("・")} のいずれかです`);
+    /* 今と同じ陣形は変えずに断る（演出もしない）。成功と答えると同じ手を続けて呼ぶことがあり、
+     * 2026-11-21 のプレイログではターン32に set_formation(66, line) を成功のまま23回続けて呼んで2分かかった。
+     * 断れば ai-player の「さっき断られた手と同じ」が2回目から効く。文面は logstats.mjs の失敗の分け方「変更なし」と合わせる */
+    if(formKey(f)===key)fail(`変更なし：${f.name} はすでに${FORM[key].name}です。陣形はこのままで、移動など次の手に進んでください`);
     f.form=key;focusPlanet(f.node,f.id);showAction(`${f.name} の陣形を${FORM[key].name}に`);
     openFormation(f);await sleep(pace*2);if(dialogOpen())closeModal();
     log(`${f.name}の陣形を${FORM[key].name}に変更。`);render();
